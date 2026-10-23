@@ -1,0 +1,3 @@
+AA|Misc. Capital Goods|FN
+AC|Retail (Drugs)|TC
+AD|Schools|FN

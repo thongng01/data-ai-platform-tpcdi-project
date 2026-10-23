@@ -1,0 +1,131 @@
+# Orchestration: Airflow, running the three data pipelines.
+#
+# Behind the `airflow` profile. Start with `make up-airflow`.
+#
+# Airflow keeps its own metadata in the `airflow` database on the shared
+# Postgres instance. Connections and Variables are seeded by airflow-init, so no
+# DAG hardcodes a hostname, a bucket or a password.
+#
+# The image is built locally rather than pulled: it needs PySpark (for
+# spark-submit), dbt-spark, Soda Core and the DataHub SDK, and each of those
+# wants a different Python than Airflow ships with.
+
+x-airflow: &airflow
+  image: ${AIRFLOW_IMAGE}
+  build:
+    context: .
+    dockerfile: docker/airflow/Dockerfile
+  networks: ["${EDAI_NETWORK}"]
+  environment:
+    AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__PARALLELISM: "8"
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB_AIRFLOW}
+    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
+    AIRFLOW__WEBSERVER__SECRET_KEY: edai_local_dev_secret_key
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+    AIRFLOW__LOGGING__LOGGING_LEVEL: INFO
+    AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: "30"
+    AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL: "30"
+    AIRFLOW__OPERATOR__DEFAULT_RETRY_NUMBER: "2"
+    AIRFLOW__OPERATOR__DEFAULT_RETRY_DELAY: "60"
+    # The platform's services, by compose service name. A DAG reads these from
+    # Airflow Variables rather than from here; this block only covers the
+    # Airflow container itself.
+    PGHOST: postgres
+    PGUSER: ${POSTGRES_USER}
+    PGPASSWORD: ${POSTGRES_PASSWORD}
+  volumes: &airflow_volumes
+    - ../orchestration/dags:/opt/airflow/dags:ro
+    - ../orchestration/connections.yaml:/opt/airflow/connections.yaml:ro
+    - ../orchestration/variables.yaml:/opt/airflow/variables.yaml:ro
+    - ../pipelines:/opt/pipelines:ro
+    - ../dbt:/opt/dbt:ro
+    - airflow-logs:/opt/airflow/logs
+  logging:
+    driver: json-file
+    options: {max-size: "10m", max-file: "3"}
+
+services:
+
+  airflow-init:
+    <<: *airflow
+    container_name: edai-airflow-init
+    profiles: ["airflow"]
+    restart: "no"
+    volumes: *airflow_volumes
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        set -euo pipefail
+        airflow db migrate
+        airflow users create \
+          --username "${AIRFLOW_USER}" --password "${AIRFLOW_PASSWORD}" \
+          --firstname Coursework --lastname Admin \
+          --role Admin --email admin@edai.local || true
+        airflow connections import /opt/airflow/connections.yaml --conn-description "edai seed" || true
+        airflow variables import /opt/airflow/variables.yaml || true
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  airflow-scheduler:
+    <<: *airflow
+    container_name: edai-airflow-scheduler
+    profiles: ["airflow"]
+    volumes: *airflow_volumes
+    command: ["scheduler"]
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  airflow-webserver:
+    <<: *airflow
+    container_name: edai-airflow-webserver
+    profiles: ["airflow"]
+    volumes: *airflow_volumes
+    command: ["webserver", "--port", "8080"]
+    ports:
+      - "${AIRFLOW_PORT}:8080"
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 20s
+      timeout: 10s
+      retries: 15
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  # LocalExecutor runs DAG tasks as processes in this container. Enough for a
+  # lab; a real deployment would use the Kubernetes or Celery executor.
+  airflow-worker:
+    <<: *airflow
+    container_name: edai-airflow-worker
+    profiles: ["airflow"]
+    volumes: *airflow_volumes
+    command: ["worker", "--concurrency", "2"]
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+
+volumes:
+  airflow-logs:

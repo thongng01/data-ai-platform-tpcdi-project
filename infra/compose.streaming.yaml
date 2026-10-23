@@ -1,0 +1,168 @@
+# Streaming: the Kafka broker and the Flink cluster that consumes it.
+#
+# Behind the `stream` profile. Start with `make up-stream`.
+#
+# Topics are named tpcdi.<table> so the producer that replays a batch and the
+# Flink job that reads it agree on a name without sharing a config file.
+#
+# Kafka runs KRaft: one broker that is also the controller. No ZooKeeper.
+
+services:
+
+  kafka:
+    image: ${KAFKA_IMAGE}
+    container_name: edai-kafka
+    profiles: ["stream"]
+    restart: unless-stopped
+    networks: ["${EDAI_NETWORK}"]
+    ports:
+      - "${KAFKA_PORT}:9092"
+    environment:
+      CLUSTER_ID: ${KAFKA_CLUSTER_ID}
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      # Two advertised listeners: one for containers on edai-net, one for the
+      # host. A client that gets the wrong one connects and then fails to fetch
+      # partitions, which looks like a broker fault and is not one.
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:${KAFKA_PORT}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      # One broker, so every replication factor is 1. Anything higher and topic
+      # creation blocks forever waiting for a replica.
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # The Flink job is the only consumer group that matters, so keeping this
+      # true means a new topic works without a second admin step.
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 1
+      KAFKA_LOG_RETENTION_HOURS: 24
+      KAFKA_HEAP_OPTS: "-Xms512m -Xmx768m"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+
+  # Creates the topics with the partition count and retention the Flink job
+  # expects. One-shot, and safe to re-run.
+  kafka-init:
+    image: ${KAFKA_IMAGE}
+    container_name: edai-kafka-init
+    profiles: ["stream"]
+    networks: ["${EDAI_NETWORK}"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP: kafka:29092
+      # Partition count is the knob the Flink parallelism follows. Three
+      # partitions is the minimum that lets the late-arrival path and the
+      # main path make progress at the same time.
+      STREAM_TOPIC_PARTITIONS: 3
+      STREAM_TOPIC_RETENTION_HOURS: 24
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -euo pipefail
+        for topic in tpcdi.trade tpcdi.cash_transaction; do
+          kafka-topics --bootstrap-server "$${KAFKA_BOOTSTRAP}" \
+            --create --if-not-exists --topic "$${topic}" \
+            --partitions "$${STREAM_TOPIC_PARTITIONS}" \
+            --replication-factor 1 \
+            --config "retention.ms=$$(( $${STREAM_TOPIC_RETENTION_HOURS} * 3600 * 1000 ))"
+          echo "topic ready: $${topic}"
+        done
+        kafka-topics --bootstrap-server "$${KAFKA_BOOTSTRAP}" --list
+
+  jobmanager:
+    image: ${FLINK_IMAGE}
+    build:
+      context: ./docker/flink
+      dockerfile: Dockerfile
+    container_name: edai-flink-jobmanager
+    profiles: ["stream"]
+    restart: unless-stopped
+    networks: ["${EDAI_NETWORK}"]
+    command: jobmanager
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: jobmanager
+        jobmanager.bind-host: 0.0.0.0
+        jobmanager.memory.process.size: 900m
+        parallelism.default: 3
+        state.backend.type: hashmap
+        execution.checkpointing.interval: 30s
+        execution.checkpointing.mode: EXACTLY_ONCE
+      # SeaweedFS credentials for the sink. Passed as config rather than baked
+      # into the job so the same jar works against MinIO in the fallback profile.
+      S3_ENDPOINT: http://seaweedfs:${SEAWEEDFS_S3_PORT}
+      S3_ACCESS_KEY: ${SEAWEEDFS_ACCESS_KEY}
+      S3_SECRET_KEY: ${SEAWEEDFS_SECRET_KEY}
+    ports:
+      - "${FLINK_UI_PORT}:8081"
+    depends_on:
+      - kafka
+    deploy:
+      resources:
+        limits:
+          memory: 1280M
+
+  taskmanager:
+    image: ${FLINK_IMAGE}
+    container_name: edai-flink-taskmanager
+    profiles: ["stream"]
+    restart: unless-stopped
+    networks: ["${EDAI_NETWORK}"]
+    command: taskmanager
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: jobmanager
+        taskmanager.bind-host: 0.0.0.0
+        taskmanager.memory.process.size: 1600m
+        taskmanager.numberOfTaskSlots: 4
+      S3_ENDPOINT: http://seaweedfs:${SEAWEEDFS_S3_PORT}
+      S3_ACCESS_KEY: ${SEAWEEDFS_ACCESS_KEY}
+      S3_SECRET_KEY: ${SEAWEEDFS_SECRET_KEY}
+    depends_on:
+      - jobmanager
+    deploy:
+      resources:
+        limits:
+          memory: 2048M
+
+  # One-shot. Submits a PyFlink job to the cluster running in jobmanager.
+  #   docker compose --profile stream run --rm flink-submit <job.py> [args...]
+  flink-submit:
+    image: ${FLINK_IMAGE}
+    container_name: edai-flink-submit
+    profiles: ["stream"]
+    networks: ["${EDAI_NETWORK}"]
+    entrypoint: ["/opt/flink/bin/flink", "run", "--target", "jobmanager"]
+    command: ["--help"]
+    environment:
+      S3_ENDPOINT: http://seaweedfs:${SEAWEEDFS_S3_PORT}
+      S3_ACCESS_KEY: ${SEAWEEDFS_ACCESS_KEY}
+      S3_SECRET_KEY: ${SEAWEEDFS_SECRET_KEY}
+    volumes:
+      - ../../pipelines:/opt/pipelines:ro
+    depends_on:
+      - jobmanager
+
+networks:
+  edai-net:
+    name: ${EDAI_NETWORK}
+    driver: bridge
+
+volumes:
+  kafka-data:

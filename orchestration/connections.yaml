@@ -1,0 +1,77 @@
+# Airflow Connections, seeded at startup.
+#
+# Imported by `airflow-init` with `airflow connections import`. Airflow encrypts
+# them into its metadata database with the fernet key in infra/.env, so nothing
+# here is a secret at rest in a meaningful sense and nothing here is a
+# production credential.
+#
+# The rubric asks for every connection and variable to live in Airflow so the
+# three pipelines share them. That is what this file and variables.yaml are for:
+# no DAG hardcodes a hostname, a bucket or a password.
+
+postgres_warehouse:
+  conn_type: postgres
+  description: Gold tables. Also the HMS catalog database and Airflow's own.
+  host: postgres
+  login: edai
+  password: edai_local_dev
+  schema: warehouse
+  port: 5432
+
+postgres_metastore:
+  conn_type: postgres
+  description: Hive Metastore catalog tables. Never holds business data.
+  host: postgres
+  login: edai
+  password: edai_local_dev
+  schema: metastore
+  port: 5432
+
+lakehouse_s3:
+  conn_type: aws
+  description: SeaweedFS over its S3 API. Landing and lakehouse buckets.
+  host: seaweedfs
+  login: edaiaccess
+  password: edaisecret123
+  port: 8333
+  extra: |
+    {"endpoint_url": "http://seaweedfs:8333", "region_name": "us-east-1", "s3_addressing_style": "path"}
+
+hive_metastore_thrift:
+  conn_type: thrift
+  description: Hive Metastore, where table and partition metadata lives.
+  host: hive-metastore
+  port: 9083
+
+spark_thrift:
+  conn_type: spark
+  description: |
+    HiveServer2, the only endpoint dbt-spark can use against a standalone
+    Spark cluster. Needs its own compose profile, because it takes every core
+    of the worker. See docs/IaC.md section 8.2.
+  host: spark-thrift
+  port: 10001
+
+spark_cluster:
+  conn_type: spark
+  description: Spark standalone master, for SparkSubmitOperator.
+  host: spark-master
+  port: 7077
+
+trino_query:
+  conn_type: trino
+  description: Trino over the lakehouse and the warehouse. Query only.
+  host: trino
+  port: 8080
+
+kafka_broker:
+  conn_type: kafka
+  description: KRaft broker, no ZooKeeper. Incremental batch replay.
+  host: kafka
+  port: 29092
+
+datahub_gms:
+  conn_type: http
+  description: DataHub GMS, where lineage and validation results are published.
+  host: datahub-gms
+  port: 8086

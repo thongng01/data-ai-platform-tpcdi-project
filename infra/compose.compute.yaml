@@ -1,0 +1,189 @@
+# Compute: the Spark cluster that runs DP1, DP2 and DP3.
+#
+# Behind the `compute` profile, because these containers are the largest in the
+# stack. Start with `make up-compute`.
+#
+# Four containers:
+#   spark-master      standalone cluster manager, serves the Spark UI
+#   spark-worker      one executor host
+#   spark-thrift      HiveServer2, the endpoint dbt-spark connects through
+#   spark-jobs        a one-shot runner for spark-submit outside Airflow
+#
+# Commands go through the sbin start scripts, which wrap spark-submit. That is
+# not a stylistic choice: `spark-class` builds a classpath and nothing else, so
+# a process started that way never reads spark-defaults.conf. start-master.sh
+# and friends invoke spark-submit, which turns that file into system
+# properties, which is how spark.master reaches HiveThriftServer2.
+#
+# Why the Thrift server is not in the compute profile
+# --------------------------------------------------
+# dbt-spark cannot talk to a Spark master URL. Its connection methods are
+# thrift, http, livy, odbc and session, and only thrift fits a standalone
+# cluster, so DP2 needs a HiveServer2 on port 10001.
+#
+# It lives in its own `dbt` profile rather than beside the cluster, because a
+# HiveServer2 asks the master for the whole worker: the master's application
+# list shows it holding every core, and a batch job then waits forever with
+# "Initial job has not accepted any resources". There is no exception to raise
+# and no stack trace to read, because nothing has failed yet.
+#
+# So: `make up-compute` gives the cluster entirely to DP1 and DP3. `make up-dbt`
+# adds HiveServer2 for a DP2 run. Run them together only when memory allows, and
+# see the table in docs/IaC.md.
+#
+# The alternative, `method: session`, runs dbt's models in an in-process
+# PySpark session inside the dbt container. It needs no Thrift server at all and
+# is the right choice on a small machine, at the cost of dbt no longer running
+# on the shared cluster.
+
+services:
+
+  spark-master:
+    image: ${SPARK_IMAGE}
+    build:
+      context: ./docker/spark
+      dockerfile: Dockerfile
+    container_name: edai-spark-master
+    profiles: ["compute"]
+    restart: unless-stopped
+    networks: ["${EDAI_NETWORK}"]
+    command:
+      - /opt/spark/sbin/start-master.sh
+      - --host
+      - spark-master
+      - --port
+      - "7077"
+      - --webui-port
+      - "8080"
+    environment:
+      SPARK_NO_DAEMONIZE: "1"
+    ports:
+      - "${SPARK_MASTER_PORT}:7077"
+      - "${SPARK_MASTER_UI_PORT}:8080"
+    volumes:
+      - ./spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+    depends_on:
+      - hive-metastore
+    healthcheck:
+      # The image has no curl, and /bin/sh here is dash, which has no /dev/tcp.
+      # bash's /dev/tcp is the cheapest thing that proves the master is listening.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/7077"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "2"}
+
+  spark-worker:
+    image: ${SPARK_IMAGE}
+    container_name: edai-spark-worker
+    profiles: ["compute"]
+    restart: unless-stopped
+    networks: ["${EDAI_NETWORK}"]
+    command:
+      - /opt/spark/sbin/start-slave.sh
+      - spark://spark-master:7077
+      - --cores
+      - "6"
+      - --memory
+      - 5g
+      - --webui-port
+      - "8081"
+    environment:
+      SPARK_NO_DAEMONIZE: "1"
+      SPARK_WORKER_DIR: /tmp/spark-worker
+    volumes:
+      - ./spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+      # Job code is mounted, not copied into the image, so editing a job needs
+      # no rebuild and no container restart.
+      - ../pipelines:/opt/pipelines:ro
+    ports:
+      - "${SPARK_WORKER_UI_PORT}:8081"
+    depends_on:
+      # `started`, not `healthy`: a worker that reaches the master before it is
+      # ready retries on its own, whereas `healthy` makes every `compose up`
+      # block for the master's start_period before anything else happens.
+      - spark-master
+    deploy:
+      resources:
+        limits:
+          memory: 5G
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "2"}
+
+  spark-thrift:
+    image: ${SPARK_IMAGE}
+    container_name: edai-spark-thrift
+    profiles: ["dbt"]
+    restart: unless-stopped
+    networks: ["${EDAI_NETWORK}"]
+    command:
+      - /opt/spark/sbin/start-thriftserver.sh
+      - --conf
+      - spark.executor.memory=640m
+      - --conf
+      - spark.executor.cores=1
+      - --hiveconf
+      - hive.server2.thrift.port=10001
+      - --hiveconf
+      - hive.server2.thrift.bind.host=0.0.0.0
+    environment:
+      SPARK_NO_DAEMONIZE: "1"
+      # dbt opens a connection per thread and holds it for the model run.
+      # HiveServer2 defaults to a 1000-session pool, which is more than a
+      # 2 GB JVM should track.
+      HIVE_SERVER2_THRIFT_HSERVER_OPERATION_TIMEOUT: "3600"
+    ports:
+      - "${SPARK_THRIFT_PORT}:10001"
+    volumes:
+      - ./spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+      - ../pipelines:/opt/pipelines:ro
+    depends_on:
+      # `started`, not `healthy`: a worker that reaches the master before it is
+      # ready retries on its own, whereas `healthy` makes every `compose up`
+      # block for the master's start_period before anything else happens.
+      - spark-master
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "2"}
+
+  # One-shot. `docker compose --profile compute run --rm spark-jobs <args>`
+  #
+  # No depends_on, and only the `compute` profile. A service that lists two
+  # profiles still has its dependencies filtered, so `depends_on: spark-master`
+  # makes `--profile tools` (which excludes the compute services) an invalid
+  # project. spark-submit fails immediately and clearly when the master is not
+  # there, which is a better error than a compose parse failure.
+  spark-jobs:
+    image: ${SPARK_IMAGE}
+    container_name: edai-spark-jobs
+    profiles: ["compute"]
+    networks: ["${EDAI_NETWORK}"]
+    entrypoint: ["/opt/spark/bin/spark-submit"]
+    environment:
+      SPARK_NO_DAEMONIZE: "1"
+      # The publish step copies the generator's output into the landing bucket
+      # with boto3, before the Spark session exists. It needs the S3 endpoint
+      # and keys here rather than in spark-defaults.conf, because that file is
+      # Hadoop configuration and boto3 does not read it.
+      S3_ENDPOINT: http://seaweedfs:${SEAWEEDFS_S3_PORT}
+      S3_ACCESS_KEY: ${SEAWEEDFS_ACCESS_KEY}
+      S3_SECRET_KEY: ${SEAWEEDFS_SECRET_KEY}
+    volumes:
+      - ./spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+      - ../pipelines:/opt/pipelines:ro
+      - ../dbt:/opt/dbt:ro
+      # Read-write: the generator's output is the publish step's input, and the
+      # job writes its run report back here for the docs to quote.
+      - ../misc:/opt/misc

@@ -1,0 +1,85 @@
+{
+  "files": {
+    "Batch1/BatchDate.txt": {
+      "delimiter": "|",
+      "fields": 1,
+      "lines": 1,
+      "sha256": "076ec481c3a11777"
+    },
+    "Batch1/CashTransaction.txt": {
+      "delimiter": "|",
+      "fields": 4,
+      "lines": 2,
+      "sha256": "0cfbee674a25d27f"
+    },
+    "Batch1/DailyMarket.txt": {
+      "delimiter": "|",
+      "fields": 6,
+      "lines": 2,
+      "sha256": "2eba3899748904a7"
+    },
+    "Batch1/HoldingHistory.txt": {
+      "delimiter": "|",
+      "fields": 4,
+      "lines": 2,
+      "sha256": "b97179c321d68af9"
+    },
+    "Batch1/Industry.txt": {
+      "delimiter": "|",
+      "fields": 3,
+      "lines": 3,
+      "sha256": "7b802247b7fc95e1"
+    },
+    "Batch1/StatusType.txt": {
+      "delimiter": "|",
+      "fields": 2,
+      "lines": 6,
+      "sha256": "f4ca8eefa64abebc"
+    },
+    "Batch1/TaxRate.txt": {
+      "delimiter": "|",
+      "fields": 3,
+      "lines": 3,
+      "sha256": "23144f99cf4f7158"
+    },
+    "Batch1/Trade.txt": {
+      "delimiter": "|",
+      "fields": 14,
+      "lines": 3,
+      "sha256": "4b597f8fedd90a64"
+    },
+    "Batch1/TradeHistory.txt": {
+      "delimiter": "|",
+      "fields": 3,
+      "lines": 2,
+      "sha256": "89edd3d759e21966"
+    },
+    "Batch1/TradeType.txt": {
+      "delimiter": "|",
+      "fields": 4,
+      "lines": 5,
+      "sha256": "8cd4388b9be9bb1c"
+    },
+    "Batch1/WatchHistory.txt": {
+      "delimiter": "|",
+      "fields": 4,
+      "lines": 2,
+      "sha256": "42fdee83d3162f18"
+    },
+    "Batch2/CashTransaction.txt": {
+      "delimiter": "|",
+      "fields": 6,
+      "lines": 2,
+      "sha256": "ef764396ecbbf526"
+    },
+    "Batch2/Trade.txt": {
+      "delimiter": "|",
+      "fields": 16,
+      "lines": 3,
+      "sha256": "fc1b8c70be933d05"
+    }
+  },
+  "note": "Regenerate with tools/refresh_fixtures.py. Byte-exact slices.",
+  "path": "sf_3/output_data",
+  "source": "https://github.com/AlaaAlmutawa/TPC-DI.git"
+}

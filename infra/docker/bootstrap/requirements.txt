@@ -1,0 +1,8 @@
+# Runtime dependencies for the bootstrap image.
+#
+# Kept to the two clients this container actually needs: one to create S3
+# buckets, one to create Postgres databases. Anything heavier belongs in the
+# service that needs it.
+
+boto3==1.35.90
+psycopg2-binary==2.9.10

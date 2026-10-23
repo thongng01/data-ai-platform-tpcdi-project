@@ -1,0 +1,10 @@
+# Python packages that Spark executors need, beyond what the image ships.
+#
+# PySpark itself is already in the image, at the version that matches the
+# cluster. Only the job-time libraries are listed here. Validation (Soda) and
+# governance (DataHub) run as their own images on purpose: their dependency
+# trees are large and nothing in a Spark job imports them.
+
+# Reads and writes SeaweedFS buckets when a job needs an S3 client rather than
+# the Hadoop filesystem.
+boto3==1.35.90

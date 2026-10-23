@@ -1,0 +1,39 @@
+# Airflow Variables, seeded at startup.
+#
+# Imported by `airflow-init` with `airflow variables import`. Every value is
+# plain YAML, so Airflow's JSON variable import is avoided: a value with a
+# comma or a colon in it would otherwise need quoting twice.
+
+lakehouse_bucket: lakehouse
+landing_bucket: landing
+
+s3_endpoint: http://seaweedfs:8333
+s3_access_key: edaiaccess
+s3_secret_key: edaisecret123
+
+hive_metastore_uri: thrift://hive-metastore:9083
+trino_host: trino
+trino_port: "8080"
+
+# ------------------------------------------------------------------ schema --
+bronze_database: bronze
+silver_database: silver
+gold_database: gold
+warehouse_database: warehouse
+
+# dt is the partition column everywhere. Bronze is unpartitioned and silver
+# partitions on the event timestamp's date, never on the batch id.
+partition_column: dt
+
+# ------------------------------------------------------------------ batches --
+# The generator's batches. Batch1 is the historical load; Batch2 and Batch3 are
+# incremental deltas and carry the schema-evolution prefix.
+generator_batches: Batch1,Batch2,Batch3
+generator_scale: "0.02"
+
+# ------------------------------------------------------------------ quality --
+# Thresholds the validate stages check against. A batch outside these fails the
+# DAG rather than publishing, which is the rubric's "all three pipelines have
+# ingest plus validation".
+min_silver_rows_trade: "1000"
+max_duplicate_ratio: "0.05"

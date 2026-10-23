@@ -1,0 +1,51 @@
+# Untracked working material, all of it reproducible or re-clonable:
+#   misc/tpcdi/            upstream TPC-DI clone (format-contract reference)
+#   misc/sample_run/       generated output, reproducible from a seed
+#   misc/tpcdi_out/        extracted upstream material
+#   misc/abandoned-tpcds/  the dropped TPC-DS direction
+misc/
+
+# Python environments. Machine-specific, regenerated from pyproject.toml.
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+.ruff_cache/
+
+# Large binaries, wherever they land. A database dump has no place in history.
+*.db
+*.duckdb
+*.sqlite
+*.sqlite3
+
+# Transient scratch. The durable parts of .scratch/coursework/ are the map,
+# its tickets, and the research notes, and those are tracked explicitly.
+.scratch/**/*.tmp
+.scratch/**/tmp/
+
+# Local overrides and secrets. None committed; this is here so a stray .env
+# cannot land by accident.
+.env
+.env.*
+!.env.example
+
+# Exception: infra/.env is the platform's configuration, not a secret file.
+# Every value in it is a local development default, there is no production
+# credential anywhere in this repository, and Docker Compose reads it at parse
+# time, so without it a fresh clone has no port map and no service config. Copy
+# it and edit locally if you need to; do not put a real credential in it.
+!infra/.env
+
+# Course-side material and the session-local collaboration file. These are
+# reference documents and working notes, not the project itself; they stay on
+# disk where nothing outside this machine can copy them.
+AGENTS.md
+docs/course/
+
+# Editor and OS noise.
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/

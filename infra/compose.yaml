@@ -1,0 +1,280 @@
+# Core platform: object store, metastore, query engine, warehouse database.
+#
+# These four services are the floor the rest of the platform stands on. They
+# have no profile, so `docker compose up -d` always starts them.
+#
+# Services behind profiles live in the sibling files:
+#   compose.compute.yaml       spark cluster + spark jobs
+#   compose.streaming.yaml     kafka + flink
+#   compose.orchestration.yaml airflow
+#   compose.governance.yaml    datahub + opensearch
+#
+# Start everything with `make up` from the repo root, or read docs/IaC.md.
+
+name: ${COMPOSE_PROJECT_NAME}
+
+x-common: &common
+  restart: unless-stopped
+  networks: ["${EDAI_NETWORK}"]
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+
+  # ------------------------------------------------------------ warehouse ---
+  # One Postgres instance, four logical databases. The metastore database is
+  # separate from the warehouse database on purpose: a business table must never
+  # sit next to Hive catalog tables.
+  postgres:
+    <<: *common
+    image: ${POSTGRES_IMAGE}
+    container_name: edai-postgres
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB_METASTORE}
+      # The warehouse is the query target, so give it a shared buffer pool big
+      # enough to index into without swapping.
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    command:
+      - postgres
+      - -c
+      - max_connections=300
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - effective_cache_size=1536MB
+      - -c
+      - work_mem=32MB
+      - -c
+      - maintenance_work_mem=128MB
+      # Gold tables are large and mostly read once per dashboard refresh.
+      - -c
+      - default_statistics_target=200
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB_METASTORE}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+
+  # ------------------------------------------------------------ lakehouse ---
+  # SeaweedFS in a single container. `weed server` runs master, volume, filer
+  # and the S3 gateway as one process, which saves roughly 1 GB of RAM against
+  # running four containers.
+  seaweedfs:
+    <<: *common
+    image: ${SEAWEEDFS_IMAGE}
+    container_name: edai-seaweedfs
+    ports:
+      - "${SEAWEEDFS_S3_PORT}:8333"        # S3 API, what Spark/HMS/Trino talk to
+      - "${SEAWEEDFS_MASTER_PORT}:9333"    # master UI
+      - "${SEAWEEDFS_VOLUME_PORT}:8080"    # volume UI
+      - "${SEAWEEDFS_FILER_PORT}:8888"     # filer UI
+    command:
+      - server
+      - -dir=/data
+      - -ip=seaweedfs
+      - -master.port=9333
+      - -master.telemetry=false
+      - -volume.port=8080
+      # -volume.max=0 lets the volume count follow free disk space instead of a
+      # fixed number. With a fixed count the server silently runs out: SeaweedFS
+      # maps each S3 bucket to a collection, a new collection needs a new
+      # volume, and once the cap is reached every write to the newest bucket
+      # fails with `No writable volumes and no free volumes left`. The S3 client
+      # surfaces that as `InternalError ... reached max retries`, which reads
+      # like a gateway fault rather than a disk-allocation problem.
+      - -volume.max=0
+      - -volume.minFreeSpacePercent=5
+      - -filer
+      - -filer.port=8888
+      - -s3
+      - -s3.port=8333
+      # Credentials come from the mounted IAM config. Without it SeaweedFS
+      # generates a random identity at first start, and every client in the
+      # platform would have to read it back out of the container.
+      - -s3.config=/etc/seaweedfs/s3.json
+      # Advertised as {bucket}.seaweedfs:8333. All our clients use path-style
+      # addressing, so this only affects redirect responses.
+      - -s3.domainName=seaweedfs:8333
+      - -s3.autoCreateBucket=true
+    volumes:
+      - seaweedfs-data:/data
+      - ./seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9333/cluster/status || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+
+  # -------------------------------------------------------- hive metastore --
+  # Catalog for the lakehouse. Spark writes Parquet and records table and
+  # partition metadata here; Trino reads the same metadata back to find files.
+  hive-metastore:
+    <<: *common
+    image: ${HIVE_METASTORE_IMAGE}
+    container_name: edai-hive-metastore
+    ports:
+      - "${HIVE_METASTORE_PORT}:9083"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+    environment:
+      SERVICE_NAME: metastore
+      SERVICE: metastore
+      # The image's entrypoint blocks with `test -v` until every one of these
+      # exists, including the Azure and Google ones we never use. Empty strings
+      # satisfy the check. This is the image's own quirk, not ours.
+      HIVE_METASTORE_JDBC_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB_METASTORE}
+      HIVE_METASTORE_DRIVER: org.postgresql.Driver
+      HIVE_METASTORE_USER: ${POSTGRES_USER}
+      HIVE_METASTORE_PASSWORD: ${POSTGRES_PASSWORD}
+      HIVE_METASTORE_WAREHOUSE_DIR: s3a://${LAKEHOUSE_BUCKET}/warehouse
+      S3_ENDPOINT: http://seaweedfs:${SEAWEEDFS_S3_PORT}
+      S3_ACCESS_KEY: ${SEAWEEDFS_ACCESS_KEY}
+      S3_SECRET_KEY: ${SEAWEEDFS_SECRET_KEY}
+      S3_PATH_STYLE_ACCESS: "true"
+      REGION: us-east-1
+      GOOGLE_CLOUD_KEY_FILE_PATH: ""
+      AZURE_ADL_CLIENT_ID: ""
+      AZURE_ADL_CREDENTIAL: ""
+      AZURE_ADL_REFRESH_URL: ""
+      AZURE_ABFS_STORAGE_ACCOUNT: ""
+      AZURE_ABFS_ACCESS_KEY: ""
+      AZURE_WASB_STORAGE_ACCOUNT: ""
+      AZURE_ABFS_OAUTH: ""
+      AZURE_ABFS_OAUTH_TOKEN_PROVIDER: ""
+      AZURE_ABFS_OAUTH_CLIENT_ID: ""
+      AZURE_ABFS_OAUTH_SECRET: ""
+      AZURE_ABFS_OAUTH_ENDPOINT: ""
+      AZURE_WASB_ACCESS_KEY: ""
+      IS_RESUME: "true"
+      SERVICE_OPTS: >-
+        -Xms256m -Xmx768m
+        -Dmetastore.schema.verification=false
+        -Dmetastore.expression.proxy=org.apache.hadoop.hive.metastore.DefaultPartitionExpressionProxy
+    deploy:
+      resources:
+        limits:
+          memory: 1280M
+
+  # ------------------------------------------------------------------ trino --
+  # SQL engine over the lakehouse and the warehouse. Query only. It never sits
+  # in the ETL path, so a Trino failure cannot break ingest.
+  trino:
+    <<: *common
+    image: ${TRINO_IMAGE}
+    container_name: edai-trino
+    ports:
+      - "${TRINO_PORT}:8080"
+    depends_on:
+      hive-metastore:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./trino/catalog:/etc/trino/catalog:ro
+      - ./trino/config.properties:/etc/trino/config.properties:ro
+      - ./trino/jvm.config:/etc/trino/jvm.config:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/v1/info >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+    deploy:
+      resources:
+        limits:
+          memory: 2560M
+
+  # ------------------------------------------------------------- bootstrap --
+  # One-shot. Creates the S3 buckets and the Postgres databases, then exits.
+  # Run it with `make bootstrap`. It is safe to run repeatedly.
+  bootstrap:
+    image: ${BOOTSTRAP_IMAGE}
+    build:
+      context: .
+      dockerfile: docker/bootstrap/Dockerfile
+    container_name: edai-bootstrap
+    profiles: ["init"]
+    networks: ["${EDAI_NETWORK}"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+      hive-metastore:
+        condition: service_started
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      S3_ENDPOINT: http://seaweedfs:${SEAWEEDFS_S3_PORT}
+      S3_ACCESS_KEY: ${SEAWEEDFS_ACCESS_KEY}
+      S3_SECRET_KEY: ${SEAWEEDFS_SECRET_KEY}
+      LAKEHOUSE_BUCKET: ${LAKEHOUSE_BUCKET}
+      LANDING_BUCKET: ${LANDING_BUCKET}
+      DB_WAREHOUSE: ${POSTGRES_DB_WAREHOUSE}
+      DB_METASTORE: ${POSTGRES_DB_METASTORE}
+      DB_AIRFLOW: ${POSTGRES_DB_AIRFLOW}
+      DB_DATAHUB: ${POSTGRES_DB_DATAHUB}
+    command: ["python", "-m", "bootstrap.run"]
+
+  # ---------------------------------------------------------------- tools ---
+  # One-shot. Smoke tests and admin scripts, run against whatever is up.
+  #   docker compose --profile tools run --rm tools
+  tools:
+    image: ${TOOLS_IMAGE}
+    build:
+      context: .
+      dockerfile: docker/tools/Dockerfile
+    container_name: edai-tools
+    profiles: ["tools"]
+    networks: ["${EDAI_NETWORK}"]
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      S3_ENDPOINT: http://seaweedfs:${SEAWEEDFS_S3_PORT}
+      S3_ACCESS_KEY: ${SEAWEEDFS_ACCESS_KEY}
+      S3_SECRET_KEY: ${SEAWEEDFS_SECRET_KEY}
+      LAKEHOUSE_BUCKET: ${LAKEHOUSE_BUCKET}
+      TRINO_HOST: trino
+      TRINO_PORT: 8080
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      DB_WAREHOUSE: ${POSTGRES_DB_WAREHOUSE}
+    volumes:
+      # Ad-hoc SQL files. Statements travel as files rather than as
+      # command-line arguments, because shell quoting across PowerShell, wsl,
+      # bash and `docker compose run` mangles a multi-word argument more often
+      # than not. See docker/tools/tools/sql_file.py.
+      - ../misc:/opt/misc:ro
+
+networks:
+  edai-net:
+    name: ${EDAI_NETWORK}
+    driver: bridge
+
+volumes:
+  postgres-data:
+  seaweedfs-data:

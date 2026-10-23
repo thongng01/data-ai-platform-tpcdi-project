@@ -1,0 +1,162 @@
+# Governance: DataHub and its search backend.
+#
+# Behind the `governance` profile. Start with `make up-governance`.
+#
+# Memory is the constraint here. DataHub plus OpenSearch needs about 4 GB, and
+# the whole platform shares 15 GB, so this profile is meant to run on its own:
+# stop the compute profile first if the machine starts swapping. See
+# docs/IaC.md for the measured figures.
+#
+# DataHub's own state lives in the `datahub` database on the shared Postgres
+# instance, and its metadata change log runs through the Kafka broker from the
+# streaming profile. If that broker is not up, GMS still serves reads.
+
+services:
+
+  opensearch:
+    image: ${OPENSEARCH_IMAGE}
+    container_name: edai-opensearch
+    profiles: ["governance"]
+    restart: unless-stopped
+    networks: ["${EDAI_NETWORK}"]
+    environment:
+      discovery.type: single-node
+      # Security plugin off. This is a lab; enabling it means generating
+      # certificates and an admin password for a service nothing authenticates to.
+      DISABLE_SECURITY_PLUGIN: "true"
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      bootstrap.memory_lock: "true"
+      OPENSEARCH_JAVA_OPTS: "-Xms768m -Xmx1024m"
+    ulimits:
+      memlock: {soft: -1, hard: -1}
+      nofile: {soft: 65536, hard: 65536}
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health >/dev/null || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 30
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 2048M
+
+  datahub-upgrade:
+    image: ${DATAHUB_UPGRADE_IMAGE}
+    container_name: edai-datahub-upgrade
+    profiles: ["governance"]
+    networks: ["${EDAI_NETWORK}"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+    environment:
+      DATAHUB_DB_HOST: postgres
+      DATAHUB_DB_PORT: "5432"
+      DATAHUB_DB_NAME: ${POSTGRES_DB_DATAHUB}
+      DATAHUB_DB_USERNAME: ${POSTGRES_USER}
+      DATAHUB_DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DATAHUB_DB_TYPE: postgres
+      EBEAN_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      EBEAN_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      DATAHUB_SERVER_TYPE: quickstart
+      KAFKA_BOOTSTRAP_SERVER: PLAINTEXT://kafka:29092
+    command: ["DOB upgrade"]
+    restart: "no"
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  datahub-gms:
+    image: ${DATAHUB_GMS_IMAGE}
+    container_name: edai-datahub-gms
+    profiles: ["governance"]
+    restart: unless-stopped
+    networks: ["${EDAI_NETWORK}"]
+    ports:
+      - "${DATAHUB_GMS_PORT}:8080"
+    depends_on:
+      datahub-upgrade:
+        condition: service_completed_successfully
+    environment:
+      DATAHUB_SERVER_TYPE: quickstart
+      DATAHUB_DB_HOST: postgres
+      DATAHUB_DB_PORT: "5432"
+      DATAHUB_DB_NAME: ${POSTGRES_DB_DATAHUB}
+      DATAHUB_DB_USERNAME: ${POSTGRES_USER}
+      DATAHUB_DB_PASSWORD: ${POSTGRES_PASSWORD}
+      EBEAN_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      EBEAN_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      KAFKA_BOOTSTRAP_SERVER: PLAINTEXT://kafka:29092
+      MAE_CONSUMER_HOST: datahub-gms
+      MCE_CONSUMER_HOST: datahub-gms
+      ELASTICSEARCH_HOST: opensearch
+      ELASTICSEARCH_PORT: "9200"
+      ELASTICSEARCH_USE_SSL: "false"
+      DATAHUB_AUTH_TYPE: disabled
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 30
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+
+  datahub-frontend:
+    image: ${DATAHUB_FRONTEND_IMAGE}
+    container_name: edai-datahub-frontend
+    profiles: ["governance"]
+    restart: unless-stopped
+    networks: ["${EDAI_NETWORK}"]
+    ports:
+      - "${DATAHUB_FRONTEND_PORT}:9002"
+    environment:
+      DATAHUB_SECRET: YouKnowNothing
+      DATAHUB_GMS_HOST: datahub-gms
+      DATAHUB_GMS_PORT: "8080"
+    depends_on:
+      datahub-gms:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9002/ >/dev/null || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 30
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+# Runs a DataHub ingestion recipe. Recipes live in ../governance/recipes.
+  #   docker compose --profile governance run --rm datahub-ingest \
+  #     /opt/governance/recipes/dp1_lineage.yml
+  #
+  # No depends_on, and only the `governance` profile. See the note on spark-jobs
+  # in compose.compute.yaml: a service in two profiles keeps its dependencies
+  # filtered, which turns `--profile tools` into an invalid project.
+  datahub-ingest:
+    image: ${DATAHUB_INGEST_IMAGE}
+    build:
+      context: .
+      dockerfile: docker/datahub-ingest/Dockerfile
+    container_name: edai-datahub-ingest
+    profiles: ["governance"]
+    networks: ["${EDAI_NETWORK}"]
+    environment:
+      DATAHUB_GMS_HOST: datahub-gms
+      DATAHUB_GMS_PORT: "8080"
+      DATAHUB_GMS_TOKEN: ""
+    volumes:
+      - ../governance:/opt/governance:ro
+    command: ["datahub", "ingest", "-c", "/opt/governance/recipes/dp1_lineage.yml"]
+
+volumes:
+  opensearch-data:
