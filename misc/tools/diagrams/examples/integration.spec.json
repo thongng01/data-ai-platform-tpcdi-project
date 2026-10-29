@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "pages": [{
+    "id": "integration",
+    "title": "Example integration flow",
+    "purpose": "Demonstrate source, process, and storage roles in a creation specification.",
+    "nodes": [
+      {"id": "source", "kind": "data", "role": "external", "label": "Source records", "box": [48, 248, 224, 112]},
+      {"id": "scope", "kind": "group", "label": "Integration service", "box": [312, 144, 608, 336]},
+      {"id": "process", "label": "Validate and transform", "parent": "scope", "box": [32, 104, 224, 112]},
+      {"id": "output", "kind": "data", "label": "Warehouse tables", "parent": "scope", "box": [344, 104, 224, 112], "style": {"shape": "cylinder3", "size": 16}}
+    ],
+    "edges": [
+      {"id": "read", "source": "source", "target": "process", "label": "Read"},
+      {"id": "load", "source": "process", "target": "output", "label": "Load"}
+    ]
+  }]
+}

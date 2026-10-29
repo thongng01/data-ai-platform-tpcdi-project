@@ -1,0 +1,634 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mxfile host="app.diagrams.net" type="device" version="32.6.1">
+  <diagram id="tpc-di-data-flow" name="TPC-DI data flow">
+    <mxGraphModel grid="1" gridSize="10" page="1" pageScale="1" pageWidth="1140" pageHeight="1510" background="#FFFFFF">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="tpc-di-data-flow-canvas" value="" style="fillColor=#FFFFFF;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="0" y="0" width="1140" height="1510" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-edge-52" value="" source="tpc-di-data-flow-process-5" target="tpc-di-data-flow-output-5" parent="1" edge="1" style="edgeStyle=none;rounded=0;html=0;exitPerimeter=0;entryPerimeter=0;exitX=1;exitY=0.5;entryX=0;entryY=0.5;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#486477;strokeWidth=2;fontFamily=Ubuntu Sans;fontSize=17;fontColor=#183246;labelBackgroundColor=#FFFFFF;jumpStyle=arc;jumpSize=7;startArrow=none;endArrow=open;endFill=0;endSize=12;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-edge-51" value="" source="tpc-di-data-flow-input-5" target="tpc-di-data-flow-process-5" parent="1" edge="1" style="edgeStyle=none;rounded=0;html=0;exitPerimeter=0;entryPerimeter=0;exitX=1;exitY=0.5;entryX=0;entryY=0.5;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#486477;strokeWidth=2;fontFamily=Ubuntu Sans;fontSize=17;fontColor=#183246;labelBackgroundColor=#FFFFFF;jumpStyle=arc;jumpSize=7;startArrow=none;endArrow=open;endFill=0;endSize=12;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-edge-44" value="" source="tpc-di-data-flow-process-4" target="tpc-di-data-flow-output-4" parent="1" edge="1" style="edgeStyle=none;rounded=0;html=0;exitPerimeter=0;entryPerimeter=0;exitX=1;exitY=0.5;entryX=0;entryY=0.5;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#486477;strokeWidth=2;fontFamily=Ubuntu Sans;fontSize=17;fontColor=#183246;labelBackgroundColor=#FFFFFF;jumpStyle=arc;jumpSize=7;startArrow=none;endArrow=open;endFill=0;endSize=12;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-edge-43" value="" source="tpc-di-data-flow-input-4" target="tpc-di-data-flow-process-4" parent="1" edge="1" style="edgeStyle=none;rounded=0;html=0;exitPerimeter=0;entryPerimeter=0;exitX=1;exitY=0.5;entryX=0;entryY=0.5;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#486477;strokeWidth=2;fontFamily=Ubuntu Sans;fontSize=17;fontColor=#183246;labelBackgroundColor=#FFFFFF;jumpStyle=arc;jumpSize=7;startArrow=none;endArrow=open;endFill=0;endSize=12;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-edge-36" value="" source="tpc-di-data-flow-process-3" target="tpc-di-data-flow-output-3" parent="1" edge="1" style="edgeStyle=none;rounded=0;html=0;exitPerimeter=0;entryPerimeter=0;exitX=1;exitY=0.5;entryX=0;entryY=0.5;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#486477;strokeWidth=2;fontFamily=Ubuntu Sans;fontSize=17;fontColor=#183246;labelBackgroundColor=#FFFFFF;jumpStyle=arc;jumpSize=7;startArrow=none;endArrow=open;endFill=0;endSize=12;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-edge-35" value="" source="tpc-di-data-flow-input-3" target="tpc-di-data-flow-process-3" parent="1" edge="1" style="edgeStyle=none;rounded=0;html=0;exitPerimeter=0;entryPerimeter=0;exitX=1;exitY=0.5;entryX=0;entryY=0.5;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#486477;strokeWidth=2;fontFamily=Ubuntu Sans;fontSize=17;fontColor=#183246;labelBackgroundColor=#FFFFFF;jumpStyle=arc;jumpSize=7;startArrow=none;endArrow=open;endFill=0;endSize=12;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-edge-28" value="" source="tpc-di-data-flow-process-2" target="tpc-di-data-flow-output-2" parent="1" edge="1" style="edgeStyle=none;rounded=0;html=0;exitPerimeter=0;entryPerimeter=0;exitX=1;exitY=0.5;entryX=0;entryY=0.5;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#486477;strokeWidth=2;fontFamily=Ubuntu Sans;fontSize=17;fontColor=#183246;labelBackgroundColor=#FFFFFF;jumpStyle=arc;jumpSize=7;startArrow=none;endArrow=open;endFill=0;endSize=12;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-edge-27" value="" source="tpc-di-data-flow-input-2" target="tpc-di-data-flow-process-2" parent="1" edge="1" style="edgeStyle=none;rounded=0;html=0;exitPerimeter=0;entryPerimeter=0;exitX=1;exitY=0.5;entryX=0;entryY=0.5;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#486477;strokeWidth=2;fontFamily=Ubuntu Sans;fontSize=17;fontColor=#183246;labelBackgroundColor=#FFFFFF;jumpStyle=arc;jumpSize=7;startArrow=none;endArrow=open;endFill=0;endSize=12;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-edge-20" value="" source="tpc-di-data-flow-process-1" target="tpc-di-data-flow-output-1" parent="1" edge="1" style="edgeStyle=none;rounded=0;html=0;exitPerimeter=0;entryPerimeter=0;exitX=1;exitY=0.5;entryX=0;entryY=0.5;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#486477;strokeWidth=2;fontFamily=Ubuntu Sans;fontSize=17;fontColor=#183246;labelBackgroundColor=#FFFFFF;jumpStyle=arc;jumpSize=7;startArrow=none;endArrow=open;endFill=0;endSize=12;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-edge-19" value="" source="tpc-di-data-flow-input-1" target="tpc-di-data-flow-process-1" parent="1" edge="1" style="edgeStyle=none;rounded=0;html=0;exitPerimeter=0;entryPerimeter=0;exitX=1;exitY=0.5;entryX=0;entryY=0.5;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#486477;strokeWidth=2;fontFamily=Ubuntu Sans;fontSize=17;fontColor=#183246;labelBackgroundColor=#FFFFFF;jumpStyle=arc;jumpSize=7;startArrow=none;endArrow=open;endFill=0;endSize=12;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-edge-12" value="" source="tpc-di-data-flow-process-0" target="tpc-di-data-flow-output-0" parent="1" edge="1" style="edgeStyle=none;rounded=0;html=0;exitPerimeter=0;entryPerimeter=0;exitX=1;exitY=0.5;entryX=0;entryY=0.5;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#486477;strokeWidth=2;fontFamily=Ubuntu Sans;fontSize=17;fontColor=#183246;labelBackgroundColor=#FFFFFF;jumpStyle=arc;jumpSize=7;startArrow=none;endArrow=open;endFill=0;endSize=12;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-edge-11" value="" source="tpc-di-data-flow-input-0" target="tpc-di-data-flow-process-0" parent="1" edge="1" style="edgeStyle=none;rounded=0;html=0;exitPerimeter=0;entryPerimeter=0;exitX=1;exitY=0.5;entryX=0;entryY=0.5;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#486477;strokeWidth=2;fontFamily=Ubuntu Sans;fontSize=17;fontColor=#183246;labelBackgroundColor=#FFFFFF;jumpStyle=arc;jumpSize=7;startArrow=none;endArrow=open;endFill=0;endSize=12;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-1" value="TPC-DI data flow" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=34;fontColor=#244f72;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="24" width="1060" height="56" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-2" value="Extracted files" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#183246;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="100" width="300" height="32" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-3" value="Integration work" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#183246;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="440" y="100" width="300" height="32" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-4" value="Warehouse tables" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#183246;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="800" y="100" width="300" height="32" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-input-0" value="" style="fillColor=#FFFFFF;strokeColor=#244f72;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="40" y="150" width="310" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-input-0-head" value="" style="fillColor=#244f72;strokeColor=none;" vertex="1" parent="tpc-di-data-flow-input-0">
+          <mxGeometry x="0" y="0" width="310" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-5" value="Reference data" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-data-flow-input-0">
+          <mxGeometry x="14" y="0" width="282" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-6" value="Date.txt, Time.txt&#10;Industry.txt, StatusType.txt&#10;TaxRate.txt, TradeType.txt" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-data-flow-input-0">
+          <mxGeometry x="14" y="48" width="282" height="104" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-process-0" value="" style="fillColor=#FFFFFF;strokeColor=#4b6072;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="440" y="150" width="280" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-process-0-head" value="" style="fillColor=#4b6072;strokeColor=none;" vertex="1" parent="tpc-di-data-flow-process-0">
+          <mxGeometry x="0" y="0" width="280" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-7" value="Load shared lookups" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-data-flow-process-0">
+          <mxGeometry x="14" y="0" width="252" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-8" value="Load calendar values,&#10;code descriptions,&#10;rates, and flags." style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-data-flow-process-0">
+          <mxGeometry x="14" y="48" width="252" height="104" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-output-0" value="" style="fillColor=#FFFFFF;strokeColor=#245e54;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="800" y="150" width="300" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-output-0-head" value="" style="fillColor=#245e54;strokeColor=none;" vertex="1" parent="tpc-di-data-flow-output-0">
+          <mxGeometry x="0" y="0" width="300" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-9" value="Reference tables" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-data-flow-output-0">
+          <mxGeometry x="14" y="0" width="272" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-10" value="DimDate, DimTime&#10;Industry, StatusType&#10;TaxRate, TradeType" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-data-flow-output-0">
+          <mxGeometry x="14" y="48" width="272" height="104" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-input-1" value="" style="fillColor=#FFFFFF;strokeColor=#244f72;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="40" y="350" width="310" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-input-1-head" value="" style="fillColor=#244f72;strokeColor=none;" vertex="1" parent="tpc-di-data-flow-input-1">
+          <mxGeometry x="0" y="0" width="310" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-13" value="Customers and accounts" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-data-flow-input-1">
+          <mxGeometry x="14" y="0" width="282" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-14" value="CustomerMgmt.xml&#10;Customer.txt, Account.txt&#10;HR.csv, Prospect.csv" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-data-flow-input-1">
+          <mxGeometry x="14" y="48" width="282" height="104" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-process-1" value="" style="fillColor=#FFFFFF;strokeColor=#4b6072;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="440" y="350" width="280" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-process-1-head" value="" style="fillColor=#4b6072;strokeColor=none;" vertex="1" parent="tpc-di-data-flow-process-1">
+          <mxGeometry x="0" y="0" width="280" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-15" value="Combine and enrich" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-data-flow-process-1">
+          <mxGeometry x="14" y="0" width="252" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-16" value="Apply changes, match&#10;prospects, and keep&#10;daily versions." style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-data-flow-process-1">
+          <mxGeometry x="14" y="48" width="252" height="104" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-output-1" value="" style="fillColor=#FFFFFF;strokeColor=#245e54;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="800" y="350" width="300" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-output-1-head" value="" style="fillColor=#245e54;strokeColor=none;" vertex="1" parent="tpc-di-data-flow-output-1">
+          <mxGeometry x="0" y="0" width="300" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-17" value="Customer tables" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-data-flow-output-1">
+          <mxGeometry x="14" y="0" width="272" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-18" value="DimCustomer, DimAccount&#10;DimBroker, Prospect" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-data-flow-output-1">
+          <mxGeometry x="14" y="48" width="272" height="104" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-input-2" value="" style="fillColor=#FFFFFF;strokeColor=#244f72;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="40" y="550" width="310" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-input-2-head" value="" style="fillColor=#244f72;strokeColor=none;" vertex="1" parent="tpc-di-data-flow-input-2">
+          <mxGeometry x="0" y="0" width="310" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-21" value="Company information" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-data-flow-input-2">
+          <mxGeometry x="14" y="0" width="282" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-22" value="FINWIRE files contain&#10;CMP, SEC, and FIN records." style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-data-flow-input-2">
+          <mxGeometry x="14" y="48" width="282" height="104" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-process-2" value="" style="fillColor=#FFFFFF;strokeColor=#4b6072;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="440" y="550" width="280" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-process-2-head" value="" style="fillColor=#4b6072;strokeColor=none;" vertex="1" parent="tpc-di-data-flow-process-2">
+          <mxGeometry x="0" y="0" width="280" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-23" value="Resolve companies" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-data-flow-process-2">
+          <mxGeometry x="14" y="0" width="252" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-24" value="Match company identifiers&#10;and keep dated company&#10;and security versions." style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-data-flow-process-2">
+          <mxGeometry x="14" y="48" width="252" height="104" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-output-2" value="" style="fillColor=#FFFFFF;strokeColor=#245e54;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="800" y="550" width="300" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-output-2-head" value="" style="fillColor=#245e54;strokeColor=none;" vertex="1" parent="tpc-di-data-flow-output-2">
+          <mxGeometry x="0" y="0" width="300" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-25" value="Company tables" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-data-flow-output-2">
+          <mxGeometry x="14" y="0" width="272" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-26" value="DimCompany, DimSecurity&#10;Financial" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-data-flow-output-2">
+          <mxGeometry x="14" y="48" width="272" height="104" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-input-3" value="" style="fillColor=#FFFFFF;strokeColor=#244f72;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="40" y="750" width="310" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-input-3-head" value="" style="fillColor=#244f72;strokeColor=none;" vertex="1" parent="tpc-di-data-flow-input-3">
+          <mxGeometry x="0" y="0" width="310" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-29" value="Trade records" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-data-flow-input-3">
+          <mxGeometry x="14" y="0" width="282" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-30" value="Trade.txt&#10;TradeHistory.txt" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-data-flow-input-3">
+          <mxGeometry x="14" y="48" width="282" height="104" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-process-3" value="" style="fillColor=#FFFFFF;strokeColor=#4b6072;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="440" y="750" width="280" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-process-3-head" value="" style="fillColor=#4b6072;strokeColor=none;" vertex="1" parent="tpc-di-data-flow-process-3">
+          <mxGeometry x="0" y="0" width="280" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-31" value="Build trade state" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-data-flow-process-3">
+          <mxGeometry x="14" y="0" width="252" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-32" value="Resolve dimension keys&#10;and combine trade&#10;attributes and times." style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-data-flow-process-3">
+          <mxGeometry x="14" y="48" width="252" height="104" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-output-3" value="" style="fillColor=#FFFFFF;strokeColor=#245e54;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="800" y="750" width="300" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-output-3-head" value="" style="fillColor=#245e54;strokeColor=none;" vertex="1" parent="tpc-di-data-flow-output-3">
+          <mxGeometry x="0" y="0" width="300" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-33" value="Trade table" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-data-flow-output-3">
+          <mxGeometry x="14" y="0" width="272" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-34" value="DimTrade" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-data-flow-output-3">
+          <mxGeometry x="14" y="48" width="272" height="104" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-input-4" value="" style="fillColor=#FFFFFF;strokeColor=#244f72;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="40" y="950" width="310" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-input-4-head" value="" style="fillColor=#244f72;strokeColor=none;" vertex="1" parent="tpc-di-data-flow-input-4">
+          <mxGeometry x="0" y="0" width="310" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-37" value="Activity records" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-data-flow-input-4">
+          <mxGeometry x="14" y="0" width="282" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-38" value="CashTransaction.txt&#10;HoldingHistory.txt&#10;DailyMarket.txt&#10;WatchHistory.txt" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-data-flow-input-4">
+          <mxGeometry x="14" y="48" width="282" height="104" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-process-4" value="" style="fillColor=#FFFFFF;strokeColor=#4b6072;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="440" y="950" width="280" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-process-4-head" value="" style="fillColor=#4b6072;strokeColor=none;" vertex="1" parent="tpc-di-data-flow-process-4">
+          <mxGeometry x="0" y="0" width="280" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-39" value="Calculate facts" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-data-flow-process-4">
+          <mxGeometry x="14" y="0" width="252" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-40" value="Carry balances forward,&#10;resolve holdings, calculate&#10;market measures, and&#10;match watch actions." style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-data-flow-process-4">
+          <mxGeometry x="14" y="48" width="252" height="104" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-output-4" value="" style="fillColor=#FFFFFF;strokeColor=#245e54;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="800" y="950" width="300" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-output-4-head" value="" style="fillColor=#245e54;strokeColor=none;" vertex="1" parent="tpc-di-data-flow-output-4">
+          <mxGeometry x="0" y="0" width="300" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-41" value="Fact tables" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-data-flow-output-4">
+          <mxGeometry x="14" y="0" width="272" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-42" value="FactCashBalances&#10;FactHoldings&#10;FactMarketHistory&#10;FactWatches" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-data-flow-output-4">
+          <mxGeometry x="14" y="48" width="272" height="104" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-input-5" value="" style="fillColor=#FFFFFF;strokeColor=#244f72;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="40" y="1150" width="310" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-input-5-head" value="" style="fillColor=#244f72;strokeColor=none;" vertex="1" parent="tpc-di-data-flow-input-5">
+          <mxGeometry x="0" y="0" width="310" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-45" value="Audit records" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-data-flow-input-5">
+          <mxGeometry x="14" y="0" width="282" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-46" value="*_audit.csv" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-data-flow-input-5">
+          <mxGeometry x="14" y="48" width="282" height="104" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-process-5" value="" style="fillColor=#FFFFFF;strokeColor=#4b6072;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="440" y="1150" width="280" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-process-5-head" value="" style="fillColor=#4b6072;strokeColor=none;" vertex="1" parent="tpc-di-data-flow-process-5">
+          <mxGeometry x="0" y="0" width="280" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-47" value="Load observations" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-data-flow-process-5">
+          <mxGeometry x="14" y="0" width="252" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-48" value="Copy the generated&#10;audit observations." style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-data-flow-process-5">
+          <mxGeometry x="14" y="48" width="252" height="104" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-output-5" value="" style="fillColor=#FFFFFF;strokeColor=#245e54;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="800" y="1150" width="300" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-output-5-head" value="" style="fillColor=#245e54;strokeColor=none;" vertex="1" parent="tpc-di-data-flow-output-5">
+          <mxGeometry x="0" y="0" width="300" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-49" value="Audit table" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-data-flow-output-5">
+          <mxGeometry x="14" y="0" width="272" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-50" value="Audit" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-data-flow-output-5">
+          <mxGeometry x="14" y="48" width="272" height="104" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-shared" value="" style="fillColor=#eef3f6;strokeColor=#c7d5df;" vertex="1" parent="1">
+          <mxGeometry x="40" y="1360" width="1060" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-53" value="Shared load information" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#244f72;fontStyle=1;" vertex="1" parent="tpc-di-data-flow-shared">
+          <mxGeometry x="16" y="8" width="1028" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-data-flow-text-54" value="BatchDate.txt supplies the batch date. Integration steps write alerts and status to DImessages.&#10;Related dimension versions must exist before facts are loaded. Holdings also depend on DimTrade." style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-data-flow-shared">
+          <mxGeometry x="16" y="42" width="1028" height="60" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="tpc-di-input-overview" name="TPC-DI input overview">
+    <mxGraphModel grid="1" gridSize="10" page="1" pageScale="1" pageWidth="1140" pageHeight="1160" background="#FFFFFF">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="tpc-di-input-overview-canvas" value="" style="fillColor=#FFFFFF;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="0" y="0" width="1140" height="1160" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-edge-22" value="Company name or CIK" source="tpc-di-input-overview-security" target="tpc-di-input-overview-company" parent="1" edge="1" style="edgeStyle=none;rounded=0;html=0;exitPerimeter=0;entryPerimeter=0;exitX=0.5;exitY=1;entryX=0.5;entryY=0;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#486477;strokeWidth=2;fontFamily=Ubuntu Sans;fontSize=17;fontColor=#183246;labelBackgroundColor=#FFFFFF;jumpStyle=arc;jumpSize=7;startArrow=none;endArrow=open;endFill=0;endSize=12;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="0" y="30" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-edge-21" value="Symbol" source="tpc-di-input-overview-watch" target="tpc-di-input-overview-security" parent="1" edge="1" style="edgeStyle=none;rounded=0;html=0;exitPerimeter=0;entryPerimeter=0;exitX=0.5;exitY=1;entryX=0.25;entryY=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#486477;strokeWidth=2;fontFamily=Ubuntu Sans;fontSize=17;fontColor=#183246;labelBackgroundColor=#FFFFFF;jumpStyle=arc;jumpSize=7;startArrow=none;endArrow=open;endFill=0;endSize=12;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="0" y="18" as="offset" />
+            <Array as="points">
+              <mxPoint x="190.0" y="720" />
+              <mxPoint x="875.0" y="720" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-edge-20" value="Customer ID" source="tpc-di-input-overview-watch" target="tpc-di-input-overview-customer" parent="1" edge="1" style="edgeStyle=none;rounded=0;html=0;exitPerimeter=0;entryPerimeter=0;exitX=0.5;exitY=0;entryX=0.5;entryY=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#486477;strokeWidth=2;fontFamily=Ubuntu Sans;fontSize=17;fontColor=#183246;labelBackgroundColor=#FFFFFF;jumpStyle=arc;jumpSize=7;startArrow=none;endArrow=open;endFill=0;endSize=12;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="-70" y="0" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-edge-19" value="Symbol" source="tpc-di-input-overview-trade" target="tpc-di-input-overview-security" parent="1" edge="1" style="edgeStyle=none;rounded=0;html=0;exitPerimeter=0;entryPerimeter=0;exitX=1;exitY=0.5;entryX=0;entryY=0.5;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#486477;strokeWidth=2;fontFamily=Ubuntu Sans;fontSize=17;fontColor=#183246;labelBackgroundColor=#FFFFFF;jumpStyle=arc;jumpSize=7;startArrow=none;endArrow=open;endFill=0;endSize=12;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="0" y="-18" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-edge-18" value="Account ID" source="tpc-di-input-overview-trade" target="tpc-di-input-overview-account" parent="1" edge="1" style="edgeStyle=none;rounded=0;html=0;exitPerimeter=0;entryPerimeter=0;exitX=0.5;exitY=0;entryX=0.5;entryY=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#486477;strokeWidth=2;fontFamily=Ubuntu Sans;fontSize=17;fontColor=#183246;labelBackgroundColor=#FFFFFF;jumpStyle=arc;jumpSize=7;startArrow=none;endArrow=open;endFill=0;endSize=12;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="65" y="0" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-edge-17" value="Broker ID" source="tpc-di-input-overview-account" target="tpc-di-input-overview-broker" parent="1" edge="1" style="edgeStyle=none;rounded=0;html=0;exitPerimeter=0;entryPerimeter=0;exitX=1;exitY=0.5;entryX=0;entryY=0.5;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#486477;strokeWidth=2;fontFamily=Ubuntu Sans;fontSize=17;fontColor=#183246;labelBackgroundColor=#FFFFFF;jumpStyle=arc;jumpSize=7;startArrow=none;endArrow=open;endFill=0;endSize=12;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="0" y="-18" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-edge-16" value="Customer&#10;ID" source="tpc-di-input-overview-account" target="tpc-di-input-overview-customer" parent="1" edge="1" style="edgeStyle=none;rounded=0;html=0;exitPerimeter=0;entryPerimeter=0;exitX=0;exitY=0.5;entryX=1;entryY=0.5;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#486477;strokeWidth=2;fontFamily=Ubuntu Sans;fontSize=17;fontColor=#183246;labelBackgroundColor=#FFFFFF;jumpStyle=arc;jumpSize=7;startArrow=none;endArrow=open;endFill=0;endSize=12;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="0" y="-26" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-text-1" value="TPC-DI input overview" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=34;fontColor=#244f72;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="24" width="1060" height="56" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-customer" value="" style="fillColor=#FFFFFF;strokeColor=#244f72;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="40" y="120" width="300" height="200" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-customer-head" value="" style="fillColor=#244f72;strokeColor=none;" vertex="1" parent="tpc-di-input-overview-customer">
+          <mxGeometry x="0" y="0" width="300" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-text-2" value="Customers" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-input-overview-customer">
+          <mxGeometry x="14" y="0" width="272" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-text-3" value="CustomerMgmt.xml supplies&#10;historical customer actions.&#10;Customer.txt supplies changes.&#10;Prospect.csv adds demographics." style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-input-overview-customer">
+          <mxGeometry x="14" y="48" width="272" height="144" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-account" value="" style="fillColor=#FFFFFF;strokeColor=#244f72;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="420" y="120" width="300" height="200" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-account-head" value="" style="fillColor=#244f72;strokeColor=none;" vertex="1" parent="tpc-di-input-overview-account">
+          <mxGeometry x="0" y="0" width="300" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-text-4" value="Accounts and cash" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-input-overview-account">
+          <mxGeometry x="14" y="0" width="272" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-text-5" value="CustomerMgmt.xml supplies&#10;historical account actions.&#10;Account.txt supplies changes.&#10;CashTransaction.txt moves cash." style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-input-overview-account">
+          <mxGeometry x="14" y="48" width="272" height="144" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-broker" value="" style="fillColor=#FFFFFF;strokeColor=#244f72;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="800" y="120" width="300" height="200" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-broker-head" value="" style="fillColor=#244f72;strokeColor=none;" vertex="1" parent="tpc-di-input-overview-broker">
+          <mxGeometry x="0" y="0" width="300" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-text-6" value="Employees" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-input-overview-broker">
+          <mxGeometry x="14" y="0" width="272" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-text-7" value="HR.csv describes employees.&#10;Account broker identifiers&#10;refer to HR employee identifiers." style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-input-overview-broker">
+          <mxGeometry x="14" y="48" width="272" height="144" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-watch" value="" style="fillColor=#FFFFFF;strokeColor=#244f72;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="40" y="450" width="300" height="200" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-watch-head" value="" style="fillColor=#244f72;strokeColor=none;" vertex="1" parent="tpc-di-input-overview-watch">
+          <mxGeometry x="0" y="0" width="300" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-text-8" value="Watch actions" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-input-overview-watch">
+          <mxGeometry x="14" y="0" width="272" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-text-9" value="WatchHistory.txt records when&#10;a customer starts or stops&#10;watching a security." style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-input-overview-watch">
+          <mxGeometry x="14" y="48" width="272" height="144" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-trade" value="" style="fillColor=#FFFFFF;strokeColor=#244f72;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="420" y="450" width="300" height="200" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-trade-head" value="" style="fillColor=#244f72;strokeColor=none;" vertex="1" parent="tpc-di-input-overview-trade">
+          <mxGeometry x="0" y="0" width="300" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-text-10" value="Trades and holdings" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-input-overview-trade">
+          <mxGeometry x="14" y="0" width="272" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-text-11" value="Trade.txt supplies trade states.&#10;TradeHistory.txt supplies&#10;historical status changes.&#10;HoldingHistory.txt records changes." style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-input-overview-trade">
+          <mxGeometry x="14" y="48" width="272" height="144" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-security" value="" style="fillColor=#FFFFFF;strokeColor=#244f72;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="800" y="450" width="300" height="200" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-security-head" value="" style="fillColor=#244f72;strokeColor=none;" vertex="1" parent="tpc-di-input-overview-security">
+          <mxGeometry x="0" y="0" width="300" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-text-12" value="Securities and prices" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-input-overview-security">
+          <mxGeometry x="14" y="0" width="272" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-text-13" value="FINWIRE SEC describes securities.&#10;DailyMarket.txt supplies daily&#10;prices and trading volume." style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-input-overview-security">
+          <mxGeometry x="14" y="48" width="272" height="144" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-company" value="" style="fillColor=#FFFFFF;strokeColor=#244f72;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="800" y="800" width="300" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-company-head" value="" style="fillColor=#244f72;strokeColor=none;" vertex="1" parent="tpc-di-input-overview-company">
+          <mxGeometry x="0" y="0" width="300" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-text-14" value="Companies" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-input-overview-company">
+          <mxGeometry x="14" y="0" width="272" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-text-15" value="FINWIRE CMP describes companies.&#10;FINWIRE FIN reports quarterly&#10;financial results." style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-input-overview-company">
+          <mxGeometry x="14" y="48" width="272" height="104" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-reference" value="" style="fillColor=#FFFFFF;strokeColor=#244f72;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="40" y="800" width="680" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-reference-head" value="" style="fillColor=#244f72;strokeColor=none;" vertex="1" parent="tpc-di-input-overview-reference">
+          <mxGeometry x="0" y="0" width="680" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-text-23" value="Shared reference files" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-input-overview-reference">
+          <mxGeometry x="14" y="0" width="652" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-text-24" value="Date.txt and Time.txt define calendar values.&#10;Industry.txt, StatusType.txt, TaxRate.txt, and TradeType.txt&#10;supply code descriptions, rates, and flags." style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-input-overview-reference">
+          <mxGeometry x="14" y="48" width="652" height="104" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-load" value="" style="fillColor=#FFFFFF;strokeColor=#244f72;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="40" y="1010" width="1060" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-load-head" value="" style="fillColor=#244f72;strokeColor=none;" vertex="1" parent="tpc-di-input-overview-load">
+          <mxGeometry x="0" y="0" width="1060" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-text-25" value="Load records" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-input-overview-load">
+          <mxGeometry x="14" y="0" width="1032" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-input-overview-text-26" value="BatchDate.txt supplies the batch date. The *_audit.csv files supply generated audit observations." style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-input-overview-load">
+          <mxGeometry x="14" y="48" width="1032" height="54" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="tpc-di-warehouse-overview" name="TPC-DI warehouse overview">
+    <mxGraphModel grid="1" gridSize="10" page="1" pageScale="1" pageWidth="1140" pageHeight="1150" background="#FFFFFF">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="tpc-di-warehouse-overview-canvas" value="" style="fillColor=#FFFFFF;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="0" y="0" width="1140" height="1150" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-edge-25" value="" source="tpc-di-warehouse-overview-watch" target="tpc-di-warehouse-overview-customer" parent="1" edge="1" style="edgeStyle=none;rounded=0;html=0;exitPerimeter=0;entryPerimeter=0;exitX=0;exitY=0.5;entryX=0.8;entryY=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#486477;strokeWidth=2;fontFamily=Ubuntu Sans;fontSize=17;fontColor=#183246;labelBackgroundColor=#FFFFFF;jumpStyle=arc;jumpSize=7;startArrow=none;endArrow=open;endFill=0;endSize=12;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="760" y="742.5" />
+              <mxPoint x="760" y="640" />
+              <mxPoint x="385" y="640" />
+              <mxPoint x="385" y="355" />
+              <mxPoint x="280" y="355" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-edge-24" value="" source="tpc-di-warehouse-overview-watch" target="tpc-di-warehouse-overview-company" parent="1" edge="1" style="edgeStyle=none;rounded=0;html=0;exitPerimeter=0;entryPerimeter=0;exitX=1;exitY=0.5;entryX=1;entryY=0.5;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#486477;strokeWidth=2;fontFamily=Ubuntu Sans;fontSize=17;fontColor=#183246;labelBackgroundColor=#FFFFFF;jumpStyle=arc;jumpSize=7;startArrow=none;endArrow=open;endFill=0;endSize=12;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1124" y="742.5" />
+              <mxPoint x="1124" y="220.0" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-edge-23" value="" source="tpc-di-warehouse-overview-holding" target="tpc-di-warehouse-overview-trade" parent="1" edge="1" style="edgeStyle=none;rounded=0;html=0;exitPerimeter=0;entryPerimeter=0;exitX=0.5;exitY=0;entryX=0.5;entryY=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#486477;strokeWidth=2;fontFamily=Ubuntu Sans;fontSize=17;fontColor=#183246;labelBackgroundColor=#FFFFFF;jumpStyle=arc;jumpSize=7;startArrow=none;endArrow=open;endFill=0;endSize=12;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-edge-22" value="" source="tpc-di-warehouse-overview-prospect" target="tpc-di-warehouse-overview-customer" parent="1" edge="1" style="edgeStyle=none;rounded=0;html=0;exitPerimeter=0;entryPerimeter=0;exitX=0;exitY=0.5;entryX=0;entryY=0.5;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#486477;strokeWidth=2;fontFamily=Ubuntu Sans;fontSize=17;fontColor=#183246;labelBackgroundColor=#FFFFFF;jumpStyle=arc;jumpSize=7;startArrow=none;endArrow=open;endFill=0;endSize=12;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="16" y="742.5" />
+              <mxPoint x="16" y="220.0" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-edge-21" value="" source="tpc-di-warehouse-overview-market" target="tpc-di-warehouse-overview-company" parent="1" edge="1" style="edgeStyle=none;rounded=0;html=0;exitPerimeter=0;entryPerimeter=0;exitX=0.5;exitY=0;entryX=0.5;entryY=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#486477;strokeWidth=2;fontFamily=Ubuntu Sans;fontSize=17;fontColor=#183246;labelBackgroundColor=#FFFFFF;jumpStyle=arc;jumpSize=7;startArrow=none;endArrow=open;endFill=0;endSize=12;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-edge-20" value="" source="tpc-di-warehouse-overview-cash" target="tpc-di-warehouse-overview-customer" parent="1" edge="1" style="edgeStyle=none;rounded=0;html=0;exitPerimeter=0;entryPerimeter=0;exitX=0.5;exitY=0;entryX=0.5;entryY=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#486477;strokeWidth=2;fontFamily=Ubuntu Sans;fontSize=17;fontColor=#183246;labelBackgroundColor=#FFFFFF;jumpStyle=arc;jumpSize=7;startArrow=none;endArrow=open;endFill=0;endSize=12;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-edge-19" value="" source="tpc-di-warehouse-overview-trade" target="tpc-di-warehouse-overview-company" parent="1" edge="1" style="edgeStyle=none;rounded=0;html=0;exitPerimeter=0;entryPerimeter=0;exitX=1;exitY=0.5;entryX=0;entryY=0.7;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#486477;strokeWidth=2;fontFamily=Ubuntu Sans;fontSize=17;fontColor=#183246;labelBackgroundColor=#FFFFFF;jumpStyle=arc;jumpSize=7;startArrow=none;endArrow=open;endFill=0;endSize=12;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="770" y="510.0" />
+              <mxPoint x="770" y="260.0" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-edge-18" value="" source="tpc-di-warehouse-overview-trade" target="tpc-di-warehouse-overview-customer" parent="1" edge="1" style="edgeStyle=none;rounded=0;html=0;exitPerimeter=0;entryPerimeter=0;exitX=0;exitY=0.5;entryX=1;entryY=0.7;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#486477;strokeWidth=2;fontFamily=Ubuntu Sans;fontSize=17;fontColor=#183246;labelBackgroundColor=#FFFFFF;jumpStyle=arc;jumpSize=7;startArrow=none;endArrow=open;endFill=0;endSize=12;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="370" y="510.0" />
+              <mxPoint x="370" y="260.0" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-text-1" value="TPC-DI warehouse overview" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=34;fontColor=#245e54;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="24" width="1060" height="56" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-customer" value="" style="fillColor=#FFFFFF;strokeColor=#245e54;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="40" y="120" width="300" height="200" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-customer-head" value="" style="fillColor=#245e54;strokeColor=none;" vertex="1" parent="tpc-di-warehouse-overview-customer">
+          <mxGeometry x="0" y="0" width="300" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-text-2" value="Customers and accounts" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-overview-customer">
+          <mxGeometry x="14" y="0" width="272" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-text-3" value="DimCustomer&#10;DimAccount&#10;DimBroker" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-warehouse-overview-customer">
+          <mxGeometry x="14" y="48" width="272" height="144" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-company" value="" style="fillColor=#FFFFFF;strokeColor=#245e54;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="800" y="120" width="300" height="200" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-company-head" value="" style="fillColor=#245e54;strokeColor=none;" vertex="1" parent="tpc-di-warehouse-overview-company">
+          <mxGeometry x="0" y="0" width="300" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-text-4" value="Companies and securities" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-overview-company">
+          <mxGeometry x="14" y="0" width="272" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-text-5" value="DimCompany&#10;DimSecurity&#10;Financial" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-warehouse-overview-company">
+          <mxGeometry x="14" y="48" width="272" height="144" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-trade" value="" style="fillColor=#FFFFFF;strokeColor=#245e54;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="420" y="430" width="300" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-trade-head" value="" style="fillColor=#245e54;strokeColor=none;" vertex="1" parent="tpc-di-warehouse-overview-trade">
+          <mxGeometry x="0" y="0" width="300" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-text-6" value="DimTrade" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-overview-trade">
+          <mxGeometry x="14" y="0" width="272" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-text-7" value="Each trade has one row.&#10;The row holds its state and&#10;original dimension context." style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-warehouse-overview-trade">
+          <mxGeometry x="14" y="48" width="272" height="104" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-cash" value="" style="fillColor=#FFFFFF;strokeColor=#245e54;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="40" y="430" width="300" height="125" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-cash-head" value="" style="fillColor=#245e54;strokeColor=none;" vertex="1" parent="tpc-di-warehouse-overview-cash">
+          <mxGeometry x="0" y="0" width="300" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-text-8" value="FactCashBalances" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-overview-cash">
+          <mxGeometry x="14" y="0" width="272" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-text-9" value="Each row holds an account&#10;balance after daily changes." style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-warehouse-overview-cash">
+          <mxGeometry x="14" y="48" width="272" height="69" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-market" value="" style="fillColor=#FFFFFF;strokeColor=#245e54;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="800" y="430" width="300" height="125" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-market-head" value="" style="fillColor=#245e54;strokeColor=none;" vertex="1" parent="tpc-di-warehouse-overview-market">
+          <mxGeometry x="0" y="0" width="300" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-text-10" value="FactMarketHistory" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-overview-market">
+          <mxGeometry x="14" y="0" width="272" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-text-11" value="Each row holds market measures&#10;for one security and date." style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-warehouse-overview-market">
+          <mxGeometry x="14" y="48" width="272" height="69" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-prospect" value="" style="fillColor=#FFFFFF;strokeColor=#245e54;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="40" y="680" width="300" height="125" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-prospect-head" value="" style="fillColor=#245e54;strokeColor=none;" vertex="1" parent="tpc-di-warehouse-overview-prospect">
+          <mxGeometry x="0" y="0" width="300" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-text-12" value="Prospect" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-overview-prospect">
+          <mxGeometry x="14" y="0" width="272" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-text-13" value="Agency prospect attributes&#10;match customers by name&#10;and address." style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-warehouse-overview-prospect">
+          <mxGeometry x="14" y="48" width="272" height="69" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-holding" value="" style="fillColor=#FFFFFF;strokeColor=#245e54;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="420" y="680" width="300" height="125" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-holding-head" value="" style="fillColor=#245e54;strokeColor=none;" vertex="1" parent="tpc-di-warehouse-overview-holding">
+          <mxGeometry x="0" y="0" width="300" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-text-14" value="FactHoldings" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-overview-holding">
+          <mxGeometry x="14" y="0" width="272" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-text-15" value="Each row records a holding&#10;change caused by a trade." style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-warehouse-overview-holding">
+          <mxGeometry x="14" y="48" width="272" height="69" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-watch" value="" style="fillColor=#FFFFFF;strokeColor=#245e54;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="800" y="680" width="300" height="125" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-watch-head" value="" style="fillColor=#245e54;strokeColor=none;" vertex="1" parent="tpc-di-warehouse-overview-watch">
+          <mxGeometry x="0" y="0" width="300" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-text-16" value="FactWatches" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-overview-watch">
+          <mxGeometry x="14" y="0" width="272" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-text-17" value="Each row records a customer&#10;and security watch interval." style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-warehouse-overview-watch">
+          <mxGeometry x="14" y="48" width="272" height="69" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-reference" value="" style="fillColor=#FFFFFF;strokeColor=#245e54;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="40" y="880" width="1060" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-reference-head" value="" style="fillColor=#245e54;strokeColor=none;" vertex="1" parent="tpc-di-warehouse-overview-reference">
+          <mxGeometry x="0" y="0" width="1060" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-text-26" value="Shared calendar and code tables" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-overview-reference">
+          <mxGeometry x="14" y="0" width="1032" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-text-27" value="DimDate and DimTime supply date and time keys.&#10;Industry, StatusType, TaxRate, and TradeType supply lookup values for transformations." style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-warehouse-overview-reference">
+          <mxGeometry x="14" y="48" width="1032" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-load" value="" style="fillColor=#FFFFFF;strokeColor=#245e54;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="40" y="1020" width="1060" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-load-head" value="" style="fillColor=#245e54;strokeColor=none;" vertex="1" parent="tpc-di-warehouse-overview-load">
+          <mxGeometry x="0" y="0" width="1060" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-text-28" value="Load records" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=22;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-overview-load">
+          <mxGeometry x="14" y="0" width="1032" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-overview-text-29" value="DImessages records integration messages. Audit stores generated audit observations." style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-warehouse-overview-load">
+          <mxGeometry x="14" y="48" width="1032" height="34" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

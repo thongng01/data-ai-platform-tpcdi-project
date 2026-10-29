@@ -1,0 +1,291 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mxfile host="app.diagrams.net" type="device" version="32.6.1"><diagram id="tpc-di-warehouse-accounts" name="Customer and trade dimensions">
+    <mxGraphModel grid="1" gridSize="10" page="1" pageScale="1" pageWidth="1140" pageHeight="1240" background="#FFFFFF">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="tpc-di-warehouse-accounts-canvas" value="" style="fillColor=#FFFFFF;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="0" y="0" width="1140" height="1240" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-edge-62" value="" source="tpc-di-warehouse-accounts-broker" target="tpc-di-warehouse-accounts-trade" parent="1" edge="1" style="edgeStyle=none;rounded=0;html=0;exitPerimeter=0;entryPerimeter=0;exitX=1;exitY=0.5701754385964912;entryX=1;entryY=0.7083333333333334;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#486477;strokeWidth=2;fontFamily=Ubuntu Sans;fontSize=17;fontColor=#183246;labelBackgroundColor=#FFFFFF;jumpStyle=arc;jumpSize=7;startArrow=ERzeroToOne;endArrow=ERzeroToMany;startFill=0;endFill=0;startSize=16;endSize=16;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1124" y="250.0" />
+              <mxPoint x="1124" y="1108.0" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-edge-61" value="" source="tpc-di-warehouse-accounts-customer" target="tpc-di-warehouse-accounts-trade" parent="1" edge="1" style="edgeStyle=none;rounded=0;html=0;exitPerimeter=0;entryPerimeter=0;exitX=0;exitY=0.5701754385964912;entryX=0;entryY=0.6011904761904762;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#486477;strokeWidth=2;fontFamily=Ubuntu Sans;fontSize=17;fontColor=#183246;labelBackgroundColor=#FFFFFF;jumpStyle=arc;jumpSize=7;startArrow=ERmandOne;endArrow=ERzeroToMany;startFill=0;endFill=0;startSize=16;endSize=16;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="16" y="250.0" />
+              <mxPoint x="16" y="1072.0" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-edge-60" value="" source="tpc-di-warehouse-accounts-account" target="tpc-di-warehouse-accounts-trade" parent="1" edge="1" style="edgeStyle=none;rounded=0;html=0;exitPerimeter=0;entryPerimeter=0;exitX=0.5;exitY=1;entryX=0.5;entryY=0;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#486477;strokeWidth=2;fontFamily=Ubuntu Sans;fontSize=17;fontColor=#183246;labelBackgroundColor=#FFFFFF;jumpStyle=arc;jumpSize=7;startArrow=ERmandOne;endArrow=ERzeroToMany;startFill=0;endFill=0;startSize=16;endSize=16;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-edge-59" value="" source="tpc-di-warehouse-accounts-broker" target="tpc-di-warehouse-accounts-account" parent="1" edge="1" style="edgeStyle=none;rounded=0;html=0;exitPerimeter=0;entryPerimeter=0;exitX=0.5;exitY=1;entryX=1;entryY=0.9015151515151515;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#486477;strokeWidth=2;fontFamily=Ubuntu Sans;fontSize=17;fontColor=#183246;labelBackgroundColor=#FFFFFF;jumpStyle=arc;jumpSize=7;startArrow=ERmandOne;endArrow=ERzeroToMany;startFill=0;endFill=0;startSize=16;endSize=16;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="880" y="348" />
+              <mxPoint x="880" y="728.0" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-edge-58" value="" source="tpc-di-warehouse-accounts-customer" target="tpc-di-warehouse-accounts-account" parent="1" edge="1" style="edgeStyle=none;rounded=0;html=0;exitPerimeter=0;entryPerimeter=0;exitX=0.5;exitY=1;entryX=0;entryY=0.7651515151515151;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#486477;strokeWidth=2;fontFamily=Ubuntu Sans;fontSize=17;fontColor=#183246;labelBackgroundColor=#FFFFFF;jumpStyle=arc;jumpSize=7;startArrow=ERmandOne;endArrow=ERzeroToMany;startFill=0;endFill=0;startSize=16;endSize=16;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="260" y="348" />
+              <mxPoint x="260" y="692.0" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-1" value="Customer and trade dimensions" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=34;fontColor=#245e54;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="24" width="1060" height="56" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-customer" value="" style="fillColor=#FFFFFF;strokeColor=#245e54;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="60" y="120" width="400" height="228" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-customer-header" value="" style="fillColor=#245e54;strokeColor=none;" vertex="1" parent="tpc-di-warehouse-accounts-customer">
+          <mxGeometry x="0" y="0" width="400" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-2" value="DimCustomer" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=23;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-accounts-customer">
+          <mxGeometry x="16" y="0" width="368" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-3" value="Each row holds one dated&#10;version of a customer." style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-warehouse-accounts-customer">
+          <mxGeometry x="16" y="52" width="368" height="56" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-customer-row-0" value="" style="fillColor=#eef3f6;strokeColor=none;" vertex="1" parent="tpc-di-warehouse-accounts-customer">
+          <mxGeometry x="1" y="112" width="398" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-4" value="PK" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=14;fontColor=#245e54;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-accounts-customer">
+          <mxGeometry x="12" y="112" width="36" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-5" value="SK_CustomerID" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans Mono;fontSize=17;fontColor=#183246;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-accounts-customer">
+          <mxGeometry x="52" y="112" width="226" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-6" value="SK_T" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=right;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans Mono;fontSize=16;fontColor=#486477;fontStyle=0;" vertex="1" parent="tpc-di-warehouse-accounts-customer">
+          <mxGeometry x="284" y="112" width="100" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-customer-row-1" value="" style="fillColor=#FFFFFF;strokeColor=none;" vertex="1" parent="tpc-di-warehouse-accounts-customer">
+          <mxGeometry x="1" y="148" width="398" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-7" value="BK" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=14;fontColor=#245e54;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-accounts-customer">
+          <mxGeometry x="12" y="148" width="36" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-8" value="CustomerID" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans Mono;fontSize=17;fontColor=#183246;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-accounts-customer">
+          <mxGeometry x="52" y="148" width="226" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-9" value="IDENT_T" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=right;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans Mono;fontSize=16;fontColor=#486477;fontStyle=0;" vertex="1" parent="tpc-di-warehouse-accounts-customer">
+          <mxGeometry x="284" y="148" width="100" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-customer-row-2" value="" style="fillColor=#eef3f6;strokeColor=none;" vertex="1" parent="tpc-di-warehouse-accounts-customer">
+          <mxGeometry x="1" y="184" width="398" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-10" value="" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=14;fontColor=#245e54;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-accounts-customer">
+          <mxGeometry x="12" y="184" width="36" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-11" value="LastName" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans Mono;fontSize=17;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-warehouse-accounts-customer">
+          <mxGeometry x="52" y="184" width="226" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-12" value="CHAR(30)" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=right;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans Mono;fontSize=16;fontColor=#486477;fontStyle=0;" vertex="1" parent="tpc-di-warehouse-accounts-customer">
+          <mxGeometry x="284" y="184" width="100" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-broker" value="" style="fillColor=#FFFFFF;strokeColor=#245e54;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="680" y="120" width="400" height="228" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-broker-header" value="" style="fillColor=#245e54;strokeColor=none;" vertex="1" parent="tpc-di-warehouse-accounts-broker">
+          <mxGeometry x="0" y="0" width="400" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-13" value="DimBroker" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=23;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-accounts-broker">
+          <mxGeometry x="16" y="0" width="368" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-14" value="Each row describes a broker&#10;from the HR snapshot." style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-warehouse-accounts-broker">
+          <mxGeometry x="16" y="52" width="368" height="56" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-broker-row-0" value="" style="fillColor=#eef3f6;strokeColor=none;" vertex="1" parent="tpc-di-warehouse-accounts-broker">
+          <mxGeometry x="1" y="112" width="398" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-15" value="PK" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=14;fontColor=#245e54;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-accounts-broker">
+          <mxGeometry x="12" y="112" width="36" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-16" value="SK_BrokerID" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans Mono;fontSize=17;fontColor=#183246;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-accounts-broker">
+          <mxGeometry x="52" y="112" width="226" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-17" value="SK_T" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=right;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans Mono;fontSize=16;fontColor=#486477;fontStyle=0;" vertex="1" parent="tpc-di-warehouse-accounts-broker">
+          <mxGeometry x="284" y="112" width="100" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-broker-row-1" value="" style="fillColor=#FFFFFF;strokeColor=none;" vertex="1" parent="tpc-di-warehouse-accounts-broker">
+          <mxGeometry x="1" y="148" width="398" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-18" value="BK" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=14;fontColor=#245e54;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-accounts-broker">
+          <mxGeometry x="12" y="148" width="36" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-19" value="BrokerID" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans Mono;fontSize=17;fontColor=#183246;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-accounts-broker">
+          <mxGeometry x="52" y="148" width="226" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-20" value="IDENT_T" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=right;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans Mono;fontSize=16;fontColor=#486477;fontStyle=0;" vertex="1" parent="tpc-di-warehouse-accounts-broker">
+          <mxGeometry x="284" y="148" width="100" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-broker-row-2" value="" style="fillColor=#eef3f6;strokeColor=none;" vertex="1" parent="tpc-di-warehouse-accounts-broker">
+          <mxGeometry x="1" y="184" width="398" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-21" value="" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=14;fontColor=#245e54;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-accounts-broker">
+          <mxGeometry x="12" y="184" width="36" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-22" value="LastName" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans Mono;fontSize=17;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-warehouse-accounts-broker">
+          <mxGeometry x="52" y="184" width="226" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-23" value="CHAR(50)" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=right;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans Mono;fontSize=16;fontColor=#486477;fontStyle=0;" vertex="1" parent="tpc-di-warehouse-accounts-broker">
+          <mxGeometry x="284" y="184" width="100" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-account" value="" style="fillColor=#FFFFFF;strokeColor=#245e54;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="370" y="490" width="400" height="264" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-account-header" value="" style="fillColor=#245e54;strokeColor=none;" vertex="1" parent="tpc-di-warehouse-accounts-account">
+          <mxGeometry x="0" y="0" width="400" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-24" value="DimAccount" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=23;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-accounts-account">
+          <mxGeometry x="16" y="0" width="368" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-25" value="Each row holds one dated&#10;version of an account." style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-warehouse-accounts-account">
+          <mxGeometry x="16" y="52" width="368" height="56" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-account-row-0" value="" style="fillColor=#eef3f6;strokeColor=none;" vertex="1" parent="tpc-di-warehouse-accounts-account">
+          <mxGeometry x="1" y="112" width="398" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-26" value="PK" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=14;fontColor=#245e54;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-accounts-account">
+          <mxGeometry x="12" y="112" width="36" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-27" value="SK_AccountID" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans Mono;fontSize=17;fontColor=#183246;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-accounts-account">
+          <mxGeometry x="52" y="112" width="226" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-28" value="SK_T" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=right;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans Mono;fontSize=16;fontColor=#486477;fontStyle=0;" vertex="1" parent="tpc-di-warehouse-accounts-account">
+          <mxGeometry x="284" y="112" width="100" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-account-row-1" value="" style="fillColor=#FFFFFF;strokeColor=none;" vertex="1" parent="tpc-di-warehouse-accounts-account">
+          <mxGeometry x="1" y="148" width="398" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-29" value="BK" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=14;fontColor=#245e54;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-accounts-account">
+          <mxGeometry x="12" y="148" width="36" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-30" value="AccountID" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans Mono;fontSize=17;fontColor=#183246;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-accounts-account">
+          <mxGeometry x="52" y="148" width="226" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-31" value="IDENT_T" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=right;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans Mono;fontSize=16;fontColor=#486477;fontStyle=0;" vertex="1" parent="tpc-di-warehouse-accounts-account">
+          <mxGeometry x="284" y="148" width="100" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-account-row-2" value="" style="fillColor=#eef3f6;strokeColor=none;" vertex="1" parent="tpc-di-warehouse-accounts-account">
+          <mxGeometry x="1" y="184" width="398" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-32" value="FK" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=14;fontColor=#245e54;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-accounts-account">
+          <mxGeometry x="12" y="184" width="36" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-33" value="SK_CustomerID" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans Mono;fontSize=17;fontColor=#183246;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-accounts-account">
+          <mxGeometry x="52" y="184" width="226" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-34" value="SK_T" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=right;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans Mono;fontSize=16;fontColor=#486477;fontStyle=0;" vertex="1" parent="tpc-di-warehouse-accounts-account">
+          <mxGeometry x="284" y="184" width="100" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-account-row-3" value="" style="fillColor=#FFFFFF;strokeColor=none;" vertex="1" parent="tpc-di-warehouse-accounts-account">
+          <mxGeometry x="1" y="220" width="398" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-35" value="FK" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=14;fontColor=#245e54;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-accounts-account">
+          <mxGeometry x="12" y="220" width="36" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-36" value="SK_BrokerID" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans Mono;fontSize=17;fontColor=#183246;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-accounts-account">
+          <mxGeometry x="52" y="220" width="226" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-37" value="SK_T" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=right;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans Mono;fontSize=16;fontColor=#486477;fontStyle=0;" vertex="1" parent="tpc-di-warehouse-accounts-account">
+          <mxGeometry x="284" y="220" width="100" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-trade" value="" style="fillColor=#FFFFFF;strokeColor=#245e54;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="370" y="870" width="400" height="336" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-trade-header" value="" style="fillColor=#245e54;strokeColor=none;" vertex="1" parent="tpc-di-warehouse-accounts-trade">
+          <mxGeometry x="0" y="0" width="400" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-38" value="DimTrade" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=23;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-accounts-trade">
+          <mxGeometry x="16" y="0" width="368" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-39" value="Each trade has one row.&#10;Later changes update that row." style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=18;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-warehouse-accounts-trade">
+          <mxGeometry x="16" y="52" width="368" height="56" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-trade-row-0" value="" style="fillColor=#eef3f6;strokeColor=none;" vertex="1" parent="tpc-di-warehouse-accounts-trade">
+          <mxGeometry x="1" y="112" width="398" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-40" value="PK" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=14;fontColor=#245e54;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-accounts-trade">
+          <mxGeometry x="12" y="112" width="36" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-41" value="TradeID" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans Mono;fontSize=17;fontColor=#183246;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-accounts-trade">
+          <mxGeometry x="52" y="112" width="226" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-42" value="IDENT_T" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=right;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans Mono;fontSize=16;fontColor=#486477;fontStyle=0;" vertex="1" parent="tpc-di-warehouse-accounts-trade">
+          <mxGeometry x="284" y="112" width="100" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-trade-row-1" value="" style="fillColor=#FFFFFF;strokeColor=none;" vertex="1" parent="tpc-di-warehouse-accounts-trade">
+          <mxGeometry x="1" y="148" width="398" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-43" value="FK" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=14;fontColor=#245e54;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-accounts-trade">
+          <mxGeometry x="12" y="148" width="36" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-44" value="SK_AccountID" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans Mono;fontSize=17;fontColor=#183246;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-accounts-trade">
+          <mxGeometry x="52" y="148" width="226" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-45" value="SK_T" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=right;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans Mono;fontSize=16;fontColor=#486477;fontStyle=0;" vertex="1" parent="tpc-di-warehouse-accounts-trade">
+          <mxGeometry x="284" y="148" width="100" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-trade-row-2" value="" style="fillColor=#eef3f6;strokeColor=none;" vertex="1" parent="tpc-di-warehouse-accounts-trade">
+          <mxGeometry x="1" y="184" width="398" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-46" value="FK" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=14;fontColor=#245e54;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-accounts-trade">
+          <mxGeometry x="12" y="184" width="36" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-47" value="SK_CustomerID" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans Mono;fontSize=17;fontColor=#183246;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-accounts-trade">
+          <mxGeometry x="52" y="184" width="226" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-48" value="SK_T" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=right;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans Mono;fontSize=16;fontColor=#486477;fontStyle=0;" vertex="1" parent="tpc-di-warehouse-accounts-trade">
+          <mxGeometry x="284" y="184" width="100" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-trade-row-3" value="" style="fillColor=#FFFFFF;strokeColor=none;" vertex="1" parent="tpc-di-warehouse-accounts-trade">
+          <mxGeometry x="1" y="220" width="398" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-49" value="FK" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=14;fontColor=#245e54;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-accounts-trade">
+          <mxGeometry x="12" y="220" width="36" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-50" value="SK_BrokerID" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans Mono;fontSize=17;fontColor=#183246;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-accounts-trade">
+          <mxGeometry x="52" y="220" width="226" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-51" value="SK_T" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=right;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans Mono;fontSize=16;fontColor=#486477;fontStyle=0;" vertex="1" parent="tpc-di-warehouse-accounts-trade">
+          <mxGeometry x="284" y="220" width="100" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-trade-row-4" value="" style="fillColor=#eef3f6;strokeColor=none;" vertex="1" parent="tpc-di-warehouse-accounts-trade">
+          <mxGeometry x="1" y="256" width="398" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-52" value="" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=14;fontColor=#245e54;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-accounts-trade">
+          <mxGeometry x="12" y="256" width="36" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-53" value="Quantity" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans Mono;fontSize=17;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-warehouse-accounts-trade">
+          <mxGeometry x="52" y="256" width="226" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-54" value="NUM(6,0)" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=right;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans Mono;fontSize=16;fontColor=#486477;fontStyle=0;" vertex="1" parent="tpc-di-warehouse-accounts-trade">
+          <mxGeometry x="284" y="256" width="100" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-trade-row-5" value="" style="fillColor=#FFFFFF;strokeColor=none;" vertex="1" parent="tpc-di-warehouse-accounts-trade">
+          <mxGeometry x="1" y="292" width="398" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-55" value="" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans;fontSize=14;fontColor=#245e54;fontStyle=1;" vertex="1" parent="tpc-di-warehouse-accounts-trade">
+          <mxGeometry x="12" y="292" width="36" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-56" value="TradePrice" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=left;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans Mono;fontSize=17;fontColor=#183246;fontStyle=0;" vertex="1" parent="tpc-di-warehouse-accounts-trade">
+          <mxGeometry x="52" y="292" width="226" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="tpc-di-warehouse-accounts-text-57" value="NUM(8,2)" style="text;html=0;whiteSpace=wrap;overflow=hidden;align=right;verticalAlign=middle;spacing=0;fontFamily=Ubuntu Sans Mono;fontSize=16;fontColor=#486477;fontStyle=0;" vertex="1" parent="tpc-di-warehouse-accounts-trade">
+          <mxGeometry x="284" y="292" width="100" height="36" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  </mxfile>

@@ -1,9 +1,18 @@
-# Untracked working material, all of it reproducible or re-clonable:
-#   misc/tpcdi/            upstream TPC-DI clone (format-contract reference)
-#   misc/sample_run/       generated output, reproducible from a seed
-#   misc/tpcdi_out/        extracted upstream material
-#   misc/abandoned-tpcds/  the dropped TPC-DS direction
-misc/
+# Temporary files stay local. Reusable helpers in misc/tools/ belong in Git.
+/misc/tmp/
+
+# Keep local archives, reference checkouts, and generated data out of Git.
+/misc/archive/
+/misc/tpcdi/
+/misc/generator-feasibility/
+/misc/sample_run/
+/misc/data/
+/misc/clean_run/
+/misc/tpcdi_out/
+/misc/abandoned-tpcds/
+
+# Exclude draw.io application binaries if copied into the workspace.
+/misc/tools/diagrams/drawio/
 
 # Python environments. Machine-specific, regenerated from pyproject.toml.
 .venv/
@@ -19,10 +28,8 @@ __pycache__/
 *.sqlite
 *.sqlite3
 
-# Transient scratch. The durable parts of .scratch/coursework/ are the map,
-# its tickets, and the research notes, and those are tracked explicitly.
-.scratch/**/*.tmp
-.scratch/**/tmp/
+# Personal scratch notes. Move anything worth keeping into docs/.
+.scratch/
 
 # Local overrides and secrets. None committed; this is here so a stray .env
 # cannot land by accident.
@@ -37,10 +44,7 @@ __pycache__/
 # it and edit locally if you need to; do not put a real credential in it.
 !infra/.env
 
-# Course-side material and the session-local collaboration file. These are
-# reference documents and working notes, not the project itself; they stay on
-# disk where nothing outside this machine can copy them.
-AGENTS.md
+# Course reference material stays local.
 docs/course/
 
 # Editor and OS noise.

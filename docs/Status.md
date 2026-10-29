@@ -1,130 +1,82 @@
 # Status
 
-Where the project stands, what is decided, and what comes next. Written for
-someone picking this up cold.
+This document records where the project stands: the current position, what exists in the repository, known defects, measurements from the earlier build, and a dated log. Design decisions are in the [project design](Project-Design.md). Service details are in [IaC.md](IaC.md).
 
-Terms are in [`../GLOSSARY.md`](../GLOSSARY.md). Design is in
-[`Architecture.md`](Architecture.md). Infrastructure is in
-[`IaC.md`](IaC.md). Work tracking is in the
-[map](../.scratch/coursework/map.md).
+Updated 2026-10-29. Earlier-build results remain separate from the new Polars POC measurements.
 
----
+**Contents**
 
-## Summary
+1. [Current position](#current-position)
+2. [What exists](#what-exists)
+3. [Known defects](#known-defects)
+4. [Earlier build measurements](#earlier-build-measurements)
+5. [Session log](#session-log)
+6. [Resume notes](#resume-notes)
 
-We are building a data platform and an ML platform for a brokerage, graded on
-data engineering fundamentals: a generator that produces deliberately broken
-data, a lakehouse that survives it, a warehouse that models it, streaming that
-handles lateness, and an ML system on top.
+## Current position
 
-**Built and running:** the generator, the core platform (SeaweedFS, Hive
-Metastore, Trino, Postgres), the Spark cluster, and DP1, which moves a batch
-from the landing bucket through bronze into silver.
+On 2026-10-29, the owner authorized an autonomous fresh Polars generator POC, with code quality and declarative configuration as priorities. The [POC guide](../generator/poc_polars/README.md) describes the implementation in `generator/poc_polars/`. The completed experiment passed 50 tests and produced a validated 1.01 GB source dataset with 125.16 MiB peak worker RSS under a 256 MiB budget. The [working record](records/Polars-POC.md) records measurements, repeatability checks, and the simplified business rules. Polars is selected for this experiment; the production engine remains open. The existing generator and pipelines are not replaced.
 
-**Built and passing tests:** 55 contract tests over the schema, deduplication
-and variant-splitting rules. They cover the failures that produce plausible
-wrong numbers rather than errors: a column list chosen once instead of per row, a
-schema split that emits every line twice, a business key naming a column a
-batch does not carry, and a key narrower than the record.
+The owner accepted cash-flow forecasting with a configurable minimum-cash policy keyed by customer tier. Forecast total future net account cash movement, add it to recorded cash, and flag projected cash below the configured minimum. TPC-DI supplies tiers 1, 2, and 3 and the account/customer relationship; the project defines the thresholds and their rationale. Obligations, payment coverage, and borrowing/margin rules are future work.
 
-**Scaffolded but not built:** DP2 with dbt, DP3's feature tables, the Airflow
-DAGs, the Kafka and Flink streaming path, Soda validation and DataHub
-governance. Each has a written and tested compose file and a folder with a
-README saying what goes in it.
+The owner requested a cleanup across active documentation and a README update for the accepted design. The README now presents the storage zones, cash stream, cash forecast, and tier policy. Project Design retains accepted choices, proposals, requirements, and unresolved parameters. This record holds progress and delivery targets; the [infrastructure evidence record](records/Infrastructure-Evidence.md) holds historical trials and source-inspection findings.
 
-The blocking unknown from the last session is resolved. Trino reads SeaweedFS.
-The full loop is proven end to end: Spark writes Parquet into SeaweedFS,
-registers the table in the Hive Metastore, and Trino reads it back.
+Remaining design work includes the forecast horizon and prediction timing, tier thresholds and invalid-tier handling, and cash event/feature contracts. Generator behavior must be designed with the target. Exact features, model, metrics, streaming cutoffs and corrections, sink layout, and serving API remain open. The cash-stream job, feature pipeline, forecast model, and alert service are not implemented. The 2026-10-28 cleanup changed documentation only; the later Polars experiment added and ran separate POC code.
 
----
+Gold placement, table format, and the Spark/dbt/PostgreSQL/Trino division remain unresolved. The overall deployment/data-flow diagram and zone models are required documentation work. The existing diagrams were not regenerated. The TPC-DI guide received limited prose edits; its quotations, raw examples, field tables, and diagrams were preserved. Earlier discussion notes describe decisions at those earlier points.
 
-## Run it
+The delivery targets recorded on 2026-10-26 were a final deadline about two months later and a first-week target of a nearly complete Layer 1 plus a working Layer 2 flow or substantial foundation. These are the recorded planning targets; this documentation pass did not revise the schedule.
 
-```bash
-make up-core      # postgres, seaweedfs, hive-metastore, trino
-make bootstrap    # create the buckets and databases
-make verify       # 8 smoke tests, all passing
-make up-compute   # the Spark cluster
-make dp1          # landing -> bronze -> silver
-make test         # both test suites, 86 tests
-make check-docs   # broken links, stale phrases, claimed-but-missing paths
-```
+## What exists
 
-`make help` lists the rest. Everything runs in WSL.
+The Polars POC row describes the new experiment. Other runtime measurements and test counts remain those of the earlier build; the documentation cleanup did not refresh them.
 
----
-
-## Decisions made
-
-| Decision | Where |
-|---|---|
-| We build our own generator and do not wrap benchbox | [adr/0002](adr/0002-build-our-own-generator.md) |
-| SeaweedFS is the lakehouse store, lab MinIO is the fallback | [adr/0001](adr/0001-seaweedfs-as-lakehouse-object-store.md) |
-| Generated characteristics are measured from output, not from config | [adr/0003](adr/0003-measure-generated-characteristics.md) |
-| Keep all TPC-DI tables, SCD2 on Customer, Account, Security, Company | map, ticket 01 |
-| dbt-spark owns silver to gold, Spark owns raw to bronze to silver, Airflow orchestrates | map |
-| Postgres holds gold for ML and serving | map |
-| **Trino reads SeaweedFS.** Proved, not assumed | [R13](../.scratch/coursework/research/R13-trino-seaweedfs-spike.md) |
-| **Every lakehouse table is external.** SeaweedFS reports an empty prefix as an existing directory, so a managed CREATE TABLE always fails | [IaC.md 7.2](IaC.md#72-every-lakehouse-table-is-external) |
-| **HiveServer2 lives in its own profile.** It takes every core of the worker and starves batch jobs | [IaC.md 8.2](IaC.md#82-a-hiveserver2-takes-the-whole-worker) |
-| **A path write is followed by `MSCK REPAIR TABLE`.** A write is not a table write until the metastore knows | [IaC.md 8.1](IaC.md#81-a-path-write-is-not-a-table-write) |
-| **One Postgres instance, four databases.** Separate databases, not separate containers | [IaC.md 7.4](IaC.md#74-one-postgres-instance-four-databases) |
-| Five compose files gated by profiles, loaded together via `COMPOSE_FILE` | [IaC.md 3](IaC.md#3-the-compose-files) |
-
----
-
-## What is built
-
-### The generator
-
-In `generator/`. 31 tests pass.
-
-It emits Batch1, the full historical load, plus Batch2 and Batch3 as incremental
-deltas, in the TPC-DI byte format: CRLF, no header rows, mixed delimiters,
-empty string means NULL.
-
-Tables: Trade, TradeHistory, CashTransaction, HoldingHistory, DailyMarket,
-WatchHistory, CustomerMgmt.xml, the reference tables, FINWIRE.
-
-Data problems inject per run: skew, duplicates split into offline and streaming
-rates, schema evolution, late arrivals, out-of-order events.
-
-The format contract is checked against real TPC-DI bytes committed as a 4 KB
-fixture, so the suite runs on a fresh clone with nothing installed.
-
-Gaps, listed in [`../generator/README.md`](../generator/README.md): `HR.csv`,
-`Prospect.csv`, the `Customer.txt` and `Account.txt` deltas, a price walk
-instead of uniform random values, and wiring the lateness and out-of-order
-rates into the Trade writer.
-
-### The platform
-
-In `infra/`. `make verify` passes 8 of 8.
-
-| Service | Image | State |
+| Area | Location | State |
 |---|---|---|
-| postgres | `postgres:16-alpine` | running, 4 databases |
-| seaweedfs | `chrislusf/seaweedfs:latest` | running, S3 gateway verified |
-| hive-metastore | `starburstdata/hive:3.1.2-e.18` | running |
-| trino | `trinodb/trino:476` | running, reads SeaweedFS |
-| spark-master, spark-worker | `edai/spark:3.5.3` | running |
-| spark-thrift | `edai/spark:3.5.3` | `dbt` profile, not in the default set |
+| Generator | `generator/` | Writes selected TPC-DI-shaped files and configurable problems. The earlier record lists 31 tests. Missing: `HR.csv`, `Prospect.csv`, the `Customer.txt` and `Account.txt` deltas, a price walk, and the lateness wiring. Reference-based redesign is selected ([Decisions so far](Project-Design.md#decisions-so-far)). |
+| Polars generator POC | `generator/poc_polars/` | Covers all 19 business/reference source families with simplified connected histories, YAML configuration and source definitions, bounded calculations, ordered exports, and independent validation. Passed 50 tests. The largest validated pilot produced 1.01 GB at 125.16 MiB peak RSS. It does not implement the complete reference scheduler, fault controls, predictive behavior, or downstream integration. |
+| Characteristics inspector | `generator/src/datagen/inspect.py` | Built and tested. It reads whole files and assumes CRLF, so it does not scale to 100 GB unchanged. |
+| Core platform | `infra/` | SeaweedFS, Hive Metastore, Trino, and PostgreSQL. `make verify` passed 8 smoke tests in the earlier build. |
+| Spark cluster | `infra/` | Image `edai/spark:3.5.3`, which has Python 3.8.10. |
+| DP1 code | `pipelines/dp1/` | Landing to bronze to silver, run in the earlier build. The revised DP1 ends at bronze. The code is not reorganized. |
+| Pipeline contract tests | `tests/` | The earlier record lists 55 schema, deduplication, and variant tests, with 86 tests in the combined suite. They do not establish that the Spark jobs are correct. |
+| DP2, dbt | `dbt/` | Compose profile `dbt` exists. No dbt project. |
+| DP3, features | none | Not started. |
+| Airflow | `orchestration/` | Compose and connection/variable seed files exist. Initialization ignores import failures, so successful import is unverified. No DAGs. |
+| Kafka and Flink | `infra/` | Compose profile `stream` exists. No job. |
+| Soda validation | none | Not started. |
+| DataHub | `governance/` | Compose profile `governance` exists. No ingestion recipes. |
+| ML platform | none | Not started. |
 
-### DP1: landing to bronze to silver
+The repository held an earlier TPC-DS direction: a retail schema and a 330 MB DuckDB database from a local `dbt-tpcdi` build. That direction was dropped. The earlier record placed its files in `misc/abandoned-tpcds/`. That directory was absent during the 2026-10-28 cleanup; this cleanup did not remove it.
 
-In `pipelines/dp1/`. `make dp1` runs it end to end.
+`infra/.env` is committed on purpose. It holds local development defaults and no production credential. Docker Compose reads it when it parses the files, so a fresh clone needs it.
 
-Three steps:
+## Known defects
 
-| Step | Module | What it does |
+Source inspection found these defects. They are not a fix list. The requirements and the reference design decide which code survives.
+
+| Defect | Where | Cause and effect |
 |---|---|---|
-| publish | `publish_landing.py` | copies the generator's output into the landing bucket, standing in for another team's storage |
-| ingest | `landing_to_bronze.py` | parses each source file into a `raw_` table, unmodified, with four provenance columns |
-| transform | `bronze_to_silver.py` | casts types, removes duplicates, partitions on event time |
+| A silver load deletes earlier batches | `pipelines/dp1/bronze_to_silver.py` | The job clears the whole table location before an overwrite, and overwrite is the default mode. Loading Batch2 therefore deletes the Batch1 rows. |
+| Unmatched rows are never reported | `pipelines/dp1/landing_to_bronze.py` | The job counts unmatched rows after it replaces the frame with the union of the two matched shapes. The count is always zero, so rows with an unexpected field count disappear without a warning. |
+| Regenerated files are not uploaded | `pipelines/dp1/publish_landing.py` | The upload skips a file whose name already exists in the landing bucket. After regeneration, the bucket keeps the old file. |
+| Lateness settings do nothing | `generator/` | The lateness and out-of-order rates are not wired into the Trade writer, so a configured rate produces no late rows. |
+| Tax rate generation can hang | `generator/src/datagen/specs_reference.py` | Codes come from 10 countries and the digits 1 to 9, so only 90 codes exist. The loop runs until it has the requested count, which is 320 at scale factor 1.0, so it cannot finish above 90. |
+| Cast failures are hard to use | `pipelines/dp1/bronze_to_silver.py` | Failed casts stay in silver as NULL. `_rejected_columns` joins one value per typed column with commas, so every row has a value, even with no failure, and the value does not name the failed column. |
+| Missing build contexts | `infra/` | Compose files reference `docker/airflow`, `docker/flink`, and `docker/datahub-ingest`, which do not exist. Those images cannot build. |
+| Airflow executor and worker conflict | `infra/compose.orchestration.yaml` | LocalExecutor runs tasks under the scheduler, but a separate service uses a worker command. The service roles do not match the selected executor. |
+| Airflow import failures do not fail initialization | `infra/compose.orchestration.yaml` | Connection and variable imports use `|| true`. A successful initialization exit does not establish that those settings exist. |
+| Flink submit mounts the wrong pipeline directory | `infra/compose.streaming.yaml` | `../../pipelines` resolves outside coursework when the base Compose directory is `infra/`. The container can receive an unintended empty directory. |
 
-Measured on Batch1 at scale 0.02, seed 20261018, 9.7 MB of source files across
-10 tables. Bronze row counts match the source files' line counts exactly, which
-is the check that proves the parser neither drops nor invents a row.
+Two problems from the earlier build remain unsolved:
+
+- **Small files.** DP1 writes about one Parquet file per date partition. At scale 0.02, `stg_trade_history` had 1,800 files of about 5 KB, and the write took minutes.
+- **Slow Spark shutdown.** The earlier run blocked while closing the event log against SeaweedFS. The code waits up to 90 seconds, then writes its report. `stopped_cleanly` records shutdown separately from the processing result ([shutdown and reports](IaC.md#811-shutdown-deadlines-and-run-reports)).
+
+## Earlier build measurements
+
+These numbers come from the earlier status report, committed in `ea4daf5`. The run used Batch1 from the earlier generator at scale 0.02 and seed 20261018: 9.7 MB of source files across 10 tables.
 
 | Table | Source lines = Bronze | Silver | Duplicates removed | Rate | Partitions |
 |---|---|---|---|---|---|
@@ -139,183 +91,137 @@ is the check that proves the parser neither drops nor invents a row.
 | `stg_industry` | 28 | 28 | 0 | 0% | none |
 | `stg_tax_rate` | 6 | 6 | 0 | 0% | none |
 
-The measured rates land on the generator's configured `duplicate_rate_offline`
-of 2 percent. That agreement is the evidence. An earlier version of this table
-showed rates of 51, 62 and 58 percent, all wrong, and the only reason it was
-noticed was comparing these numbers against the manifest's own injection rates.
+Bronze row counts matched the source line counts, so the parser neither dropped nor added rows in that run. The silver counts were read back through Trino with `misc/tools/sql/silver_counts.sql`, and they matched the job's own counts. The measured duplicate rates match the configured offline rate of 2 percent. An earlier version of the job reported 51 to 62 percent. That difference exposed two bugs: an unfiltered union of two schema variants ([IaC.md 8.8](IaC.md#88-an-unfiltered-union-doubles-an-evolved-file)) and a deduplication key narrower than the record ([IaC.md 8.9](IaC.md#89-a-business-key-narrower-than-the-record-deletes-real-rows)).
 
-The silver counts were read back through Trino, not taken from the job's own
-report:
+The job chose the column list per row from that row's field count, because Batch1 Trade rows have 14 fields and incremental rows have 16. It split rows on the delimiter only, because text fields contain spaces. Its deduplication key for incremental Trade rows does not follow the identity rule in the wiki, where `T_ID` identifies a trade and each CDC row is one change ([Trade updates](TPC-DI/TPC-DI.md#trade-updates)). That key needs review before reuse.
 
-```sql
-SELECT 'stg_trade' AS table_name, count(*) AS rows, count(DISTINCT dt) AS partitions
-FROM hive.silver.stg_trade
-```
+The [infrastructure evidence record](records/Infrastructure-Evidence.md) preserves the other earlier trials, environment snapshot, and their limits. [IaC section 8](IaC.md#8-operating-constraints) explains the failure mechanisms and operating constraints.
 
-That query is at `misc/q/silver_counts.sql`, and it is the whole proof chain:
-the generator wrote the files, the job moved them through three zones, Spark
-wrote the Parquet, and Trino read it back over the shared metastore. The job's
-count and Trino's count agree on every table. They did not agree on the first
-run of this review, and finding out why is recorded in
-[`IaC.md` section 8.10](IaC.md#810-overwrite-is-not-idempotent-on-a-partitioned-table).
+## Session log
 
-Three things DP1 handles that a naive reader does not:
-
-- **Schema evolution.** Batch1 Trade has 14 fields, Batch2 has 16. The column
-  list is chosen per row from that row's own field count, not once per file.
-- **Business identity.** A trade's identity is its history id plus its status,
-  so a delta batch's submitted-then-completed pair is one trade. In the
-  historical load there is no history id and the row id is the identity; using
-  the delta key there collapses 15,960 trades into 5 rows.
-- **Text with spaces.** The parser splits on the delimiter. It never splits on
-  whitespace.
-
-### Two problems we have not solved yet
-
-**Small files.** DP1 writes roughly one Parquet file per date partition, so
-`stg_trade_history` produces 1,800 files of roughly 5 KB each and the write takes
-minutes. The query is correct and the counts are right, but a scan opens 1,800
-file handles. This is the rubric's storage-optimisation item, measured rather
-than hypothesised. Coalescing before the write, or `maxRecordsPerFile`, is the
-next thing to try.
-
-**Spark shutdown.** Closing a SparkSession uploads the event log, and against
-SeaweedFS that close blocks past a minute. The job now leaves on a 90 second
-deadline and reports `stopped_cleanly: false` when it does, so a completed run
-is never recorded as a hung one. The underlying slowness is not fixed.
-Recorded in [`IaC.md` section 8.11](IaC.md#811-a-job-that-finished-its-work-still-hung-and-reported-nothing).
-
----
-
-## What is not built
-
-| Area | State | Next |
+| Date | Work | Result |
 |---|---|---|
-| DP2, dbt-spark, silver to gold | compose ready under `--profile dbt`, `dbt/` empty | write `dbt/dbt_project.yml`, `profiles.yml`, the `stg_`/`int_`/`dim_`/`fact_` models |
-| DP3, offline feature table | not started | `f_customer_total_orders_90d` from silver, with `event_timestamp` and `created` |
-| Airflow DAGs | compose ready, Connections and Variables seeded, no DAGs | three DAGs, each with an ingest stage and a validate stage |
-| Kafka and Flink | compose ready under `--profile stream`, no job | PyFlink job: tumbling windows, watermarks, allowed lateness, side output |
-| Soda validation | not started | check files per zone, run as the validate stage of each DAG |
-| DataHub governance | compose ready under `--profile governance`, `governance/` empty | ingest bronze, silver and gold; emit a `DataProcessInstance` per DAG run so lineage ties a table to the pipeline that made it |
+| 2026-10-29 | Completed the authorized autonomous Polars generator POC experiment. | Added separate code, YAML run settings and source definitions, bounded account-group calculations, disk-based ordered exports, a supervised worker, independent validation, and a reproducible benchmark runner. Passed 50 tests, including reference fixtures and the specification's XML schema. Five final pilots validated; the largest produced 22,292,201 source records and 1,010,923,475 bytes at 125.16 MiB peak RSS under a 256 MiB budget. Wider batches preserved all source bytes. An independent DuckDB cash scan matched the SQLite validator. The working record states the simplified schedules, measurements, and unimplemented work. Existing generator and pipeline code were not replaced. |
+| 2026-10-29 | Compared Polars and DuckDB for the requested fresh generator POC. | Inspected the reference's column expressions and NumPy customer scheduler, the existing feasibility findings, and current streaming and disk-spill documentation. Recommended Polars with bounded generation batches and explicit state. DuckDB remains an alternative for large relational operations and persistent intermediate tables. The owner has not selected an engine. Updated Project Design and Status; no production code changed. |
+| 2026-10-29 | Handoff to Claude Opus 5.5. | At the owner's request, created agent `4d7b3f75-99da-4879-86b4-f09f58c844e8`, titled "[Handoff] EDAI design and documentation continuation", on Claude Opus 5.5 with `xhigh` reasoning and full access in workspace `wks_efd542566731a49a`. The [handoff brief](../misc/archive/handoffs/2026-10-29-edai-continuation.md) records the accepted decisions, open items, candidate next work, failed approaches, owner preferences, and constraints. `GLOSSARY.md` had been deleted from the working tree after the session recommended its removal. Removed its link from the Documentation Guide and its entry from `misc/tools/check_docs.py`; its definitions were not moved. `make check-docs` reported no issues and no broken links. |
+| 2026-10-28 | Cleaned active documentation and updated the README. | Reviewed 25 active Markdown files and changed 16, including a new infrastructure evidence record. Updated the accepted cash/ML flow and removed stale selection prompts. Moved infrastructure trials to the working record and kept source evidence in research notes. Corrected generator, Airflow, pipeline, and shutdown descriptions against source. `make check-docs` found no issues and no broken links across 225 links; `git diff --check` passed. Exact comparisons preserved TPC-DI quotations, examples, field definitions, diagram references, the specification extract, and coursework requirements. No production code, service state, or source specification changed. |
+| 2026-10-28 | Consolidated the accepted cash-forecast design. | Recorded cash-flow forecasting and a tier-based minimum-cash rule as accepted. Moved obligations to future work, kept source/streaming/ML selection criteria, and separated the proposed serving topology from open parameters. Preserved coursework requirements and infrastructure findings. Updated only Project Design and Status. `make check-docs` reported no text/anchor issues or broken links. |
+| 2026-10-28 | Layer 1 infrastructure inventory. | Compared the current plan with Compose definitions, container builds, configuration, pipeline code, and placeholder directories. Excluded the generator. Open work includes tool responsibilities, gold placement, table format and update rules, stream contracts and recovery, validation and lineage, and deployment resource limits. No architecture decision or production code changed. Runtime results remain those of the earlier build. |
+| Before 2026-10-23 | Earlier sessions built the generator, the core platform, and DP1. | First commit `bddc5dc` on 2026-10-23. OpenCode history covers October 18 to 20. |
+| 2026-10-26 to 27 | Project redefinition. Inspected the code, documents, course proposal, rubric, labs, and earlier conversations. | The root README became the accepted working draft (commit `ea4daf5` and later uncommitted edits). The TPC-DI reference and the streaming note were written. The decisions are now in the [project design](Project-Design.md#decisions-so-far). |
+| 2026-10-27, 00:40 | Overnight generator feasibility study in a separate Paseo session: agent `41bca088-c158-493f-a903-23e3a22c2e5e`, host `srv_OZ3Z94bqeKla`, workspace `wks_efd542566731a49a`. | Completed. The [report](research/Generator-Feasibility.md) recommends selective Spark adaptation. The probe stopped at import on Python 3.8.10 and generated zero rows. Scratch files are in `misc/generator-feasibility/`. No production code changed. |
+| 2026-10-27 | Documentation split. | `TPC-DI.md` became a wiki of benchmark facts. `Project-Design.md` took the requirements, decisions, and open questions. |
+| 2026-10-27 | Documentation merge. | The earlier architecture document, the three decision records, the session handoff, and the overnight task record were merged into the project design and this file, then removed. The research notes moved to `research/`. The documentation index was renamed from `docs/README.md` to the [documentation guide](Documentation-Guide.md), so it is not confused with the root README. The two notes in `.scratch/` were checked against the specification, the design paper, and the sample files. Their useful content went into the TPC-DI wiki and the project design, and the folder was removed. The wiki moved to `TPC-DI/`, with PDF copies of the specification and the design paper. Copies of every earlier version are in `misc/archive/doc-merge/before/`. |
+| 2026-10-27 | Handoff. | The documentation session ran as Paseo agent `41bca088-c158-493f-a903-23e3a22c2e5e`, the agent of the overnight study. It handed the work to GPT-6 Astra agent `c0d2870b-2453-4fa1-abd4-59cd2721c257` in workspace `wks_efd542566731a49a`. The next step is the owner's choice in [Current position](#current-position). |
+| 2026-10-27 | Documentation and collaboration discussion. | Clarified the README's presentation purpose and the subjective percentage. The owner accepted only the code-structure/comment paragraph of the proposed agreement. The next planned step is a short whole-project design outline. No README, Project Design, Documentation Guide, or AGENTS rewrite was made. |
+| 2026-10-27 | Card-fraud platform reference study. | Inspected selected source code, history, and published evidence at commit `cc34515304815774a5dad6f796683b46c27f93ac`. Recorded transferable engineering patterns and limits in the [reference note](research/Card-Fraud-Platform.md). No reference services or project production code were run or changed. |
+| 2026-10-28 | Guided learning and build sequence. | The owner proposed learning the overall TPC-DI design, defining enough scope to build Layer 1, and repeating for Layers 2 and 3. Started the explanation with brokerage activity and data integration. The wiki and design documents have not been rewritten. |
+| 2026-10-28 | TPC-DI relationships and changes. | Continued the guided explanation with customer/account/trade/security relationships, an illustrative trade lifecycle, repeated delivery, and dated customer versions. No stream, model, generator, or tool choice was made. |
+| 2026-10-28 | Visual TPC-DI data specification. | Created an editable two-page draw.io file and PNG renders for core source records and the warehouse ERD. The views show selected fields, types, keys, row meanings, and specification citations. Embedded them in the wiki. The project silver and gold models remain open. |
+| 2026-10-28 | Writing and visual artifact rules. | Added two sections to AGENTS.md extending the owner's writing rules to all authored text and setting expectations for visual clarity, layout, typography, labels, and notes. The owner rejected the decorative numbering, filler text, dense legends, and footnotes in the first draw.io views. Diagram revision remains pending. |
+| 2026-10-28 | Consolidated code, writing, and visual rules. | Added the previously accepted code-comment paragraph, included the language, presentation, and output rules from the owner's current ASD-STE100 instructions, and extended the visual rule to architecture, deployment, data flow, conceptual and hybrid diagrams, including icons and consistent visual meanings. The owner clarified that reasoning instructions, such as challenging framing and separating fundamental barriers from practical hurdles, do not belong in the writing section. The original collaboration preamble and document organization remain unresolved. |
+| 2026-10-28 | Simplified the collaboration opening. | Replaced the original AGENTS.md opening with the goal of building and learning together, a short continuity rule, and the separation between working records and documents that present, define, plan, or explain the project. |
+| 2026-10-28 | Full continuation handoff. | After the owner accepted the AGENTS.md changes, created agent `a763a44a-7afc-4938-b7e9-0404045e10b0`, titled "[Handoff] EDAI design and visual modelling", on GPT-6 Astra with `xhigh` reasoning in workspace `wks_efd542566731a49a`. The [handoff brief](../misc/archive/handoffs/2026-10-28-edai-continuation.md) preserves the accepted instructions, open design choices, pending documentation and diagram work, environment, and constraints. |
+| 2026-10-28 | Supporting-file cleanup. | Removed the AGENTS.md ignore rule and recorded the working-file conventions. Moved reusable checks, SQL queries, and diagram scripts into `misc/tools/`; moved one-off scripts and extracts into `misc/tmp/`; preserved previous document copies and the handoff in `misc/archive/`. Copied and verified the 72-file draw.io Windows application under `misc/tools/diagrams/drawio/windows/`, which Git ignores. Kept the active reference and sample-data paths. Updated affected references. Added AGENTS.md, the folder guide, and reusable tools to the Git index, with the ignore and Makefile changes. Documentation checks found 0 issues and 117 links with none broken. No files were discarded, no services ran, no production code changed, and no commit was made. The next sequence is documentation, diagram tools and views, then the TPC-DI reference rewrite. |
+| 2026-10-28 | Removed obsolete supporting files. | At the owner's request, removed the repository-local draw.io application, all 47 temporary files, 16 obsolete or duplicate diagnostic helpers, and one byte-identical TPC-DI backup. Removed 136 files totalling 450,734,270 bytes. Kept the unique document backups, handoff, reference checkouts and data, active sample input, generator-probe evidence, and reusable project tools. The original Windows Temp copy was outside this cleanup. Updated `make check-docs` to run the current text, anchor, and link checks, and removed the research note's reference to deleted HTML caches. Installation was deferred in this step. No application was installed, no services ran, and no production code changed. The remaining helpers passed syntax checks; `make check-docs` reported 0 issues and 117 links with none broken. |
+| 2026-10-28 | Installed Linux draw.io. | The owner clarified that they will install the Windows application and asked for the Linux application now. Installed official `drawio-amd64-32.6.1.deb` in Ubuntu 24.04 using APT, outside the repository. Its SHA-256 matched the release metadata: `515a975fbdb982e0d736b6f99248dbbb856a8b07bb72d6d3648a54b850fa33db`. Added the missing `libasound2t64` runtime dependency after the first launch identified it. `/usr/bin/drawio` resolves to `/opt/drawio/drawio`. Exported page 1 of the existing model through WSLg to a 2252 by 1997 PNG with exit code 0, using the normal sandbox settings, and inspected the image. The current Arial request resolves to DejaVu Sans on this machine; font selection remains part of the planned diagram revision. Logs and the preview are under `misc/tmp/drawio-install/`; the downloaded installer was removed after installation. The source model and document images were not replaced. |
+| 2026-10-28 | Assessed drawpyo. | Inspected the published drawpyo 0.2.5 wheel and upstream sources. Loaded the wheel from `misc/tmp/drawpyo-probe/package/` with Python 3.14.3, without installing it into the project environment. Generated a small two-table view with native field lists and an ER relationship; Linux draw.io 32.6.1 exported it successfully, and the PNG was inspected. The small file imported all 8 elements. Importing the existing two-page model failed with `AttributeError` on the read-only `Edge.endFill` property. That model has 446 elements but only 296 globally unique cell IDs; the released importer also lacks page-scoped identity. The initial recommendation favoured drawpyo for new generation; the following discussion revised that recommendation. Probe files and results are in `misc/tmp/drawpyo-probe/`. No project diagram, generator, or dependency file was changed. |
+| 2026-10-28 | Clarified the diagram-tool objective. | The owner prioritised reliable, useful diagrams over a library choice and asked for a candid comparison with direct generation. Corrected the earlier recommendation: the simple drawpyo probe established compatibility, not better diagram quality or reliability. Recommended retaining direct Python/XML for the next revised view and addressing the content density, typography, grouping, and routing that caused the rejected output. Updated the tooling assessment. No generator or diagram changed. |
+| 2026-10-28 | Rewrote the TPC-DI guide and diagrams. | The owner chose equal source/warehouse detail and one page with detailed material at the end. Replaced the reference with a main explanation, inventories, batch matrix, daily SCD2 example, verified trade 372101, complete field dictionaries, and detailed transformation rules. Rebuilt the editable model as five views and inspected all PNGs at a 1,000-pixel reading width. Preserved literal source/target type differences and specification inconsistencies. Retained direct Python/XML with reusable table and connector helpers, Ubuntu Sans fonts, and Linux draw.io export. Removed the two obsolete document renders after preserving backups under `misc/archive/tpcdi-before-rewrite-2026-10-28/`. Updated the tooling README and the guide placement description. Poppler supplies local PDF text extraction and rendering. `make check-docs` reported 0 issues and 120 links with none broken. The owner has not yet reviewed the new presentation. No production paths, root README, services, or storage were changed; no commit or push was made. |
+| 2026-10-28 | Iterated on the TPC-DI guide after feedback. | Removed all inline citations and bibliographic commentary from the guide. Replaced the SF3 trade case study with the native trade-update rules. Added raw samples for each source-file definition, including all three FINWIRE record types and an XML action. Grouped source and warehouse field references in the same subject order and added a navigation table. Added data-flow, combined input, and combined warehouse overviews; retained the existing detailed views in expandable sections. Each diagram now has its own editable draw.io file. Inspected new renders at a 1,000-pixel reading width. Updated the two research links affected by the removed case study and sample inventory. Documentation checks reported 0 issues and 130 links with none broken. No production paths or root README changed, and no commit or push was made. |
+| 2026-10-28 | Reduced prose in the TPC-DI guide. | Converted parallel definitions, format rules, trade updates, XML conditions, prospect matching, and error handling into tables. Converted file-specific format, ordering, and load notes into labelled lists. Kept short cause-and-effect explanations and the existing section order. Preserved all raw code samples, field-definition rows, diagram embeds, and editable-diagram links. Documentation checks reported 0 issues and 130 links with none broken. Only the guide and working record changed; no commit or push was made. |
+| 2026-10-28 | Closed the session and reassessed the documentation work. | The owner found the TPC-DI specification clear and judged most of the rewrite unnecessary. PDF table extraction and diagrams may still help, but the current diagrams were also less clear than the source. Recorded the specification as the primary reading material for resuming, without selecting another rewrite or extraction task. Preserved all artifacts and uncommitted work. Layer 1 choices and the broader documentation discussions remain open. No commit, push, production change, or service operation was made. |
+| 2026-10-28 | Extracted specification Chapters 1 to 4. | At the owner's request, saved the full text of Clauses 1 to 4 (original pages 12 to 79) as one Markdown reading copy, with 48 tables and three figures taken directly from the PDF. Joined table and XML continuations across pages, repaired extraction errors, and preserved source names, types, wording, and numbering. Added a bookmarked PDF excerpt with the original title and legal notice. All 68 selected pages rendered identically to the source; a word-token comparison found no missing source words after excluding the original bullet-font encoding and figure labels retained in images. Inspected all three figure crops. Temporary scripts and conversion data are in `misc/tmp/tpcdi-spec-extract/`. The existing guide and draw.io diagrams remain unchanged. Resume discussion when the owner returns. No commit, push, production change, or service operation was made. |
+| 2026-10-28 | Established shared diagram tooling and a warmer visual language. | The owner selected 1920 x 1440 for Markdown and delegated the design. Added the diagram guide, native XML creation/inspection/update/check/export tool, shared theme, agent pointer, and two editable examples. Checked 11 preservation and validation tests. Exported a synthetic master with 80 services, nine nested scope boxes, and 79 edges as SVG; this establishes rendering and update handling, not automatic layout quality. Inspected both standard examples at 960 pixels wide and verified 1920 x 1440 outputs. Selected body and heading color pairs exceed 4.5:1 contrast. Reviewed the pinned Card Fraud Platform diagrams as density references. Simplified the documented interaction after feedback: the owner edits and exports directly in draw.io; JSON stays internal to agent work. Documentation checks reported no issues and no broken links. Existing TPC-DI content and diagrams remain unchanged pending the remaining questions. No commit or push was made. |
 
-Each of those directories exists with a README saying what goes in it. The
-compose files bind-mount them, and Docker creates a missing bind source as an
-empty root-owned directory rather than failing, so `dbt/` was in exactly that
-state until this review: created by Docker, owned by root, empty, and the
-containers would have mounted nothing without saying anything.
+### Earlier discussion notes
 
----
+These notes preserve the previous discussion in its recorded order. Statements about open or proposed choices describe that point in the discussion; [Current position](#current-position) and [Project Design](Project-Design.md) take precedence.
 
-## Open questions, in the order they block work
+<details>
+<summary>Discussion before the cash-forecast design consolidation</summary>
 
-1. **Can dbt-spark reach the cluster?** dbt needs HiveServer2, which takes the
-   whole worker. Options: run DP2 alone with `--profile compute,dbt`; or use
-   `method: session` and accept that dbt no longer runs on the cluster. Decide
-   before writing the first model.
-2. **How does SCD2 land?** Postgres has no `LAST_VALUE(... IGNORE NULLS)`, so
-   the carry-forward has to run in Spark and Postgres stores the finished
-   `valid_from`/`valid_to`/`is_current` rows. Settled in principle, still needs
-   the schema design in ticket 03.
-3. **How does dbt do incremental without `MERGE`?** `insert_overwrite` or append
-   per batch. Neither is written yet.
-4. **How is volume reported?** The rubric asks for 100 GB. The answer stays a
-   scale factor, a documented path and a measured demo run. Do not claim
-   100 GB without measuring it.
-5. **Is a RAG and embeddings pipeline possible?** TPC-DI carries almost no free
-   text. FINWIRE narratives, CustomerMgmt XML and prospect names are the only
-   candidates. Undecided, and it belongs to Layer 2.
+The owner asked whether an existing static trade type or similar field could support the cash-buffer policy and avoid an obligation schema. Verified that TradeType is static and classifies trades; the local reference has market buy/sell, limit buy/sell, and stop loss. CashFlag is per trade, not an account type. DimCustomer.Tier has valid categories 1, 2, and 3 and can be used as a project policy key through the existing account/customer relationship, but the specification supplies no cash minimum or credit-risk meaning for the tiers. Project Design records a proposed tier-to-buffer configuration, with thresholds and rationale still open. This is a proposal, not an accepted policy. No obligation dataset or new business-source schema was added.
 
----
+The owner asked whether the cash alert is near-real-time ML integrated with Flink and an endpoint, and whether adding obligation data is easy. Project Design now records the proposed serving path: Flink maintains cash/features; a separate scoring worker calls the planned model service and applies a policy; an API exposes retained alert state. This is offline-trained online inference, not continuous model training. The obligation schema can be added beside native tables, but its generation, known-time history, payment links/status, and forecast accounting are additional work that has not been implemented or verified. The current recommendation is a buffer-only forecast alert first, with obligations as a separate optional extension. Neither the obligation dataset nor the serving topology is accepted yet.
 
-## Findings that change how you plan
+The owner mostly agrees with cash-flow forecasting and proposes a small projected-cash risk/policy flag tied to obligations or account borrowing. Checked the full specification text and the Trade/Financial field tables: cash balances, holdings, daily prices, and a cash-versus-margin trade flag exist; an account obligation schedule, settlement ledger, borrowing balances, and margin requirements do not. Financial liabilities belong to issuing companies, and FI_MARGIN is profit margin. Project Design now records a proposed cash-shortfall alert, either against a minimum cash buffer or with an added synthetic due-payment schedule. The latter must track when obligations became known and link eventual cash events so forecasts do not count scheduled payments twice. The proposal is not a regulatory compliance model. No final horizon, policy threshold, obligation extension, or ML target is accepted.
 
-These came out of building the platform. The full list, with explanations, is
-in [`IaC.md` section 8](IaC.md#8-findings-that-cost-time).
+The owner asked whether the streaming selection criteria were recorded and requested a comparison of cash-flow forecasting with trading-activity prediction. Project Design already contained source constraints and the cash rationale; it now has an explicit streaming criteria table covering event meaning, time, identity, dependencies/state, useful outputs, correctness, and scope. The ML comparison records a recommendation for cash-flow forecasting because it directly uses the selected pipeline, while noting that binary trading activity may be easier to model and does not require another stream. The proposed use is account cash monitoring and forecasting, with evaluation of historical-only versus historical-plus-streaming features. No ML target is accepted yet. The owner wants usefulness and project scope considered alongside the learning and implementation value.
 
-- **A path write is not a table write.** Parquet under `dt=` directories is
-  invisible to a query until `MSCK REPAIR TABLE` runs.
-- **An unfiltered union of two schema variants doubles a file.** DP1 did this
-  and bronze came out at 100 percent duplication against an injected 2 percent.
-- **A deduplication key narrower than the record deletes real rows.** Watch
-  history keyed on three of its four columns removed 62 percent of the table.
-- **SeaweedFS maps each S3 bucket to a collection**, and a collection needs a
-  volume. Out of volumes, writes fail with an `InternalError` that reads like a
-  gateway fault.
-- **HiveServer2 takes every core of the Spark worker**, whatever
-  `spark.executor.cores` says, and a job that cannot get an executor hangs with
-  no stack trace.
-- **`overwrite` is not idempotent** on a partitioned table. Files outside the
-  partitions a run wrote survive and a reader counts them.
-- **SeaweedFS reports an empty prefix as an existing directory**, so Spark's
-  managed-table location check always fires. Every lakehouse table is external.
-- **An off-by-one bind mount does not fail.** Docker creates the missing source
-  as an empty directory, so the mount works and the file inside is not there.
-- **`spark-class` does not read `spark-defaults.conf`.** Only `spark-submit`
-  does.
+The owner accepted the layer definitions: staging is batch-only; bronze preserves logical source records/received events 1:1 in table form; silver holds cleaned records; gold holds warehouse outputs. TPC-DI source meanings, source-to-target rules, and daily batch patterns remain the baseline, with explicit cash-streaming changes. CashTransaction is selected because it is an insert-only log of timestamped cash movements with account IDs, signed amounts, and a defined balance target. The alternatives are trades, watches, holdings, daily market observations, and customer/account CDC. Cash stream timing, IDs, windows, dimension lookups, correction policy, and sink implementation still need detail. No ML target is selected. The owner rejected narrowing to two ML options before seeing a candidate list and the comparison criteria. They explicitly want predictive behavior considered in generator design from the start and allow consideration of documented synthetic behavior. Project Design now records the accepted scope, broader ML candidates, selection criteria, and the distinction between offline/online feature storage and batch/stream computation. The TPC-DI reference is improved but still does not meet the owner's expectations; do not start another broad rewrite while the ML discussion is active. The previous design and status files are saved in `misc/tmp/tpcdi-content/before-cash-choice-20261028-154338`.
 
-Five were found in DP1 itself, all correctness bugs in a pipeline that ran to
-completion and reported success. What found them was cross-checking measured
-values against independent sources rather than against golden values. See
-[`IaC.md` section 8](IaC.md#8-findings-that-cost-time).
+The owner authorized a draft reorganization of the TPC-DI reference and the TPC-DI-related project design. The reference now introduces the load cycle, source/file inventory, source-to-warehouse mapping, and each target table's update behavior before the detailed rules and fields. The complete source and warehouse field sections, raw samples, and existing diagram block were preserved. Project Design now starts with scope, a proposed connected flow, original-versus-project changes, streaming candidates, and ML candidates; requirements and existing implementation considerations follow. Delivery and processing changes for streaming are stated explicitly. Only source coverage and earlier accepted choices are decisions; warehouse coverage, the stream computation, and the ML target remain proposals. The owner has not reviewed this draft. The previous files are saved in `misc/tmp/tpcdi-content/before-flow-pass-20261028-145750`.
 
-These came out of research and predate the build:
+The owner selected all TPC-DI business and reference sources and their structures as the starting scope, excluding metadata used only for formal benchmark validation. They want a concrete explanation of source load patterns, source-to-target transformations, target history behavior, streaming candidates, ML candidates, and how the paths form one working system. They do not want another quiz or a request to select tables without this explanation. Source coverage is recorded in Project Design. The working recommendation is to retain the original business warehouse and batch rules, extend the number of daily updates, and add streaming aggregates and ML features separately. Trade activity, cash movements, and watch actions are the leading stream candidates. Next-day account trading activity is a candidate ML task, subject to a check of label coverage and predictive signal in the generated data. These recommendations are not accepted design decisions. Operational metadata such as batch date, CDC operation/order, source provenance, and quality results still needs to be retained or represented by a project equivalent. The restored TPC-DI guide remains unchanged.
 
-- The schema drifts between batches, on purpose.
-- A trade's business identity is not its row id.
-- Value skew is not automatically a slow query.
-- Text fields contain spaces.
-- The customer file does not match the published spec, deliberately.
-- Late arrival and out-of-order are different problems.
-- Postgres lacks `LAST_VALUE(... IGNORE NULLS)`.
+The owner stopped the quiz and requested restoration of the TPC-DI guide to the version before the simplification pass. Restored `docs/TPC-DI/TPC-DI.md` exactly from `misc/tmp/tpcdi-content/before-abridgment-20261028-092816.md`. This restores the selected specification quotations and the structure before the abridgment, while retaining the earlier combined source-file and batch table. The replaced guide is saved as `before-revert-20261028-203209.md` in `misc/tmp/tpcdi-content/`. The quiz and further rewriting are stopped. No ML target has been selected.
 
----
+The current infrastructure discussion covers Layer 1 tools and components, excluding the generator. The owner requested a comparison of the plan, existing code, and decisions still open. The storage and Spark foundation has implementation files and recorded results from the earlier build. Streaming, orchestration, dbt, validation, and governance remain incomplete. PostgreSQL for gold is still proposed in Project Design, although the README presents it as the target. No new architecture choice has been accepted.
 
-## Two corrections made along the way
+The source inventory confirms missing Dockerfiles for Airflow, Flink, and DataHub ingestion, and no DAGs, dbt project, Flink job, Soda checks, or DataHub recipes. Airflow connection and variable seed files exist, but their presence does not establish successful import. The Airflow definition also combines LocalExecutor with a separate worker command. The Flink submit service mounts `../../pipelines` from `infra/`, which points outside the coursework directory. These are implementation gaps to resolve after the relevant design choices. No service was started for this inventory.
 
-Recorded so they do not get repeated.
+The owner requested simpler, abridged explanations throughout the TPC-DI guide and an order that introduces required concepts before using them. The immediate scope remains the whole `TPC-DI.md`, not the other project documents. This supersedes the earlier preference for original paragraphs in the guide: source-based summaries now replace the quotations, while the specification PDF remains the reference. The opening explains the historical load and two sequential daily updates. Source roles, file formats, dimensions, facts, identifiers, CDC, and history tracking are introduced before their detailed use. Update and history rules now precede the field references. Exact field definitions, raw samples, and diagram files remained unchanged. The owner rejected this simplification as too elementary, and this pass has now been reverted as recorded above.
 
-**sf_3 is a format reference, not our dataset.** An early research pass measured
-sf_3's skew baselines, row counts and duplicate rates as if we would ship it. We
-generate our own data, so those numbers describe a file we never use. Only the
-format contract and the rubric wording carried forward.
+The owner found the guide difficult to follow from Physical source files onward. Shorter cell wording was insufficient because file contents, formats, batch behavior, and record rules were spread across separate sections. The requested structure puts simple file and table descriptions first and keeps exact rules in the detailed reference. The physical-file overview now combines source, filename, short contents, format, historical-load input, and daily-update input in one table. Batch2 and Batch3 share a column because their file types and rules match. The warehouse overview gives only table contents and main sources. Record definitions, identifiers, history, trade updates, and calculation rules are in the reference sections; the existing diagrams are grouped in expandable views. Raw samples, field definitions, and specification quotations were preserved. The owner requested the further simplification recorded above.
 
-**Both generator references were the wrong shape.** benchbox emits finished
-warehouse tables and skips the ETL, so it produces the answer rather than the
-inputs. The other is not a TPC-DI generator at all.
+The diagram style and tooling are finalized. The accepted palette uses blue `#244F72` for sources, scopes, and interfaces, green `#397A32` for storage, orange `#B65300` for processing and workload, and `#183246` for ordinary text. The [diagram guide](Diagram-Guide.md), [examples](Diagram-Examples.md), and [tool instructions](../misc/tools/diagrams/README.md) use these rules. The reviewed green palette sample was promoted to the canonical data-integration example without another render. The deployment and relationship examples use the final theme. The owner explicitly excluded TPC-DI diagram regeneration; all 18 files under `docs/TPC-DI/diagrams/` remain byte-for-byte unchanged.
 
----
+Diagram tools remain in `misc/tools/diagrams/`, following the project directory rules. Superseded trials, stale creation inputs, and unused Carbon assets are preserved locally under `misc/archive/diagram-tooling-finalization-2026-10-28/`. That archive includes the earlier working record. Active guides contain rules and usage instructions; vendor comparisons remain in research notes. The icon sources remain draw.io libraries first, official product assets for named technologies, and Noun Project for missing generic symbols.
 
-## Housekeeping
+Final checks passed: 13 tooling tests, text contrast of at least 4.65:1 for role headings against their pale fills, at least 11.86:1 for ordinary text against the body fills, 1920 x 1440 standard PNGs, and independent rendering of the 1440 x 960 deployment SVG. The exporter now removes the unsupported-text footer only when all rich-text labels have embedded image fallbacks. Verification evidence is in `misc/tmp/diagrams/final-check/`.
 
-The repo held a second direction: a TPC-DS retail schema and a 330 MB DuckDB
-database from a local `dbt-tpcdi` build. TPC-DS was explored first and dropped.
-Those files are in `misc/abandoned-tpcds/`.
+The owner's physical-file edits clarified the preferred table style: let column headings carry the repeated context and name the contents directly. Completed that table, repaired incomplete wording, and applied the same style to the contents table, batch matrix, format and object overviews, warehouse grain table, and simple field descriptions in `TPC-DI.md`. Kept explicit key relationships and conditional rules. Source quotations, raw samples, field names, types, coded values, numeric limits, and NULL markers were preserved. This pass changes wording and presentation, not project design.
 
-The git repo has one commit, `9f3b127`, holding the whole project as it stood.
-Identity is set repo-local, so `user.name` and `user.email` both resolve and
-commits work. Nothing has been pushed and no remote is configured.
+The owner reaffirmed the document boundary: diagram guides contain rules and usage instructions, not discussion history, reference comparisons, rejected trials, or next-task notes. The diagram guide and tooling README have been cleaned accordingly. Visual references are in `docs/research/diagram-references/`, with the external architecture-density comparison in `docs/research/Diagram-Visual-Systems.md`. Keep visual preferences and unfinished decisions in this working record.
 
-`infra/.env` is committed on purpose. It holds local development defaults with
-no production credential, and Docker Compose reads it at parse time, so a fresh
-clone has no port map and no service config without it.
+The owner requested that the TPC-DI guide reference only the specification PDF, without links to the extracted Markdown reading copy. The guide's reading-copy link has been removed. The extraction remains a local working resource.
 
-Environment: one Python, the `uv`-created venv at the repo root, holding
-`pytest`, `datagen`, `benchbox` and `boto3`. Do not run things on Windows
-Python, which has only `pip`. Run commands from the `Makefile`.
+The owner requested a style pass on the rest of `TPC-DI.md`, using their edited opening as the reference. This pass covers only that document. The accepted style uses a short introduction, selected source quotations, short paragraphs, and lists or tables for distinct facts. Source systems and physical files now follow the opening. The physical-file inventory groups files by source or purpose. The warehouse, history, trade, and transformation sections use selected original explanations, with repeated commentary and invented teaching examples removed. Dense temporal rules are grouped into labelled lists. Raw sample blocks and field-table definitions were preserved. The guide continues to link only to the specification PDF. The owner reviewed the document and began the physical-file table edits recorded above.
 
-**Layout note.** R12 recommends one Python package at `src/coursework/`, with
-the generator moved into it. That move has not happened: `generator/` still
-holds `datagen`, and pipeline code lives under `pipelines/`. It is a mechanical
-move and should be done before the ML work adds a third importer.
+The accepted content direction is to summarize TPC-DI briefly, then focus on source systems and physical files. Use the specification's descriptions and explanations, grouped for reference use. Do not add a second interpretation that repeats the source. This supersedes the earlier request to pair original paragraphs with simpler explanations. The previous opening proposal in `misc/tmp/tpcdi-content/opening-proposal.md` is superseded.
 
----
+The owner resumed the TPC-DI discussion on 2026-10-28 and requested questions to define the next document revision. Use the [specification](TPC-DI/TPC-DI_v1.1.0.pdf) as the basis for summaries, simpler explanations, and verbatim material. Do not invent content or introduce a new framing at this stage. The owner prefers the earlier README's separation of source origin and physical files to parts of the rewritten guide. The exact organization and the material to summarize, simplify, or retain verbatim remain open. The [extracted chapters](TPC-DI/spec-extract/Chapters-1-4.md) and [PDF excerpt](TPC-DI/spec-extract/Chapters-1-4.pdf) remain available. The owner has now answered the opening-order and quotation questions. The opening has received a bounded revision; detailed scope and later organization remain open. The diagrams remain unchanged.
 
-## Next
+The project is being redefined. The [root README](../README.md) describes the intended system. The owner's earlier percentage expressed satisfaction with that draft; it was not an implementation progress measure. Parts of the earlier code are reusable, with known defects recorded below.
 
-1. Write the dbt project and get silver to gold working. It is the largest
-   remaining rubric block and it unblocks DP3.
-2. Write the Airflow DAGs, because the rubric scores ingest *and* validate
-   stages for all three pipelines.
-3. Build the Flink job. Ten rubric points, and nothing exists yet.
-4. Move `datagen` to `src/coursework/datagen` per R12, while the blast radius is
-   still two directories.
+The owner wants to understand the TPC-DI data before defining enough data problems, streaming, models, and infrastructure to build Layer 1. Layers 2 and 3 follow that work. The [TPC-DI guide](TPC-DI/TPC-DI.md) now gives source files and warehouse tables equal coverage on one page. Its main sections explain business objects, file and table row meanings, batch differences, daily history, trade updates, and transformations. Complete source and warehouse fields appear at the end in matching subject groups, with a navigation table. Every raw-file definition includes a record sample. Detailed rules follow the field reference. The owner rejected the citations, SF3 case-study emphasis, missing combined overviews, and unclear later organization. The current iteration removes citations and sample-specific analysis from the explanation. After the owner noted excessive prose, the guide now uses tables for definitions, formats, and handling rules, and labelled bullets for file-specific facts. Short paragraphs explain causes and consequences. The guide describes the benchmark; it does not choose project models or extensions.
+
+The TPC-DI guide shows a [data-flow diagram](TPC-DI/diagrams/tpc-di-data-flow.drawio), a [combined input overview](TPC-DI/diagrams/tpc-di-input-overview.drawio), and a [combined warehouse overview](TPC-DI/diagrams/tpc-di-warehouse-overview.drawio). The earlier five field views remain available in expandable sections. Every diagram has its own editable file. These views have not yet been migrated to the new canvas and palette; their content organization remains under discussion.
+
+The supporting-file cleanup is complete. Reusable tools are in `misc/tools/`, temporary work is in `misc/tmp/`, and unique backups are in `misc/archive/`. Linux draw.io 32.6.1 is installed outside the repository at `/opt/drawio`, with `/usr/bin/drawio` on PATH. The shared diagram tool uses native XML, a common theme, targeted updates, and draw.io export. Pillow 12.3.0 was installed in the project virtual environment for PNG checks and reading previews. The TPC-DI builders remain legacy tools. The [drawpyo assessment](research/Diagram-Tooling.md) records the earlier comparison.
+
+AGENTS.md records the accepted collaboration, code-comment, writing, and visual rules. Work progress, session state, and routine run reports belong in working records. The README presents the project; design documents define and plan it; reference documents explain their subjects. The Documentation Guide received only a targeted update for the new TPC-DI page. Its broader revision and Project Design's whole-system scope remain unfinished. The placement of useful development/performance evidence and the treatment of tentative alternatives also remain open.
+
+The generator engine, streaming computation, ML label, silver and gold models, and division of work between Spark, dbt, PostgreSQL, and Trino remain open. The generator study proposes selective Spark adaptation, but its probe stopped at import and produced no rows. The [card-fraud reference note](research/Card-Fraud-Platform.md) records transferable patterns, not adopted designs. No autonomous platform build is authorized.
+
+</details>
+
+Documentation work from 2026-10-26 onward is not committed. The Git remote is `origin`, `https://github.com/thongng01/data-ai-platform-tpcdi.git`.
+
+## Resume notes
+
+Read [AGENTS.md](../AGENTS.md) first, then [Current position](#current-position) and the [project design](Project-Design.md). Start with its selected use case and open questions. The [root README](../README.md) presents the platform and accepted cash use case. Use the [TPC-DI specification](TPC-DI/TPC-DI_v1.1.0.pdf) as the primary domain reference. Continue from the accepted cash forecast and tier policy; the next design work concerns timing, thresholds, and data contracts.
+
+Environment:
+
+- The workspace is `\\wsl.localhost\Ubuntu\home\thongng\workspace-wsl\fsds-edai\coursework` from Windows and `/home/thongng/workspace-wsl/fsds-edai/coursework` in WSL.
+- Run Linux commands with `wsl.exe -d Ubuntu --cd <WSL path> --exec <command>`. Pipes, brackets, and quotes break when PowerShell passes them through `bash -c`.
+- Run project Python from the WSL virtual environment in `.venv/`. Do not install project packages into Windows Python.
+- Windows `rg` works on the UNC path. WSL has no `rg`.
+- Use WSL Git for `misc/tpcdi` instead of changing the global `safe.directory`.
+- Run documentation checks with `make check-docs` from the repository root. Diagram scripts and draw.io instructions are in [misc/tools/diagrams](../misc/tools/diagrams/README.md).
+
+References:
+
+- `misc/tpcdi` is [AlaaAlmutawa/TPC-DI](https://github.com/AlaaAlmutawa/TPC-DI) at commit `0702dd9bba87e13a33280412a47dca2d5257dbba`. The SF3 sample is in `misc/tpcdi/sf_3/output_data`. Notes are in [Reference implementations](research/Reference-Implementations.md).
+- `misc/generator-feasibility/reference` is the Databricks generator at commit `2ac319db6e62927c5d4f772cf5654ad8981f9ec4`.
+- The specification is [TPC-DI 1.1.0](https://www.tpc.org/TPC_Documents_Current_Versions/pdf/TPC-DI_v1.1.0.pdf). Local copies of the [specification](TPC-DI/TPC-DI_v1.1.0.pdf) and the [design paper](TPC-DI/p1367-poess.pdf) are in `docs/TPC-DI/`. Keep PDF source links in descriptive documents. Extracts are working aids and do not replace the source.
+- `misc/tools/` and `AGENTS.md` belong in Git. Git ignores `misc/tmp/`, `misc/archive/`, local reference checkouts, generated data, and `docs/course/`. Draw.io is installed separately; its application binaries do not belong in the repository. Preserve the archives, reference material, and course files. The [misc directory guide](../misc/README.md) defines their locations.
+
+Conversation history:
+
+- OpenCode history is in `C:/Users/XWIND-PC/.local/share/opencode/opencode.db`. Open it read-only with SQLite. The tables `session`, `message`, and `part` hold the conversations. Relevant session titles: "Wayfinder skill: charting decision maps", "Wayfinder grill phase struggling with coursework decisions", "Confirm coursework handoff and await instructions", and "Unslop and continue building project from handoff".
+- The Codex session of 2026-10-26 and 27 is `01a1787d-558e-7c70-8d7b-3ddba44e7e9d`.
+- The overnight study and the 2026-10-27 documentation session ran in Codex thread `01a17945-a589-7e70-9605-22feff20bff5`.
+- The later documentation, diagram, and instruction discussion ran as Paseo agent `c0d2870b-2453-4fa1-abd4-59cd2721c257`. Its latest runtime thread was `01a17e33-157c-7003-aeb9-4d622b61d53c`; earlier messages are in `01a17c74-ab8d-7460-8439-6d36d1d774ec`. The October 28 handoff continues in agent `a763a44a-7afc-4938-b7e9-0404045e10b0` on host `srv_OZ3Z94bqeKla`. The TPC-DI document and design session ran as agent `ac1e127e-8fa7-4e77-8662-086b24f1733c` in Codex threads `01a18136-9e04-7763-9f3c-7d06901ee028`, `01a18151-b0ca-7133-bf2b-f75a892b5cec`, and `01a181fc-1869-7a60-8806-6d488c4fb49a`. The October 29 handoff continues in agent `4d7b3f75-99da-4879-86b4-f09f58c844e8`.

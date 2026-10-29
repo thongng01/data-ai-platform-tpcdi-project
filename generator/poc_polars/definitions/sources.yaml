@@ -1,0 +1,202 @@
+Trade:
+  filename: Trade.txt
+  separator: "|"
+  cdc: true
+  fields:
+    T_ID: TRADE_T
+    T_DTS: DATETIME
+    T_ST_ID: CHAR(4)
+    T_TT_ID: CHAR(3)
+    T_IS_CASH: BOOLEAN
+    T_S_SYMB: CHAR(15)
+    T_QTY: S_QTY_T
+    T_BID_PRICE: S_PRICE_T
+    T_CA_ID: IDENT_T
+    T_EXEC_NAME: CHAR(49)
+    T_TRADE_PRICE: {type: S_PRICE_T, nullable: true}
+    T_CHRG: {type: VALUE_T, nullable: true}
+    T_COMM: {type: VALUE_T, nullable: true}
+    T_TAX: {type: VALUE_T, nullable: true}
+TradeHistory:
+  filename: TradeHistory.txt
+  separator: "|"
+  fields:
+    TH_T_ID: TRADE_T
+    TH_DTS: DATETIME
+    TH_ST_ID: CHAR(4)
+CashTransaction:
+  filename: CashTransaction.txt
+  separator: "|"
+  cdc: true
+  fields:
+    CT_CA_ID: IDENT_T
+    CT_DTS: DATETIME
+    CT_AMT: VALUE_T
+    CT_NAME: CHAR(100)
+HoldingHistory:
+  filename: HoldingHistory.txt
+  separator: "|"
+  cdc: true
+  fields:
+    HH_H_T_ID: TRADE_T
+    HH_T_ID: TRADE_T
+    HH_BEFORE_QTY: S_QTY_T
+    HH_AFTER_QTY: S_QTY_T
+WatchHistory:
+  filename: WatchHistory.txt
+  separator: "|"
+  cdc: true
+  fields:
+    W_C_ID: IDENT_T
+    W_S_SYMB: CHAR(15)
+    W_DTS: DATETIME
+    W_ACTION: CHAR(4)
+DailyMarket:
+  filename: DailyMarket.txt
+  separator: "|"
+  cdc: true
+  fields:
+    DM_DATE: DATE
+    DM_S_SYMB: CHAR(15)
+    DM_CLOSE: S_PRICE_T
+    DM_HIGH: S_PRICE_T
+    DM_LOW: S_PRICE_T
+    DM_VOL: S_COUNT_T
+Account:
+  filename: Account.txt
+  separator: "|"
+  cdc: true
+  fields:
+    CA_ID: IDENT_T
+    CA_B_ID: IDENT_T
+    CA_C_ID: IDENT_T
+    CA_NAME: {type: CHAR(50), nullable: true}
+    CA_TAX_ST: NUM(1)
+    CA_ST_ID: CHAR(4)
+Customer:
+  filename: Customer.txt
+  separator: "|"
+  cdc: true
+  fields:
+    C_ID: IDENT_T
+    C_TAX_ID: CHAR(20)
+    C_ST_ID: CHAR(4)
+    C_L_NAME: CHAR(25)
+    C_F_NAME: CHAR(20)
+    C_M_NAME: {type: CHAR(1), nullable: true}
+    C_GNDR: {type: CHAR(1), nullable: true}
+    C_TIER: NUM(1)
+    C_DOB: DATE
+    C_ADLINE1: CHAR(80)
+    C_ADLINE2: {type: CHAR(80), nullable: true}
+    C_ZIPCODE: CHAR(12)
+    C_CITY: CHAR(25)
+    C_STATE_PROV: CHAR(20)
+    C_CTRY: {type: CHAR(24), nullable: true}
+    C_CTRY_1: {type: CHAR(3), nullable: true}
+    C_AREA_1: {type: CHAR(3), nullable: true}
+    C_LOCAL_1: {type: CHAR(10), nullable: true}
+    C_EXT_1: {type: CHAR(5), nullable: true}
+    C_CTRY_2: {type: CHAR(3), nullable: true}
+    C_AREA_2: {type: CHAR(3), nullable: true}
+    C_LOCAL_2: {type: CHAR(10), nullable: true}
+    C_EXT_2: {type: CHAR(5), nullable: true}
+    C_CTRY_3: {type: CHAR(3), nullable: true}
+    C_AREA_3: {type: CHAR(3), nullable: true}
+    C_LOCAL_3: {type: CHAR(10), nullable: true}
+    C_EXT_3: {type: CHAR(5), nullable: true}
+    C_EMAIL_1: {type: CHAR(50), nullable: true}
+    C_EMAIL_2: {type: CHAR(50), nullable: true}
+    C_LCL_TX_ID: CHAR(4)
+    C_NAT_TX_ID: CHAR(4)
+HR:
+  filename: HR.csv
+  separator: ","
+  fields:
+    EmployeeID: IDENT_T
+    ManagerID: IDENT_T
+    EmployeeFirstName: CHAR(30)
+    EmployeeLastName: CHAR(30)
+    EmployeeMI: {type: CHAR(1), nullable: true}
+    EmployeeJobCode: NUM(3)
+    EmployeeBranch: CHAR(30)
+    EmployeeOffice: CHAR(10)
+    EmployeePhone: CHAR(14)
+Prospect:
+  filename: Prospect.csv
+  separator: ","
+  fields:
+    AgencyID: CHAR(30)
+    LastName: CHAR(30)
+    FirstName: CHAR(30)
+    MiddleInitial: {type: CHAR(1), nullable: true}
+    Gender: CHAR(1)
+    AddressLine1: CHAR(80)
+    AddressLine2: {type: CHAR(80), nullable: true}
+    PostalCode: CHAR(12)
+    City: CHAR(25)
+    State: CHAR(20)
+    Country: CHAR(24)
+    Phone: {type: CHAR(30), nullable: true}
+    Income: NUM(9)
+    NumberCars: NUM(2)
+    NumberChildren: NUM(2)
+    MaritalStatus: CHAR(1)
+    Age: NUM(3)
+    CreditRating: NUM(4)
+    OwnOrRentFlag: CHAR(1)
+    Employer: CHAR(30)
+    NumberCreditCards: NUM(2)
+    NetWorth: NUM(12)
+StatusType:
+  filename: StatusType.txt
+  separator: "|"
+  fields: {ST_ID: CHAR(4), ST_NAME: CHAR(10)}
+TradeType:
+  filename: TradeType.txt
+  separator: "|"
+  fields: {TT_ID: CHAR(3), TT_NAME: CHAR(12), TT_IS_SELL: NUM(1), TT_IS_MRKT: NUM(1)}
+Industry:
+  filename: Industry.txt
+  separator: "|"
+  fields: {IN_ID: CHAR(2), IN_NAME: CHAR(50), IN_SC_ID: CHAR(4)}
+TaxRate:
+  filename: TaxRate.txt
+  separator: "|"
+  fields: {TX_ID: CHAR(4), TX_NAME: CHAR(50), TX_RATE: "NUM(6,5)"}
+Date:
+  filename: Date.txt
+  separator: "|"
+  fields:
+    SK_DateID: IDENT_T
+    DateValue: CHAR(20)
+    DateDesc: CHAR(20)
+    CalendarYearID: NUM(4)
+    CalendarYearDesc: CHAR(20)
+    CalendarQtrID: NUM(5)
+    CalendarQtrDesc: CHAR(20)
+    CalendarMonthID: NUM(6)
+    CalendarMonthDesc: CHAR(20)
+    CalendarWeekID: NUM(6)
+    CalendarWeekDesc: CHAR(20)
+    DayOfWeekNum: NUM(1)
+    DayOfWeekDesc: CHAR(10)
+    FiscalYearID: NUM(4)
+    FiscalYearDesc: CHAR(20)
+    FiscalQtrID: NUM(5)
+    FiscalQtrDesc: CHAR(20)
+    HolidayFlag: BOOLEAN
+Time:
+  filename: Time.txt
+  separator: "|"
+  fields:
+    SK_TimeID: IDENT_T
+    TimeValue: CHAR(20)
+    HourID: NUM(2)
+    HourDesc: CHAR(20)
+    MinuteID: NUM(2)
+    MinuteDesc: CHAR(20)
+    SecondID: NUM(2)
+    SecondDesc: CHAR(20)
+    MarketHoursFlag: BOOLEAN
+    OfficeHoursFlag: BOOLEAN

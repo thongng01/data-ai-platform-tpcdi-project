@@ -1,184 +1,96 @@
-# datagen: synthetic TPC-DI data generator
+# Synthetic TPC-DI generator
 
-Our own generator. We do not wrap benchbox or any other generator. The upstream
-`sf_3` sample under `misc/tpcdi/` is a format reference, and
-`datagen/emit.py` encodes the byte level contract every generated file must
-meet.
+`datagen` is the existing Python generator. It writes selected TPC-DI-shaped files and a run manifest. Its file shapes do not establish coherent brokerage history or complete benchmark behavior. The accepted redesign starts from the specification and a reference generator; see [Project Design](../docs/Project-Design.md#generator). [Status](../docs/Status.md#what-exists) records progress and defects.
 
-## Run it
+The separate [Polars POC](poc_polars/README.md) generates connected source files with bounded calculations, YAML definitions, and independent validation. Its [evidence record](../docs/records/Polars-POC.md) gives the measured scale and limits. The commands below still operate the earlier `datagen` implementation.
 
-The project virtualenv lives at the repo root (`.venv/`, created with `uv`, WSL
-Python 3.14). It holds `pytest`, `datagen` (installed editable), and `benchbox`.
-Use it for everything:
+## Run a small dataset
+
+Run these commands from the repository root in WSL with `datagen` installed in `.venv`:
 
 ```bash
-cd generator
-VENV=../.venv/bin
-
-# small demo run, about 9 MB across 3 batches
-$VENV/datagen --scale 0.02 --out ../misc/sample_run --clean
-
-# full scale run
-$VENV/datagen --scale 1.0 --out ../misc/data --clean
-
-# clean data for ingest tests, no injected problems
-$VENV/datagen --scale 0.02 --out ../misc/clean_run --clean \
-    --no-duplicates --no-skew --no-schema-evolution
-
-# measure what we produced
-$VENV/python -m datagen.inspect ../misc/sample_run
+.venv/bin/datagen --scale 0.02 --out misc/tmp/generator-demo
+.venv/bin/python -m datagen.inspect misc/tmp/generator-demo
 ```
 
-Tests: `$VENV/python -m pytest tests/ -q`
+Use a new output directory for a separate run. `--clean` deletes the entire selected output directory before generation. `make generate` uses scale 0.02 and replaces `misc/sample_run`, which is the existing pipeline's input directory.
 
-After changing dependencies in `generator/pyproject.toml`, reinstall with:
+Do not use the default scale of 1.0 for a full run with the current code. It requests 320 distinct tax-rate codes from a space of 90, so the generation loop cannot finish. See [known defects](../docs/Status.md#known-defects).
+
+Run the generator tests with `make test-generator`. If dependency changes require an editable installation, run this from the repository root:
 
 ```bash
-uv pip install --python ../.venv/bin/python -e .
+uv pip install --python .venv/bin/python -e generator
 ```
 
-## What comes out
+## Command interface
 
-```
-<out>/
-  manifest.json          scale factor, seed, problem rates, file inventory
-  Batch1/                full historical load
-    BatchDate.txt
-    CustomerMgmt.xml     the SCD2 source: 6 action types, partial payloads
-    Trade.txt            14 columns
-    TradeHistory.txt     3 columns
-    CashTransaction.txt  4 columns
-    HoldingHistory.txt   4 columns
-    DailyMarket.txt      6 columns
-    WatchHistory.txt     4 columns
-    TradeType.txt, StatusType.txt, Industry.txt, TaxRate.txt
-    Date.txt (18 cols), Time.txt (86,400 rows)
-    FINWIRE<yyyyQq>      fixed width CMP, SEC, FIN records
-  Batch2/                incremental deltas
-    Trade.txt            16 columns: op code, row id, TH_TRADE_ID, then 14
-    CashTransaction.txt  6 columns
-    HoldingHistory.txt   6 columns
-    DailyMarket.txt      8 columns
-    WatchHistory.txt     6 columns
-  Batch3/                same shape as Batch2
-```
+[cli.py](src/datagen/cli.py) defines the arguments. Explicit rate arguments override the corresponding disable flags if both are supplied.
 
----
-
-## The format contract
-
-Every rule below is checked against real TPC-DI bytes by
-`tests/test_contract.py`. Do not break them without regenerating the fixture.
-
-| Rule | Why it matters |
-|---|---|
-| **CRLF everywhere** | A naive `split('\n')` leaves `\r` on every field. |
-| **No header row, ever** | Only `*_audit.csv` in TPC-DI has headers, and we do not emit those. Spark `skip_leading_rows` must be 0. |
-| **Pipe** for `.txt`, **comma** for `.csv`, **none** for FINWIRE | Delimiters differ across file families. |
-| **Empty string means NULL** | Writers never quote, escape, or elide. `\|\|` is a NULL field. |
-| **Text fields contain spaces** | `CT_NAME`, `CA_NAME`, HR branch, FINWIRE `SEC.Name`. Never split on whitespace. The delimiter is the only protection. |
-| **Booleans: `0`/`1` in trade files, `true`/`false` in `Date.txt` and `Time.txt`** | TPC-DI is inconsistent here on purpose. |
-| **`CustomerMgmt.xml` has no trailing newline** | The source file's last bytes are `ions>`. |
-| **Batch1 and delta field counts differ** | Trade 14 becomes 16, Cash 4 becomes 6. This is the schema evolution. |
-
-### The fixture
-
-`tests/fixtures/tpcdi_sf3/` is a byte exact slice of the upstream `sf_3` sample:
-13 files, about 4KB, plus a `manifest.json` recording field counts, delimiters,
-and hashes. The contract tests read only this fixture, so the suite runs on a
-fresh clone with no upstream checkout and nothing else installed.
-
-Refresh it after updating the upstream reference:
-
-```
-python tools/refresh_fixtures.py                  # reads ../misc/tpcdi
-python tools/refresh_fixtures.py /path/to/TPC-DI  # or an explicit path
-```
-
-Commit the regenerated fixture afterwards. `test_fixture_matches_upstream`
-compares the fixture against the real clone when `misc/tpcdi` happens to exist,
-so drift fails a test instead of going unnoticed. That is the only test that
-touches upstream, and the contract stays verified without it.
-
----
-
-## Injected data problems
-
-Configured on `ProblemRates`, measured by `datagen.inspect`, disabled with
-`--no-*` flags. The clean run matters as much as the dirty one, because the
-clean run is the baseline the before and after evidence needs.
-
-| Problem | Knob | Where |
+| Argument | Default | Behavior |
 |---|---|---|
-| Value skew | `trade_status_skew`, `trade_type_skew` | `Trade.T_ST_ID`, 92 percent `CMPT`, and `T_TT_ID` |
-| Join skew | `join_skew`, `join_skew_key` | `CashTransaction.CT_CA_ID`, `Trade.T_CA_ID` |
-| Duplicates, offline | `duplicate_rate_offline` | whole row repeats in Batch1 |
-| Duplicates, streaming | `duplicate_rate_streaming` | whole row repeats in Batch2 and 3 |
-| Schema evolution | `schema_evolution_batch` | the op code and row id prefix appearing at Batch2 |
-| Late arrivals | `late_arrival_rate`, `late_arrival_max_delay_s` | event time pushed into the future |
-| Out of order | `out_of_order_rate` | local reordering against an otherwise sorted file |
+| `--scale` | `1.0` | Multiplies the local base row counts. This is not a measured equivalence to DIGen scale. |
+| `--out` | `data` | Selects the output directory relative to the current directory. |
+| `--seed` | `20261018` | Supplies the deterministic generation seed. |
+| `--batches` | `3` | Sets the number of batch directories. |
+| `--incremental-ratio` | `0.02` | Sets later batch counts relative to Batch1 counts. |
+| `--clean` | Disabled. | Removes the output directory before generation. |
+| `--no-duplicates` | Disabled. | Sets both duplicate rates to zero. |
+| `--no-skew` | Disabled. | Sets configurable skew values to zero. Base weighted distributions remain. |
+| `--no-late` | Disabled. | Sets the lateness rate to zero; the writers do not apply that rate. |
+| `--no-schema-evolution` | Disabled. | Sets the evolution batch value to zero. It does not remove native incremental prefixes. |
+| `--late-arrival-rate` | `0.08` | Changes the configuration value; the writers do not apply it. |
+| `--duplicate-rate-offline` | `0.02` | Controls repeated event rows in Batch1. |
+| `--duplicate-rate-streaming` | `0.015` | Controls repeated event rows in later batch files. It does not publish a stream. |
 
-Two distinctions that change what you do downstream:
+[config.py](src/datagen/config.py) exposes additional Python configuration fields. Their presence does not prove that a writer uses them. For example, the explicit extra-column injector in the Trade writer is inactive, and lateness and out-of-order injection are not wired into the writer. A delivery process must measure arrival time separately from event time to demonstrate late stream events.
 
-- **Value skew is not a slow query.** A column can be 92 percent one value with
-  no processing cost. Spark only suffers when the column is the partition or
-  join key, which is why these are two separate knobs.
-- **Late arrival is not out-of-order.** Late arrival means arriving after the
-  window closed. Out-of-order means ordering relative to other records. They
-  need different handling, so they inject separately.
+## Output files
 
----
+Every batch has a `BatchDate.txt`. Batch1 uses date `2017-07-07`; later batches advance one day each. The output root also contains `manifest.json` with configuration, batch dates, and a file inventory.
 
-## Layout
+| File family | Batch1 | Later batches |
+|---|---|---|
+| Trade | Contains 14 pipe-delimited fields. | Contains 16 fields: a CDC operation and sequence followed by the 14-field trade shape. |
+| CashTransaction | Contains four pipe-delimited fields. | Contains six fields with a CDC prefix. |
+| HoldingHistory | Contains four pipe-delimited fields. | Contains six fields with a CDC prefix. |
+| DailyMarket | Contains six pipe-delimited fields. | Contains eight fields with a CDC prefix. |
+| WatchHistory | Contains four pipe-delimited fields. | Contains six fields with a CDC prefix. |
+| TradeHistory | Contains three pipe-delimited fields. | The writer does not emit it. |
+| CustomerMgmt | Contains XML actions. | The writer does not emit customer or account delta files. |
+| Reference files | Includes TradeType, StatusType, Industry, TaxRate, Date, and Time. | The writer does not repeat them. |
+| FINWIRE | Contains fixed-width company, security, and financial records. | The writer does not emit later FINWIRE files. |
 
+The generator does not emit `HR.csv`, `Prospect.csv`, `Customer.txt`, or `Account.txt`. Its code uses misleading incremental Trade variable names; the [TPC-DI reference](../docs/TPC-DI/TPC-DI.md#trade-updates) defines the source identity and change semantics.
+
+Manifest counts are not measured output counts. Several file families use `-1`, and event entries use requested counts before duplicate insertion. Use the inspector for measured characteristics. The inspector reads whole files and assumes CRLF, so it needs a different reading strategy for a 100 GB dataset.
+
+## Format checks
+
+[emit.py](src/datagen/emit.py) defines delimited, fixed-width, and XML output. Delimited records use CRLF, no header, and empty fields for null values. Text can contain spaces, so readers must split on the declared delimiter. XML actions use a different logical record boundary from line-oriented files.
+
+The committed fixture under `tests/fixtures/tpcdi_sf3/` contains slices of an upstream SF3 dataset. `tests/fixtures/manifest.json` records its formats and hashes. The contract tests check selected fixture and writer properties. They do not establish full source coverage, cross-table consistency, or correct trade histories.
+
+From `generator/`, refresh a fixture only when intentionally changing its reference:
+
+```bash
+../.venv/bin/python tools/refresh_fixtures.py /path/to/TPC-DI
 ```
-src/datagen/
-  config.py           GenConfig and ProblemRates: the whole control surface
-  rng.py              deterministic per entity RNG, text that breaks naive parsers
-  emit.py             THE FORMAT CONTRACT, the only module that touches bytes
-  problems.py         injectable problem transforms, composed per table
-  specs_reference.py  reference tables and FINWIRE
-  specs_events.py     trade, cash, market, watch, holding, CustomerMgmt.xml
-  batches.py          Batch1 full load, incremental deltas, run manifest
-  cli.py              the datagen entry point
-  inspect.py          measures the produced dataset
-tests/
-  fixtures/           byte exact slice of upstream sf_3, about 4KB
-  test_contract.py    format contract against real TPC-DI bytes
-  test_inspect.py     measured characteristics
-tools/
-  refresh_fixtures.py regenerate the fixture from the upstream clone
-```
 
----
+Without an explicit path, the helper uses `../misc/tpcdi`. Review fixture changes with the corresponding specification rules. The optional upstream comparison checks freshness when the upstream checkout is available.
 
-## Provenance
+## Code layout
 
-Written for this project. Three references shaped decisions, and each is noted
-where it applied:
+| Module | Responsibility |
+|---|---|
+| `config.py` | Defines generation settings and local scale counts. |
+| `rng.py` | Provides random value helpers. |
+| `emit.py` | Serializes records. |
+| `problems.py` | Defines duplicate, skew, schema, and timing transforms. Writers select which transforms run. |
+| `specs_reference.py` | Writes reference and FINWIRE files. |
+| `specs_events.py` | Writes event files and customer XML actions. |
+| `batches.py` | Calls writers and records the manifest. |
+| `cli.py` | Converts command arguments into configuration. |
+| `inspect.py` | Measures supported file characteristics. |
 
-- **`misc/tpcdi/`** gave us the format contract and the reference SCD2 and ETL
-  logic.
-- **benchbox** gave us the deterministic per record RNG pattern and the
-  generation run manifest shape. Not its data emission, because it writes
-  finished target tables.
-- **`stewartbryson/dbt-tpcdi`** gave us medallion layering, SCD2 window columns,
-  and temporal FK joins, for the dbt work downstream.
-
-`github.com/AJamal27891/synthetic_data_generator` gave us the declarative
-column type idea. Our specs are Python rather than YAML because fixed width
-records, XML action streams, and per batch prefix shifts are too irregular for a
-YAML schema to stay readable.
-
----
-
-## Known gaps
-
-- `HR.csv` and `Prospect.csv` are not generated yet, 22 and 9 columns.
-- `Customer.txt` and `Account.txt` delta files are not generated. Only the XML
-  action stream is. Note `Customer.txt` puts `C_ID` at field 3, not field 2.
-- `late_arrival_rate` and `out_of_order_rate` are configured but not wired into
-  the Trade writer. The injectors exist in `problems.py`.
-- Market prices are uniform random, not a random walk, so one security's price
-  does not persist across days.
-- No Spark ingest yet. That is the next piece.
+The earlier implementation drew on the local `misc/tpcdi` sample for formats, benchbox for generation patterns, and `stewartbryson/dbt-tpcdi` for downstream transformation ideas. These are design influences, not evidence that this generator reproduces their behavior. The [generator feasibility study](../docs/research/Generator-Feasibility.md) evaluates the proposed replacement approach.

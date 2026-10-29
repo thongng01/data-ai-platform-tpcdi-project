@@ -1,178 +1,306 @@
-# Data and AI Platform for TPC-DI Financial Data
+﻿# Data and AI Platform for TPC-DI Financial Data
 
-This project is a data and AI system for a retail brokerage firm / securities company, modeled on the TPC-DI domain to approximate realistic financial data complexity. The architecture comprises three layers: Layer 1 (Data), Layer 2 (ML), and Layer 3 (Agent).
+**Contents**
 
-[Diagram: High Level System Architecture showing the three layers and data flow]
+[Overview](#overview) | [Repository Structure](#repository-structure) | [Business Domain and Data Specification](#business-domain-and-data-specification) | [Layer 1: Data Platform](#layer-1-data-platform-1) | [Layer 2: Machine Learning Platform](#layer-2-machine-learning-platform-1) | [Layer 3: Agent Platform](#layer-3-agent-platform-1) | [Infrastructure and Operations](#infrastructure-and-operations) | [Getting Started](#getting-started)
+
+## Overview
+
+This project is a data and AI system for a retail brokerage, based on the TPC-DI domain. It generates related financial records, processes them through batch and streaming pipelines, and uses the resulting data for analytics, machine learning, and agent applications.
+
+The system has three layers: **Data**, **ML**, and **Agent**. This README describes the intended design. [Project Status](docs/Status.md) records what is implemented and verified. The [project design](docs/Project-Design.md) separates accepted decisions, proposals, and open parameters.
+
+The first connected use case processes account cash movements through Kafka and Flink, maintains cash balances, and forecasts future net movement. A policy flags projected cash below a minimum configured for the customer's tier. Other TPC-DI sources retain their historical and daily batch paths.
 
 ### Layer 1: Data Platform
-- **Data Generation**: Produces raw source files based on an adapted subset of the TPC-DI specification, with configurable scale factors and injectable data quality problems.
-- **Integration & Storage**: Ingests multi-format source data into a governed lakehouse and warehouse, progressing through landing, bronze, silver, and gold zones.
-- **Processing**: Resolves data quality issues using batch processing (Spark/dbt) and continuous streaming (Flink).
-- **Orchestration & Governance**: Schedules pipelines via Airflow, enforcing ingestion and validation stages, while tracking data lineage and quality metrics in a centralized catalog.
 
-### Layer 2: ML Platform
-- **Feature Store**: Serves point-in-time correct features for customers, accounts, and markets, strictly separating event timestamps from creation timestamps to prevent data leakage.
-- **Model Lifecycle**: Trains, deploys, and continuously monitors predictive models using the engineered features from the Gold layer.
+The data platform turns source data into validated tables for analytics and machine learning.
+
+- **Data Generation:** Produces TPC-DI-based source files and events, with configurable volume and injected data problems.
+- **Integration & Storage:** Stores batch files in staging and lakehouse tables on SeaweedFS. Hive Metastore records schemas and locations, and Trino provides SQL access. PostgreSQL is proposed for gold; the lakehouse table format remains open.
+- **Processing:** Uses Spark for batch ingestion and transformation, dbt for SQL modelling, and Kafka with Flink for streaming.
+- **Orchestration & Governance:** Uses Airflow to schedule pipelines and coordinate validation. DataHub catalogs tables and records lineage and validation results.
+
+### Layer 2: Machine Learning Platform
+
+The ML platform forecasts future net account cash movement and applies a tier-based minimum-cash policy.
+
+- **Feature Store:** Uses Feast to retrieve historical features for training and current features for inference.
+- **Training & Tracking:** Uses Kubeflow Pipelines to run training and evaluation. MLflow records models, data references, parameters, and metrics.
+- **Model Serving:** Uses KServe to expose the trained model through an inference endpoint.
+- **Text Processing & Retrieval:** Ingests documents, splits them into chunks, and stores embeddings through Feast for retrieval.
 
 ### Layer 3: Agent Platform
-- **LLM Agents**: Executes large language model agents capable of reasoning over the firm's structured and unstructured data.
-- **Tool Integration**: Connects agents to the Gold Layer and Feature Store via secure tools (e.g., Text-to-SQL) to retrieve governed context.
-- **Task Execution**: Automates complex business workflows, such as prospect matching, account summarization, and market analysis.
 
-# Repository Structure
+The agent platform connects language models to project data and ML services. Its user task and tool contracts remain to be defined in the project design.
+
+- **LLM Serving:** Hosts the language model and exposes its inference API.
+- **Agents & Tools:** Retrieves structured data, searches documents, and calls the prediction model.
+- **Routing & Access:** Uses gateways for model, MCP tool, and agent-to-agent requests, with access policies.
+- **Agent Management:** Registers available agents and coordinates work between them.
+
+
+## Repository Structure
 
 | Directory | Purpose |
 | :--- | :--- |
-| `pipelines/` | Layer 1 data processing code. Contains Spark jobs and dbt models. |
-| `generator/` | Source data generator. Produces raw files and injects data problems. |
-| `orchestration/` | Airflow configuration. Contains DAGs, connections, and variables. |
-| `infra/` | Infrastructure as code. Contains Docker Compose files and container configurations. |
-| `docs/` | Documentation. Contains architecture decision records and status reports. |
-| `tests/` | Test suites. Contains pipeline contract tests and generator tests.
+| `generator/` | Contains the source-data generator, its tests, and reference fixtures. |
+| `pipelines/` | Contains data-processing jobs. |
+| `dbt/` | Holds the dbt configuration and is the location for warehouse transformations. |
+| `orchestration/` | Holds Airflow configuration and is the location for pipeline DAGs. |
+| `governance/` | Holds DataHub ingestion and metadata configuration. |
+| `infra/` | Contains Docker Compose files, container builds, and service configuration. |
+| `tests/` | Contains pipeline tests. |
+| `docs/` | Contains design documents, implementation notes, and supporting evidence. |
 
+The [documentation guide](docs/Documentation-Guide.md) links the detailed references and explains what belongs in each document.
 
-# Business Domain and Data Specification
+## Business Domain and Data Specification
 
-TPC-DI models a retail brokerage firm. The firm's functional structure consists of a **front office** and a **back office**, which is reflected in its data composition, along with a firm-wide reference source:
+TPC-DI models data integration for a retail brokerage. The brokerage maintains customer accounts, executes trades, records cash and holdings, and receives company and market information.
 
-### 1. Front Office (Client-Facing Operations)
-Generates high-volume, time-sensitive data related to direct client interaction and market activity.
-* **Trading and Cash Operations**: Executed trades, trade history, and cash movements.
-* **CRM and Client Portal**: Customer profiles, account details, and personal watchlists.
-* **External Data Feeds**: Daily market prices, volumes, and external prospect lists.
+The [TPC-DI reference](docs/TPC-DI/TPC-DI.md) explains the source records, warehouse model, historical and incremental loads, and transformation rules.
 
-### 2. Back Office (Internal Operational Support)
-Generates lower-volume, high-accuracy data related to internal firm operations and post-trade processing.
-* **Custody and Portfolio Accounting**: Historical holding quantities and post-trade settlement records.
-* **Human Resources**: Employee records, licensed broker assignments, and branch office mappings.
+The following groups provide a functional view of that data.
 
-### 3. Reference Data (Firm-Wide Golden Source)
-Standalone, static, or slowly changing foundational data. This domain is not owned by the front or back office; it is a shared vocabulary consumed by all systems to ensure referential integrity.
-* **Calendar and Time**: `Date.txt`, `Time.txt`
-* **Classifications and Codes**: `Industry.txt`, `StatusType.txt`, `TradeType.txt`
-* **Regulatory**: `TaxRate.txt`
+### Front Office
 
-## Data Ingestion and Processing Schedule
+The front office manages customer accounts and trading activity.
 
-The system routes source files to specific processing engines based on their arrival pattern, update frequency, and execution schedule.
+- **Customer Management:** Maintains customer profiles and account details.
+- **Trading:** Records trades and their status changes.
+- **Watchlists:** Records customers adding or removing securities from their watchlists.
+- **Prospects:** Holds information about potential customers.
 
-| Processing Engine | Source Files | Schedule / Interval | Mechanism |
-| :--- | :--- | :--- | :--- |
-| **Batch (Spark & dbt)** | `CustomerMgmt.xml`, `HR.csv`, `FINWIRE`, Reference Data | Initial full load; then daily/periodic batches | Processes full historical loads, static reference data, and complex XML parsing. |
-| **Streaming (Flink)** | `Trade.txt` (deltas), `CashTransaction.txt` (deltas), `DailyMarket.txt` | Continuous stream / daily micro-batches | Processes incremental Change Data Capture (CDC) streams and daily market feeds. |
-| **Model Consumption** | Gold Layer Star Schema | Triggered post-pipeline / scheduled daily | Feeds the Feature Store for Layer 2 and provides governed query targets for Layer 3. |
+### Back Office
 
-## Source Data Characteristics
+The back office maintains account records and supports operations.
 
-The data generator produces 16 specific files. It injects intentional, configurable data quality problems to test pipeline resilience.
+- **Cash and Holdings:** Records account cash movements and changes to security holdings.
+- **Human Resources:** Maintains employee and broker information.
+- **Company and Security Data:** Integrates issuer details, security definitions, and financial records used to interpret trading activity.
 
-| Data File | Format | Injected Characteristics |
+### Shared Reference and Market Data
+
+Shared sources provide codes, calendars, and market observations across the system.
+
+- **Reference Codes:** Defines industries, statuses, trade types, and tax rates.
+- **Calendar and Time:** Provides date and time records for analytical models.
+- **Daily Market:** Provides security prices and trading volumes.
+
+### Physical Source Data
+
+The project includes all TPC-DI business and reference sources and excludes metadata used only for formal benchmark validation. Batch dates, change ordering, operation codes, and source provenance remain necessary for integration. Source files use several formats and include historical records and source-specific incremental loads.
+
+| Source files | Format | Contents |
 | :--- | :--- | :--- |
-| `Trade.txt` | Pipe-delimited | Delta records grow in field count. One status value dominates. Whole-row duplicates exist. |
-| `TradeHistory.txt` | Pipe-delimited | Contains duplicate rows. |
-| `CashTransaction.txt` | Pipe-delimited | Delta records grow in field count. A few accounts dominate the volume. Duplicate rows exist. |
-| `CustomerMgmt.xml` | XML action stream | Payloads arrive partially filled. Point-in-time versions accumulate without explicit deletion flags. |
-| `WatchHistory.txt` | Pipe-delimited | Contains duplicate rows. |
-| `FINWIRE` | Fixed-width | Unchanged company records repeat across quarters. No delimiters; record type is determined by position. |
-| `Prospect.csv` | Comma-delimited | Candidates match existing customers by fuzzy name and address, not by primary key. |
-| `DailyMarket.txt` | Pipe-delimited | Delta records grow in field count. Contains duplicate rows. |
-| `HoldingHistory.txt` | Pipe-delimited | Contains duplicate rows. |
-| `HR.csv` | Comma-delimited | Standard format, full load only. |
-| Reference Files | Pipe-delimited | Standard format, full load only. |
+| `Trade.txt`, `TradeHistory.txt` | Delimited text | These files contain trades and trade status history. |
+| `CashTransaction.txt`, `HoldingHistory.txt` | Delimited text | These files contain cash movements and holding changes. |
+| `WatchHistory.txt`, `DailyMarket.txt` | Delimited text | These files contain watchlist changes and daily market observations. |
+| `CustomerMgmt.xml` | XML | This file contains historical customer and account actions. |
+| `Customer.txt`, `Account.txt` | Delimited text | These files contain incremental customer and account records. |
+| `FINWIRE` files | Fixed-width text | These files contain company, security, and financial records. |
+| `HR.csv`, `Prospect.csv` | CSV | These files contain employee and prospect records. |
+| Reference files | Delimited text | These files contain codes, dates, and times. |
 
-## Gold Layer Model
+The [TPC-DI reference](docs/TPC-DI/TPC-DI.md) defines fields, layouts, identifiers, and batch differences.
 
-The Gold layer stores the final, governed decision-support model. The system uses a star schema optimized for analytical queries and feature engineering.
+### Data Relationships and Table Models
 
-* **Dimensions**: `DimCustomer`, `DimAccount`, `DimCompany`, `DimSecurity`, `DimBroker`, `DimDate`, `DimTime`.
-* **Facts**: `FactCashBalances`, `FactHoldings`, `FactMarketHistory`, `FactWatches`.
-* **History Logic**: The system implements Slowly Changing Dimension Type 2 (SCD2) for Customer, Account, Company, Security, and Broker. An update adds a new version. The old version receives an `enddate`. The new version receives a `startdate` and an `iscurrent` flag. Spark performs this transformation because it supports the `LAST_VALUE(... IGNORE NULLS)` window function required to carry forward partial payload updates, which Postgres lacks.
+Customer, account, trade, security, and company records form a connected dataset. Accounts reference customers, trades reference accounts and securities, and securities reference companies.
 
-# Layer 1: Data Platform
+The platform represents this data in two models:
 
-## Data Generation
-The generator produces raw source files. Scale factors control dataset size. The generator injects specific data quality problems independently.
+- **Silver Model:** Provides consistently typed and integrated tables for downstream transformations.
+- **Gold Model:** Retains the original TPC-DI warehouse as the baseline and adds analytical and feature tables.
 
-## Batch Pipelines
-Spark processes the initial historical load. Pipelines move data from the landing zone to the bronze zone, then to the silver zone. dbt transforms silver to gold, making transforms reviewable and tests declarative.
+The [project design](docs/Project-Design.md#project-data-flow) defines zone responsibilities. Detailed silver schemas, added gold tables, keys, and update rules remain open.
 
-## Streaming Pipeline
-Flink processes incremental deltas. The job applies watermarks and windowed aggregations, handles late data via side outputs, and writes idempotently to the lakehouse.
+### Data Ingestion and Processing Schedule
 
-## Orchestration and Governance
-Airflow schedules batch and streaming pipelines using cron triggers. Connections and variables reside strictly within Airflow; no DAG hardcodes hostnames or credentials. Data lineage and validation results feed the data catalog.
+- **Historical Load:** Establishes the initial dataset.
+- **Incremental Batch Loads:** Follow the original daily source-specific patterns for sources that remain in batch.
+- **Streaming Events:** Send subsequent CashTransaction movements through Kafka for continuous processing.
+- **Feature Updates:** Refreshes historical feature tables and current values used for inference.
 
-[Diagram: Data Flow showing movement through landing, bronze, silver, and gold zones]
+The initial history supplies opening cash balances. The boundary between that history and subsequent cash events must prevent the same movement from entering a balance twice.
 
-# Layer 2: Machine Learning Platform
+## Layer 1: Data Platform
 
-Layer 2 builds and serves predictive models using processed data.
+### Data Generation
 
-* **Feature Store**: Stores historical features for customers, accounts, and markets. Uses event timestamps and creation timestamps to prevent data leakage.
-* **Model Training and Serving**: Trains, deploys, and monitors a prediction model.
-* **Problem Definition**: *[To be determined. Define the target variable, feature engineering strategy, and evaluation metrics here.]*
+The generator produces related source records using the TPC-DI specification and existing dataset as references. Predictive account behavior must be designed with the cash forecast task, while keeping accounts, trades, cash, and holdings consistent. The behavior model remains open.
 
-[Diagram: Feature Flow showing data moving from Gold to Feature Store to Model]
+- **Scale:** Supports small development runs and at least 100 GB of offline data.
+- **Relationships:** Preserves referential integrity and consistent entity histories.
+- **Load Patterns:** Produces historical data and incremental changes.
+- **Offline Problems:** Injects skew, schema evolution, and an additional problem such as duplicates.
+- **Streaming Problems:** Injects late arrivals and an additional problem such as duplicate events.
+- **Inspection:** Measures output volume, cardinality, skew, schema variants, duplicate rates, and event delays.
 
-# Layer 3: Agent Platform
+Implementation references include the [Databricks TPC-DI generator](https://github.com/shannon-barrow/databricks-tpc-di/tree/main/src/tools/tpcdi_gen).
 
-Layer 3 executes large language model agents.
+### Integration and Storage
 
-* **Architecture**: *[To be determined. Define the agent framework, memory management, and tool integration here.]*
-* **Problem Definition**: *[To be determined. Define the business problem, the required tools, and the expected output here.]*
-
-# Infrastructure and Operations
-
-## Container Profiles
-Five Docker Compose files isolate resources and prevent local memory swapping.
-
-* `compose.yaml`: Core services (Postgres, SeaweedFS, Hive Metastore, Trino).
-* `compose.compute.yaml`: Spark cluster and dbt Thrift server.
-* `compose.streaming.yaml`: Kafka and Flink.
-* `compose.orchestration.yaml`: Airflow.
-* `compose.governance.yaml`: OpenSearch and DataHub.
-
-## Lakehouse Storage
-SeaweedFS acts as the lakehouse storage. Because SeaweedFS reports empty prefixes as existing directories, managed Spark table creation fails. All lakehouse tables are external.
-
-## Services and Ports
-
-| Service | Port | Purpose |
+| Location | Responsibility | Storage |
 | :--- | :--- | :--- |
-| Trino | 8080 | SQL query engine |
-| Spark Master | 8082 | Cluster management and UI |
-| Airflow | 8081 | Orchestration UI |
-| DataHub | 9002 | Governance UI |
-| Postgres | 5432 | Gold layer and metadata storage |
+| **Staging** | Holds original batch files before ingestion. Streaming enters through Kafka. | SeaweedFS stores the source files. |
+| **Bronze** | Preserves one row per logical source record or received event, including duplicate deliveries and provenance. | SeaweedFS stores lakehouse tables; the table format remains open. |
+| **Silver** | Holds typed, cleaned, deduplicated, and integrated records. | SeaweedFS stores lakehouse tables; the table format remains open. |
+| **Gold** | Holds the original warehouse outputs and project analytical and feature tables. | PostgreSQL is proposed; physical placement remains open. |
 
-[Diagram: Deployment showing Docker containers, network connections, and published ports]
+Hive Metastore records lakehouse table schemas and file locations. Spark processes the tables, and Trino provides SQL access for inspection and queries.
 
-# Getting Started and Prerequisites
+### Batch Processing
 
-## Prerequisites
-* Docker and Docker Compose
-* Windows Subsystem for Linux (WSL)
-* Make
+Spark handles batch source parsing and integration. dbt is planned for SQL modelling. The exact division between Spark, dbt, PostgreSQL, and Trino remains open.
 
-## Execution Steps
-Execute all commands from within WSL. The repository must reside on the WSL filesystem to utilize the WSL Docker socket.
+- **Source Parsing:** Reads the different file formats and accounts for records that cannot be parsed.
+- **Cleaning and Integration:** Applies types, handles duplicates and incremental updates, and validates relationships.
+- **Historical Modelling:** Applies TPC-DI's SCD Type 2 rules to the history-tracked dimensions.
+- **Warehouse Modelling:** Builds related dimensions and facts with defined grains.
+- **Feature Computation:** Retains historical feature values with event and availability timestamps.
+
+Processing and storage changes must be compared with a baseline. Evidence includes Spark task metrics, file layouts, and query plans for the selected stores.
+
+### Streaming Processing
+
+The generator or a replay producer assigns a stable event ID before publishing each cash movement to Kafka. Repeated delivery keeps that ID. Kafka feeds bronze capture and Flink processing: bronze retains received deliveries, and Flink validates and deduplicates the movements.
+
+| Output | Meaning |
+| --- | --- |
+| Silver cash events | These records contain unique, cleaned cash movements. |
+| Gold `FactCashBalances` | These records retain the TPC-DI daily account balance calculation. |
+| Project cash outputs | These records add running balances and selected event-time window aggregates. |
+
+Flink uses event timestamps and watermarks to calculate window results. Late-event rules must define when results change and when separate correction is required. An older movement can change its day's balance and later balances. Windows, lateness limits, state retention, and physical sinks remain open in the [project design](docs/Project-Design.md#streaming-candidates).
+
+### Orchestration and Governance
+
+Airflow coordinates three pipelines. Each includes processing and validation stages.
+
+| Pipeline | Scope |
+| :--- | :--- |
+| **DP1** | Parses source files into bronze tables and validates ingestion. |
+| **DP2** | Transforms bronze into silver and gold, with validation of the resulting tables. |
+| **DP3** | Computes and validates offline feature tables. |
+
+Airflow connections and variables provide shared configuration. DataHub records the tables each pipeline reads and writes, together with validation results.
+
+The [project data flow](docs/Project-Design.md#project-data-flow) connects these batch pipelines with cash streaming and feature computation.
+
+## Layer 2: Machine Learning Platform
+
+The ML platform connects feature computation, training, and serving in a reproducible workflow.
+
+### Prediction Task
+
+The model predicts total future net cash movement for each account over a chosen horizon. The policy adds that forecast to recorded cash and flags a projected balance below the minimum configured for the account owner's customer tier.
+
+```text
+projected_cash = current_cash + forecast_net_movement
+alert = projected_cash < configured_minimum[customer_tier]
+```
+
+TPC-DI supplies tiers 1, 2, and 3. It does not define minimum-cash amounts or a risk order between tiers. The project must define those amounts and their rationale. Forecast horizon, scoring cadence, features, model, and metrics remain open. Obligations and payment-coverage modelling are future work.
+
+### Features and Training
+
+- **Offline Features:** Retain timestamped feature history for training and backfills.
+- **Online Features:** Supply the latest eligible feature values for inference. Batch and streaming jobs can produce features for either use.
+- **Feature Retrieval:** Uses Feast to assemble training examples with information available at the prediction time.
+- **Training Pipeline:** Uses Kubeflow Pipelines for data loading, splitting, training, and evaluation.
+- **Run Tracking:** Uses MLflow to record model artifacts, parameters, metrics, and data versions.
+
+Offline and online features must share definitions and availability rules. Historical retrieval must use values available at prediction time, including the availability of late records and corrections. Training must compare a simple baseline with the selected model on held-out periods and generator seeds.
+
+### Serving and Retrieval
+
+- **Feature Materialization:** Updates the online feature store from offline tables and streaming jobs.
+- **Model Serving:** Uses KServe to expose the trained model to applications and agents.
+- **Text Pipeline:** Ingests documents, creates chunks and embeddings, and records lineage and validation.
+
+The proposed cash-serving path sends Flink features to a separate scorer. The scorer calls the planned model service, applies the minimum-cash policy, and retains alerts for an API. The [project design](docs/Project-Design.md#features-and-serving) defines this proposal; its [open questions](docs/Project-Design.md#open-questions) include the text sources, retrieval purpose, and service contracts.
+
+## Layer 3: Agent Platform
+
+The agent platform provides access to project data, documents, and predictions through defined tools.
+
+### Agent Task
+
+The coursework scope includes an agent platform. The user task, expected output, and tool permissions require a separate design; the cash forecast does not establish an agent use case.
+
+### Agent Components
+
+- **Model Server:** Hosts the LLM and exposes its inference API.
+- **Data and ML Tools:** Provides controlled access to structured data, retrieved documents, and model predictions.
+- **Coordinator:** Routes work between agents.
+- **Gateway:** Applies routing and access policies to model, tool, and agent requests.
+- **Registry:** Publishes available agents and their interfaces.
+- **Prompt Management:** Versions prompts used by deployed agents.
+
+Framework, language model, tool contracts, and coordination rules remain open.
+
+## Infrastructure and Operations
+
+### Local Deployment
+
+Docker packages services and jobs. Docker Compose groups local services by function.
+
+- **Core Services:** Runs PostgreSQL, SeaweedFS, Hive Metastore, and Trino.
+- **Batch Compute:** Runs Spark and the service used to connect dbt to Spark.
+- **Streaming:** Runs Kafka and Flink.
+- **Orchestration:** Runs Airflow.
+- **Governance:** Runs DataHub and its supporting services.
+
+Profiles control which groups start together. Container builds are reviewed for image size and required dependencies.
+
+### Deployment and Service Operation
+
+- **Infrastructure as Code:** Uses Terraform and Ansible for infrastructure provisioning and service configuration.
+- **CI/CD:** Tests, builds, and deploys pipelines, streaming jobs, tools, and agents.
+- **Routing and Security:** Configures gateways, authentication, HTTPS, rate limits, and centralized secrets.
+- **Observability:** Collects service metrics, logs, traces, and model and agent telemetry.
+- **Testing:** Checks data correctness, rerun behaviour, APIs, and performance under load.
+
+Subject documents under `docs/` explain design, mechanisms, and supporting evidence. Working records hold implementation state and routine run reports. The coursework also requires two demonstrated novel ideas; their selection belongs in the [project design](docs/Project-Design.md#coursework-requirements).
+
+## Getting Started
+
+Run project commands from the repository directory in Ubuntu WSL. These commands operate the existing platform and batch pipeline. Read [Project Status](docs/Status.md) for its limits and [Infrastructure](docs/IaC.md) for service setup.
 
 1. Start the core services.
+
    ```bash
    make up-core
-2. Create the S3 buckets and Postgres databases.
+   ```
+
+2. Initialize storage and databases.
+
    ```bash
    make bootstrap
    ```
-3. Run the platform smoke tests.
+
+3. Check core service integration.
+
    ```bash
    make verify
    ```
-4. Start the Spark cluster.
+
+4. Start Spark.
+
    ```bash
    make up-compute
    ```
-5. Run the first batch pipeline.
+
+5. Generate the small input dataset. This command replaces `misc/sample_run`.
+
+   ```bash
+   make generate
+   ```
+
+6. Run the existing batch pipeline. Its default overwrite mode removes earlier silver data; see [the command's scope and limits](docs/IaC.md#1-how-to-run-it).
+
    ```bash
    make dp1
    ```

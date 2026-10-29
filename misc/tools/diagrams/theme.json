@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "canvas": {"width": 960, "height": 720, "scale": 2, "margin": 32},
+  "font": "Ubuntu Sans",
+  "mono_font": "Ubuntu Sans Mono",
+  "text": "#183246",
+  "line": "#486477",
+  "roles": {
+    "component": {"fill": "#FFF6ED", "stroke": "#B65300", "heading": "#FFF0DF", "heading_text": "#183246"},
+    "data": {"fill": "#EDF7E9", "stroke": "#397A32", "heading": "#E4F1DE", "heading_text": "#183246"},
+    "scope": {"fill": "#EEF3F6", "stroke": "#244F72", "heading": "#DEE8EF", "heading_text": "#183246"},
+    "control": {"fill": "#FFF6ED", "stroke": "#B65300", "heading": "#FFF0DF", "heading_text": "#183246"},
+    "serve": {"fill": "#EEF3F6", "stroke": "#244F72", "heading": "#DEE8EF", "heading_text": "#183246"},
+    "external": {"fill": "#FFFFFF", "stroke": "#244F72", "heading": "#DEE8EF", "heading_text": "#183246"},
+    "note": {"fill": "#F4F6F8", "stroke": "#8793A2", "heading": "#EDF0F4", "heading_text": "#183246"}
+  }
+}

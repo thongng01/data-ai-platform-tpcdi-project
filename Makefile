@@ -110,10 +110,9 @@ test-generator: ## Run only the generator's suite
 	cd generator && ../.venv/bin/python -m pytest tests/ -q
 
 .PHONY: check-docs
-check-docs: ## Check the docs: broken links, stale phrases, claimed-but-missing paths
+check-docs: ## Check documentation text, file links, and heading anchors
+	.venv/bin/python misc/tools/check_docs.py
 	bash misc/tools/check_links.sh
-	bash misc/tools/check_layout.sh
-	bash misc/tools/find_stale.sh
 
 .PHONY: dp1
 dp1: ## Run DP1: landing -> bronze -> silver. BATCH=Batch1
@@ -134,7 +133,7 @@ purge: ## Delete objects under a prefix: make purge PREFIX=lakehouse/bronze
 	$(COMPOSE) --profile tools run --rm tools python -m tools.purge lakehouse/$(PREFIX)
 
 .PHONY: sql
-sql: ## Run a SQL file through Trino: make sql FILE=misc/q/trino_reads_spark.sql
+sql: ## Run a SQL file through Trino: make sql FILE=misc/tools/sql/trino_reads_spark.sql
 	$(COMPOSE) --profile tools run --rm tools python -m tools.sql_file /opt/$(FILE)
 
 ## ------------------------------------------------------------------ logs ---

@@ -1,24 +1,13 @@
 # Airflow DAGs
 
-Nothing here yet. The DAG files are the next ticket after DP2.
+This directory is reserved for pipeline DAGs. The accepted pipeline boundaries are:
 
-## What will land here
+| Pipeline | Responsibility |
+|---|---|
+| DP1 | Ingest source data into bronze and validate it. Bronze preserves logical source records or received events, including duplicates and provenance. |
+| DP2 | Clean and integrate bronze records into silver and build gold outputs, with validation. |
+| DP3 | Compute offline features and validate them. |
 
-| DAG | Pipeline | Stages |
-|---|---|---|
-| `dp1_ingest.py` | landing to bronze to silver | `publish`, `ingest`, `validate` |
-| `dp2_model.py` | silver to gold | `dbt run`, `dbt test`, `validate` |
-| `dp3_features.py` | offline feature table | `build`, `validate` |
-| `publish_lineage.py` | governance | emits a DataHub `DataProcessInstance` per DAG run |
+These boundaries come from the [project design](../../docs/Project-Design.md#decisions-so-far). The existing batch code still continues from bronze to silver within DP1. [Status](../../docs/Status.md#what-exists) records implementation progress.
 
-Each DAG reads its connections from `connections.yaml` and its settings from
-`variables.yaml`, both seeded by `airflow-init`. No DAG hardcodes a hostname, a
-bucket or a password.
-
-## Why the directories have to exist now
-
-`compose.orchestration.yaml` bind-mounts `dags/`, `connections.yaml` and
-`variables.yaml`. Docker creates a missing bind source as an empty root-owned
-directory rather than failing, so without this folder the Airflow stack starts
-with an empty DAG folder and no connections, and nothing says so. That is the
-same trap recorded in `docs/IaC.md` finding 8.5.
+The Airflow configuration mounts this directory at `/opt/airflow/dags` and mounts `orchestration/connections.yaml` and `orchestration/variables.yaml` for initialization. DAGs should read service connections and settings through Airflow rather than embed deployment values in task code. Initialization currently ignores import failures, so those values need verification before task execution. [IaC](../../docs/IaC.md#44-orchestration) describes the executor and configuration limits.

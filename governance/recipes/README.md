@@ -1,31 +1,7 @@
 # DataHub ingestion recipes
 
-Nothing here yet. Governance is the next block after DP2 and the Flink job.
+This directory is reserved for metadata ingestion recipes and validation publication code. The intended metadata includes datasets, pipeline lineage, run identity, and validation results. These are separate records: cataloging a table alone does not establish which job produced it or whether its data passed validation.
 
-## What will land here
+The governance configuration mounts `governance/` at `/opt/governance`. Its runner names a recipe under `/opt/governance/recipes/`. Recipe names, source connectors, entity mappings, and publication commands must follow the implemented pipeline and storage design. PostgreSQL gold storage remains a proposal, so it is not a fixed connector requirement.
 
-| File | Source | What it publishes |
-|---|---|---|
-| `dp1_lineage.yml` | Hive Metastore | `raw_` and `stg_` datasets, plus a `DataProcessInstance` naming DP1 as the producer |
-| `dp2_lineage.yml` | Postgres | `dim_` and `fact_` datasets, plus a `DataProcessInstance` naming DP2 |
-| `dp3_lineage.yml` | Postgres | `feat_` datasets, plus a `DataProcessInstance` naming DP3 |
-| `validation_assertions.py` | Soda scan results | `Assertion` entities, so validation results appear on the table pages |
-
-The rubric asks for three things on DataHub: the tables, which Airflow pipeline
-produced each one, and the validation results for each one. The third needs the
-`DataProcessInstance` entity, because that is what ties a table to the run that
-made it. A dataset ingested on its own has no producer.
-
-## Why the directories have to exist now
-
-`compose.governance.yaml` bind-mounts `../governance`. Docker creates a missing
-bind source as an empty root-owned directory rather than failing, so the
-`datahub-ingest` container would start with nothing to ingest and no error.
-
-Run a recipe with:
-
-```bash
-make up-governance
-docker compose --profile governance run --rm datahub-ingest \
-    /opt/governance/recipes/dp1_lineage.yml
-```
+The [project design](../../docs/Project-Design.md#coursework-requirements) records the coursework requirements. [Status](../../docs/Status.md#what-exists) records recipe and service readiness, and [IaC](../../docs/IaC.md#45-governance) describes service dependencies.

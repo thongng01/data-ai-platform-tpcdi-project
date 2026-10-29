@@ -1,0 +1,16 @@
+seed: 20261029
+start_date: "2017-06-01"
+historical_days: 112
+incremental_days: 2
+customers: 2000
+new_customers_per_day: 40
+companies: 120
+securities: 240
+brokers: 100
+cycles_per_account_day: 1
+customer_batch_size: 2048
+merge_fan_in: 16
+memory_limit_mb: 2048
+disk_limit_mb: 8192
+timeout_seconds: 900
+threads: 4
