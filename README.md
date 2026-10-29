@@ -8,22 +8,23 @@
 
 This project is a data and AI system for a retail brokerage, based on the TPC-DI domain. It generates related financial records, processes them through batch and streaming pipelines, and uses the resulting data for analytics, machine learning, and agent applications.
 
-The system has three layers: **Data**, **ML**, and **Agent**. This README describes the intended design. [Project Status](docs/Status.md) records what is implemented and verified. The [project design](docs/Project-Design.md) separates accepted decisions, proposals, and open parameters.
+The system has three layers: **Data**, **ML**, and **Agent**. 
+<!-- This README describes the intended design. [Project Status](docs/Status.md) records what is implemented and verified. The [project design](docs/Project-Design.md) separates accepted decisions, proposals, and open parameters. -->
 
-The first connected use case processes account cash movements through Kafka and Flink, maintains cash balances, and forecasts future net movement. A policy flags projected cash below a minimum configured for the customer's tier. Other TPC-DI sources retain their historical and daily batch paths.
+<!-- The first connected use case processes account cash movements through Kafka and Flink, maintains cash balances, and forecasts future net movement. A policy flags projected cash below a minimum configured for the customer's tier. Other TPC-DI sources retain their historical and daily batch paths. -->
 
 ### Layer 1: Data Platform
 
 The data platform turns source data into validated tables for analytics and machine learning.
 
 - **Data Generation:** Produces TPC-DI-based source files and events, with configurable volume and injected data problems.
-- **Integration & Storage:** Stores batch files in staging and lakehouse tables on SeaweedFS. Hive Metastore records schemas and locations, and Trino provides SQL access. PostgreSQL is proposed for gold; the lakehouse table format remains open.
+- **Integration & Storage:** Stores batch files in staging and lakehouse tables on SeaweedFS. Hive Metastore records schemas and locations, and Trino provides SQL access, PostgreSQL for gold data model.
 - **Processing:** Uses Spark for batch ingestion and transformation, dbt for SQL modelling, and Kafka with Flink for streaming.
-- **Orchestration & Governance:** Uses Airflow to schedule pipelines and coordinate validation. DataHub catalogs tables and records lineage and validation results.
+- **Orchestration & Governance:** Uses Airflow to schedule pipelines and coordinate validation and data quality using Soda. DataHub catalogs tables and records lineage and validation results.
 
 ### Layer 2: Machine Learning Platform
 
-The ML platform forecasts future net account cash movement and applies a tier-based minimum-cash policy.
+The ML platform forecasts future net account cash movement to applies a tier-based minimum-cash policy for the firm.
 
 - **Feature Store:** Uses Feast to retrieve historical features for training and current features for inference.
 - **Training & Tracking:** Uses Kubeflow Pipelines to run training and evaluation. MLflow records models, data references, parameters, and metrics.
@@ -59,7 +60,7 @@ The [documentation guide](docs/Documentation-Guide.md) links the detailed refere
 
 TPC-DI models data integration for a retail brokerage. The brokerage maintains customer accounts, executes trades, records cash and holdings, and receives company and market information.
 
-The [TPC-DI reference](docs/TPC-DI/TPC-DI.md) explains the source records, warehouse model, historical and incremental loads, and transformation rules.
+<!-- The [TPC-DI reference](docs/TPC-DI/TPC-DI.md) explains the source records, warehouse model, historical and incremental loads, and transformation rules. -->
 
 The following groups provide a functional view of that data.
 
@@ -90,7 +91,10 @@ Shared sources provide codes, calendars, and market observations across the syst
 
 ### Physical Source Data
 
-The project includes all TPC-DI business and reference sources and excludes metadata used only for formal benchmark validation. Batch dates, change ordering, operation codes, and source provenance remain necessary for integration. Source files use several formats and include historical records and source-specific incremental loads.
+The project includes all business and reference sources defined by TPC-DI (excludes TPC-DI's specific metadata for benchmark, validation). 
+
+There are **16 source data files** in several different formats 
+<!-- include historical records and source-specific incremental loads. -->
 
 | Source files | Format | Contents |
 | :--- | :--- | :--- |

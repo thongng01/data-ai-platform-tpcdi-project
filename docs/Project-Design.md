@@ -1,8 +1,13 @@
 # Project design
 
-This document explains how the project uses TPC-DI and what changes for batch processing, streaming, and ML. The [TPC-DI reference](TPC-DI/TPC-DI.md) explains the original sources, transformations, and warehouse. [Status](Status.md) records implementation and session progress.
+This document explains:
+- how the project uses TPC-DI and what changes for batch processing, streaming, and ML. 
 
-**Decided** means accepted by the owner. **Proposed** means recommended but not accepted. **Open** means the choice has not been made. **Deferred** means future work outside the first version.
+<!-- The [TPC-DI reference](TPC-DI/TPC-DI.md) explains the original sources, transformations, and warehouse.  -->
+
+<!-- [Status](Status.md) records implementation and session progress. -->
+
+**Decided** means accepted. **Proposed** means shortlisted but not accepted. **Open** means the choice has not been made. **Deferred** means future work outside the current goal.
 
 | Section | Contents |
 | --- | --- |
