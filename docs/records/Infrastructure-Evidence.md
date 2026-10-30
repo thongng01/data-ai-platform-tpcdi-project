@@ -4,7 +4,7 @@ This working record preserves observations from the earlier build that were prev
 
 ## Provenance
 
-The source is the working copy of `docs/IaC.md` preserved before this cleanup under `misc/tmp/docs-cleanup-20261028/`. The earlier batch measurements in [Status](../Status.md#earlier-build-measurements) identify commit `ea4daf5`, Batch1, generator scale 0.02, and seed 20261018. The old IaC narrative did not attach a separate timestamp, command log, or image digest to each trial. Its findings must not be treated as newly verified results or behavior of every later image version.
+The source is the working copy of `docs/IaC.md` preserved before this cleanup under `misc/tmp/docs-cleanup-20261028/`. The [earlier build measurements](#earlier-build-measurements) identify commit `ea4daf5`, Batch1, generator scale 0.02, and seed 20261018. The old IaC narrative did not attach a separate timestamp, command log, or image digest to each trial. Its findings must not be treated as newly verified results or behavior of every later image version.
 
 ## Environment snapshot
 
@@ -63,3 +63,26 @@ The documentation cleanup read Compose files, `infra/.env`, the Spark Dockerfile
 - `--no-schema-evolution` does not remove incremental CDC prefixes. The explicit extra-column injector is called with `active=False`.
 - `--no-skew` removes configurable skew values but leaves the base weighted trade-status and trade-type distributions. It does not produce uniform categories.
 - The manifest includes intended event counts and uses `-1` for several uncounted file families. It does not establish actual output row counts or injected rates.
+
+## Earlier build measurements
+
+These numbers come from the earlier status report, committed in `ea4daf5`. The run used Batch1 from the earlier generator at scale 0.02 and seed 20261018: 9.7 MB of source files across 10 tables.
+
+| Table | Source lines = Bronze | Silver | Duplicates removed | Rate | Partitions |
+|---|---|---|---|---|---|
+| `stg_trade` | 7,980 | 7,820 | 160 | 2.01% | 1,777 |
+| `stg_cash_transaction` | 7,390 | 7,237 | 153 | 2.07% | 1,773 |
+| `stg_daily_market` | 26,176 | 25,655 | 521 | 1.99% | 514 |
+| `stg_watch_history` | 18,367 | 18,001 | 366 | 1.99% | 1,800 |
+| `stg_holding_history` | 7,355 | 7,247 | 108 | 1.47% | none, no event time |
+| `stg_trade_history` | 20,023 | 19,644 | 379 | 1.89% | 1,800 |
+| `stg_status_type` | 6 | 6 | 0 | 0% | none |
+| `stg_trade_type` | 5 | 5 | 0 | 0% | none |
+| `stg_industry` | 28 | 28 | 0 | 0% | none |
+| `stg_tax_rate` | 6 | 6 | 0 | 0% | none |
+
+Bronze row counts matched the source line counts, so the parser neither dropped nor added rows in that run. The silver counts were read back through Trino with `misc/tools/sql/silver_counts.sql`, and they matched the job's own counts. The measured duplicate rates match the configured offline rate of 2 percent. An earlier version of the job reported 51 to 62 percent. That difference exposed two bugs: an unfiltered union of two schema variants ([IaC.md 8.8](../IaC.md#88-an-unfiltered-union-doubles-an-evolved-file)) and a deduplication key narrower than the record ([IaC.md 8.9](../IaC.md#89-a-business-key-narrower-than-the-record-deletes-real-rows)).
+
+The job chose the column list per row from that row's field count, because Batch1 Trade rows have 14 fields and incremental rows have 16. It split rows on the delimiter only, because text fields contain spaces. Its deduplication key for incremental Trade rows does not follow the identity rule in the data specification, where `T_ID` identifies a trade and each CDC row is one change ([Trade updates](../Data-Specification.md#trade-lifecycle-updates)). That key needs review before reuse.
+
+[IaC section 8](../IaC.md#8-operating-constraints) explains the failure mechanisms and operating constraints.

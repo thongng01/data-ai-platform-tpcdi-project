@@ -1,6 +1,6 @@
 # Diagram guide
 
-Project diagrams use editable draw.io files and a shared visual language. The normal Markdown image is 1920 x 1440 pixels. These rules apply across the project.
+Project diagrams use editable draw.io files and a shared visual language. The normal Markdown image is 1920 x 1440 pixels. These rules apply across the project, except ERDs: an ERD is native Mermaid inside its document, without styling directives.
 
 ## Canvas and reading size
 

@@ -1,6 +1,6 @@
 # Reference implementations
 
-Research note, 2026-10-27. It records what an existing TPC-DI implementation shows and where it stops. TPC-DI facts are in the [TPC-DI wiki](../TPC-DI/TPC-DI.md). The Databricks generator is assessed in [Generator feasibility](Generator-Feasibility.md).
+Research note, 2026-10-27. It records what an existing TPC-DI implementation shows and where it stops. TPC-DI facts are in the [data specification](../Data-Specification.md). The Databricks generator is assessed in [Generator feasibility](Generator-Feasibility.md).
 
 ## AlaaAlmutawa/TPC-DI
 
@@ -8,7 +8,7 @@ The local checkout of [AlaaAlmutawa/TPC-DI at commit 0702dd9](https://github.com
 
 | Question | Where to look |
 |---|---|
-| What raw data exists? | `misc/tpcdi/sf_3/output_data/Batch1`, `Batch2`, `Batch3`; raw examples appear beside the [source field layouts](../TPC-DI/TPC-DI.md#source-field-reference) |
+| What raw data exists? | `misc/tpcdi/sf_3/output_data/Batch1`, `Batch2`, `Batch3`; raw examples appear beside the [source file schemas](../Data-Specification.md#92-source-file-schemas) |
 | What target columns does it declare? | [master_schema.sql](../../misc/tpcdi/master/master_schema.sql) |
 | How does it stage source files? | [source staging schema](../../misc/tpcdi/staging/data_sources_schema.sql), [reference staging schema](../../misc/tpcdi/staging/staging_reference_tables_schema.sql) |
 | How does it rebuild XML customer state? | [customer historical staging SQL](../../misc/tpcdi/staging/staging_customer_historical_table.sql), [XML conversion](../../misc/tpcdi/staging/convert_xml_to_json.py), [customer helpers](../../misc/tpcdi/dags/customer_mgmt_helpers.py) |

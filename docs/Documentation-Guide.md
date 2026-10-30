@@ -1,74 +1,76 @@
-# Documentation guide
+# Documentation Guide
 
-The [root README](../README.md) introduces the system. The documents below explain the source domain, the design, the infrastructure, and the current state in more detail. To resume work, start with [Current position](Status.md#current-position).
+The [root README](../README.md) introduces the system. The documents below hold the detail. To resume work, start with [Status](Status.md).
 
 ## Documents
 
-| Document | Question it answers |
+| Document | Purpose |
 | --- | --- |
-| [TPC-DI guide](TPC-DI/TPC-DI.md) | What data does TPC-DI supply, and what warehouse does it define? One page explains source and warehouse data in equal detail through tables, diagrams, and examples. Complete fields and detailed rules follow the main explanation. The `TPC-DI/` folder also holds the editable diagrams, renders, specification, and design paper. It holds benchmark facts only. |
-| [Project design](Project-Design.md) | What must the project deliver, what have we decided, and what is still open? |
-| [Infrastructure](IaC.md) | How do the services run, what resources do they need, and which service mechanisms constrain the design? |
-| [Status](Status.md) | What exists, what is broken, what happened in each session, and how does a new session resume? |
-| [Infrastructure evidence](records/Infrastructure-Evidence.md) | Which conditions, measurements, and source inspections support the earlier build findings? This is a working record. |
-| [Polars generator evidence](records/Polars-POC.md) | What did the fresh generator POC establish about source correctness, repeatability, memory, and scale, and what remains unimplemented? |
-| [Diagram guide](Diagram-Guide.md) | How do we create, revise, and export project diagrams with consistent visual meanings and readable Markdown views? The [examples](Diagram-Examples.md) show source flows, deployment scopes, and field relationships. |
-| [Research notes](research/) | What evidence supports a design choice? See [generator feasibility](research/Generator-Feasibility.md), [streaming candidates](research/Streaming-Candidates.md), and [reference implementations](research/Reference-Implementations.md). |
+| [Data specification](Data-Specification.md) | The project's data: business domains and origin systems, load cycle, source files, data zones and silver rules, gold warehouse and ERD, cash stream data, ML data, transformations, and field schemas. |
+| [Project design](Project-Design.md) | Requirements, decisions with their rationale, and open questions. |
+| [Infrastructure](IaC.md) | How the services run, what they need, and which service mechanisms constrain the design. |
+| [Status](Status.md) | Current position, open decisions, next step, what exists, and known defects. |
+| [Infrastructure evidence](records/Infrastructure-Evidence.md) | Conditions, measurements, and source inspections behind the earlier build findings. Working record. |
+| [Polars generator evidence](records/Polars-POC.md) | What the generator POC established about correctness, repeatability, memory, and scale. Working record. |
+| [Diagram guide](Diagram-Guide.md) | How to create, revise, and export draw.io diagrams. ERDs use native Mermaid instead. |
+| [Research notes](research/) | Evidence for design choices, such as [generator feasibility](research/Generator-Feasibility.md) and [streaming candidates](research/Streaming-Candidates.md). |
+| [TPC-DI specification](TPC-DI/TPC-DI_v1.1.0.pdf) | The benchmark's full definitions. The data specification summarizes the parts this project uses. |
 
-## What belongs in the root README?
+## Style
 
-Keep the information needed to understand the whole system before choosing a part to inspect:
+Match the README and the data specification:
+- **Sections**: One-line lead-in, then a table or bold-label bullets.
+- **Tables**: Main carrier of reference values. Short label cells; codes, fields, and files in backticks.
+- **Bullets**: `**Label**: short description`. Fragments are fine.
+- **Headings**: Title Case; numbered sections in reference documents.
+- **Notes**: One italic `*Note:*` line per exception.
+- **Open items**: Inline marker such as "(length open)" or an Open column; the full list in one place.
+- **Detail**: Collapsed `<details>` blocks in the same style, instead of a longer main text.
+- **Framing**: The project as it is, not a list of changes to a baseline.
+- **Terms**: One term per concept in every document, for example "daily batch", not also "increment" or "incremental update".
+- **Slashes**: True alternatives only, once per sentence.
+- **Spelling**: American English.
+- **Cut**: Sentences that fit any project, talk about the document itself, or answer a doubt nobody had.
+- **Done**: One style from start to end, `<details>` blocks included; facts checked; no growth in length without a reason.
 
-- Describe the brokerage domain briefly, using the front-office, back-office, and shared-data groups.
-- State each layer's purpose and name the components and their roles.
-- Show the overall deployment and data flow.
-- Summarize the source families, storage zones, and pipeline responsibilities.
-- Explain the repository structure and provide the shortest useful setup path.
-- Link to the relevant detail and to project status.
+## What Belongs in the README
 
-The overview gives the whole system in brief. A later layer section should add its main flow or responsibility, rather than repeat the same tool descriptions.
+The README gives the whole system in brief:
+- **Overview**: The project, its three layers, and each layer's components.
+- **Data**: A short summary of the data specification: domains, sources, zones, and load cycle. Same terms and groupings as the specification.
+- **Layers**: Each layer section opens with its purpose, then its main flow or responsibility.
+- **Structure and Setup**: Repository structure as an ASCII tree, deployment, and the shortest setup path.
+- **Links**: Detail documents and Status.
 
-Keep the README focused on the intended system. Summarize accepted choices and label material proposals. Link to the project design for unresolved parameters and to Status for implementation limits. Keep discussion prompts, progress estimates, session updates, and routine test inventories in working records.
+Keep discussion, progress, session updates, and test inventories out of the README.
 
-Preserve the README's broad structure, short technical prose, functional labels, and tables. Each layer starts with its purpose. The business domain uses front-office, back-office, and shared reference and market groups. A qualification belongs beside the claim it limits. Evidence that explains a mechanism belongs with that subject; a separate evaluation section is not required.
+## Where Details Go
 
-## Where should the details go?
-
-| Subject | Keep in the README | Put in the dedicated document |
+| Subject | README | Dedicated document |
 | --- | --- | --- |
-| TPC-DI | Explain the domain and main source groups. | Explain record meanings, source layouts, target grains, transformations, history, and benchmark rules in `TPC-DI/TPC-DI.md`. Keep project choices out of it. |
-| Requirements and decisions | Name the main choices. | Record coursework requirements, decisions, considerations, and open questions in `Project-Design.md`. |
-| Source generation | State what is generated and which problems are configurable. | Explain the generator model, relationships, distributions, configuration, and validation once its design is chosen. `research/Generator-Feasibility.md` supplies the research. |
-| Storage and modelling | State what staging, bronze, silver, and gold contain. | Define keys, grains, silver/gold ERDs, SCD rules, update handling, and rejected-record handling in the modelling design. |
-| Batch processing | Summarize DP1, DP2, and DP3. | Explain tasks, validation gates, retries, reruns, lineage, and baseline/optimization measurements in the pipeline documentation. |
-| Streaming | Name the selected events, processor, and output. | Explain event identity, time, windows, lateness, replay, state, and sinks. `research/Streaming-Candidates.md` supplies source evidence and candidate comparisons; `Project-Design.md` records the cash selection. |
-| Machine learning | State the prediction task and main components. | Define labels, features, time cutoffs, splits, evaluation, training, and serving in the ML design. |
-| Agents | State the platform scope and any selected user task and tools. | Define agent/tool contracts, retrieval, policies, prompts, coordination, and tests in the agent design. |
-| Infrastructure and operations | Show the deployment shape and basic startup. | Keep configuration, resource requirements, security, observability, operational commands, and evidence that explains service behavior in the relevant operations documents. Put routine run reports in working records. |
-| Progress | Link to status. | Record implemented work, known defects, verification dates, the session log, and resume notes in `Status.md`. |
+| **Data** | Domains, sources, zones, load cycle in brief | Data specification: schemas, grains, transformations, stream and ML data |
+| **Decisions** | Main choices | Project design: requirements, decisions, rationale, open questions |
+| **Generation** | What is generated; configurable problems | Generator documentation, once its design is chosen; research notes until then |
+| **Batch processing** | DP1, DP2, DP3 in brief | Pipeline documentation: tasks, validation, reruns, lineage, measurements |
+| **Streaming** | Selected events, processor, outputs | Data specification for the event data; project design for the choices |
+| **Machine learning** | Prediction task, main components | Data specification for features and labels; project design for the choices |
+| **Agents** | Platform scope | Agent design, once the user task is chosen |
+| **Infrastructure** | Deployment shape, basic startup | Infrastructure document and its evidence records |
+| **Progress** | Link to Status | Status |
 
-The future document subjects above are a placement guide, not an instruction to create every file now. One document can cover related work until it becomes difficult to navigate.
+One document can cover related subjects until it becomes hard to navigate. Moving, renaming, splitting, and merging documents is normal; update incoming links in the same change and run `make check-docs`.
 
-## How to write a useful detail document
+## Evidence and Records
 
-Start with the question or component it explains. Describe the normal data flow, inputs, outputs, and rules before exceptional cases. Put the relevant diagram or example beside the explanation.
+- **Evidence**: Configuration, input and scale, observed result, and limits, next to the claim it supports. Screenshots go beside their explanation.
+- **Working records**: Routine command output, test results, and run reports go in `docs/records/`, linked from Status.
+- **Status**: Current state only. Older entries move to `misc/archive/`.
+- **Research notes**: Evidence for one choice, linked from the design that uses it. A research note decides nothing.
 
-Distinguish three kinds of statement:
+## Course Requirements
 
-- A source fact cites the specification, code, or inspected data that establishes it.
-- A project decision states what we chose and why.
-- A proposed design or open question stays visibly unresolved until we agree on it.
+The local [rubric](course/rubric.xlsx), sheet `edai`, cells A34 and A98, asks for a summary README that links to detailed documents under `docs/`, and for screenshots embedded with explanations.
 
-For evidence that explains a mechanism or supports a design choice, record the relevant configuration, input and scale, observed result, and limits of the claim. Put screenshots next to the claim they support. Keep a useful baseline and treatment comparison with the component it explains.
+Cell A98 requires the README to introduce the business domain, include a table of contents and the repository structure, and show the overall deployment. Diagram components should be deployable units, with described and numbered flows.
 
-Put routine command output, repeated test results, session summaries, and implementation inventories in Status or working records under `docs/records/` linked from Status. Subject documents can link to those records without copying their logs. A screenshot directory without explanations does not tell a reviewer what worked.
-
-Research notes go in `research/`. Each one records evidence for a choice and links to the design that uses it. Preserve dated experimental findings, inputs, methods, and limits needed to assess that evidence. A research note does not decide anything.
-
-## Course requirements behind this split
-
-The local [rubric](course/rubric.xlsx), sheet `edai`, cells A34 and A98, asks for a summary README that links to detailed documents under `docs/`. It also asks for screenshots to be embedded with explanations rather than left as an unexplained image collection.
-
-Cell A98 requires the README to introduce the business domain, include a table of contents and repository structure, and show the overall deployment. Diagram components should be deployable units; arrows should describe and number the flows. These requirements determine the README's coverage, not a fixed length.
-
-The course files are local reference material and are currently ignored by Git. The cell references above identify the source for readers with access to that workbook.
+The course files are local reference material and are ignored by Git.

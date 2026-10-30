@@ -1,9 +1,9 @@
 # Project design
 
 This document explains:
-- how the project uses TPC-DI and what changes for batch processing, streaming, and ML. 
+- how the project uses TPC-DI and what changes for batch processing, streaming, and ML.
 
-<!-- The [TPC-DI reference](TPC-DI/TPC-DI.md) explains the original sources, transformations, and warehouse.  -->
+<!-- The [data specification](Data-Specification.md) explains the original sources, transformations, and warehouse.  -->
 
 <!-- [Status](Status.md) records implementation and session progress. -->
 
@@ -35,6 +35,8 @@ The source scope is decided: use all TPC-DI business and reference sources and t
 
 The agreed baseline follows TPC-DI's source definitions, source-to-target rules, and daily batch cycle. CashTransaction is the selected streaming source. Its delivery and processing change, while its cash-movement meaning and daily balance calculation remain the baseline. Silver tables, stream event metadata, ML features, and a tier-based cash policy are project additions. The selected ML task is cash-flow forecasting. Forecast timing, policy amounts, and cash correction rules still need definition.
 
+The 2026-10-30 revision extends the fixed three-batch benchmark into a historical load followed by a configurable daily sequence. The [data specification](Data-Specification.md#2-load-cycle--processing-strategy) retains historical loading followed by daily batches, potentially up to one year. Historical duration remains open. Each daily batch keeps its own batch date and identity. Longer-run FINWIRE, HR, and reference refresh rules also remain open.
+
 ## Selected use case
 
 **Decided:** forecast future net cash movement for each account and flag a projected balance below a configured minimum. The minimum depends on the account owner's customer tier. The alert supports account review under our internal cash policy.
@@ -63,14 +65,7 @@ The alert concerns the balance at the forecast cutoff. It does not establish tha
 
 ## Project data flow
 
-**Decided:** staging is for batch files; bronze preserves source records in table form; silver holds cleaned records; gold holds warehouse outputs and derived features.
-
-| Zone | Meaning |
-| --- | --- |
-| Staging | Original batch files before ingestion. Streaming events enter through Kafka. |
-| Bronze | One row per logical source record or received event, with provenance. Preserve duplicate inputs and the original payload when parsing fails. |
-| Silver | Typed, validated records with duplicate handling and the relationships needed by downstream processing. |
-| Gold | TPC-DI warehouse outputs and additional analytical or feature tables, each with defined calculation and update rules. |
+**Decided:** staging is for batch files; bronze preserves source records in table form; silver holds cleaned records; gold holds warehouse outputs and derived features. The [data specification](Data-Specification.md#4-data-zones-medallion-architecture) defines each zone and the silver rules.
 
 For XML, the logical record boundary and nested representation need to be stated explicitly. One source record is not necessarily one physical line.
 
@@ -83,7 +78,7 @@ For XML, the logical record boundary and nested representation need to be stated
 | ML training | Train from historical features and the later observed net cash movement. | An offline-trained cash-flow model. |
 | Online scoring and alerts | Use eligible features to forecast net movement, calculate projected cash, and apply the tier-based minimum. | Retained forecasts and alert state, exposed through a project API or dashboard. The serving topology is proposed below. |
 
-Silver cash retains individual cleaned movements. The original gold `FactCashBalances` holds daily balances; running balances and window features are additional project outputs. Silver schemas are ours to define, using the source and target rules as constraints.
+The [data specification](Data-Specification.md#71-cash-streaming-kafka-and-flink) defines the cash event and its bronze, silver, and gold outputs.
 
 DP1 remains source-to-bronze ingestion, DP2 remains bronze-to-silver/gold integration, and DP3 remains offline feature computation. The exact streaming jobs, sink layout, and division of work between Spark and Flink still need definition.
 
@@ -191,7 +186,7 @@ Both tasks need coherent account and trade behavior. Trade-related cash cannot b
 
 **Decided:** design predictive behavior with the generator. Account activity profiles could influence movement frequency and size over time, with documented randomness. The exact behavior model is open. Keep latent generator parameters, future state, and outcome labels out of prediction inputs. Inject delivery duplicates and lateness separately from business behavior.
 
-For the selected target, the label is the sum of signed cash movements after prediction time and through the forecast cutoff. Use unique business events, not duplicate deliveries. Do not treat an incomplete future window as a zero-movement outcome.
+The [data specification](Data-Specification.md#72-ml-forecasting--alerts) defines the label: unique signed cash movements after prediction time and through the forecast cutoff.
 
 The proposed evaluation compares:
 
@@ -207,18 +202,9 @@ Results describe the documented synthetic behavior. Real brokerage use would nee
 
 ### Offline and online features
 
-Offline and online describe how feature values are stored and retrieved. Batch and streaming describe how they are computed.
+The [data specification](Data-Specification.md#72-ml-forecasting--alerts) defines the offline and online feature data, candidate features, and the availability rule. Offline and online describe how feature values are stored and retrieved; batch and streaming describe how they are computed. Both computations can feed both stores, and Feast is the planned retrieval layer.
 
-| Use | Stored values | Purpose |
-| --- | --- | --- |
-| Offline | Timestamped historical feature values. | Training, evaluation, and backfills. |
-| Online | Latest eligible values for each account. | Low-latency retrieval for a prediction. |
-
-Both batch and streaming computations can feed both stores. Retain streaming feature history for training. A batch-derived feature can also be materialized into the online store. Feast is the planned retrieval layer.
-
-Candidate features include the previous daily balance, earlier daily inflow/outflow totals, and recent movement counts or amounts from Flink. Historical trade-type aggregates are optional. Feature definitions, windows, and online storage details remain open.
-
-Use the same feature definitions offline and online. Record event time and availability time so training does not use a correction or record that arrived after the prediction cutoff. The account/customer lookup must also respect effective dates and availability. Since these sources remain batch-loaded, online scoring can only use the versions already received; lookup freshness and correction handling need definition.
+The account and customer lookup must respect effective dates and availability. Since these sources remain batch-loaded, online scoring can only use the versions already received; lookup freshness and correction handling need definition.
 
 ### Proposed serving flow
 
@@ -234,7 +220,7 @@ The following component layout is proposed for the selected use case.
 
 The worker and alert API can be one application. Keep model calls outside cash ingestion so slow inference delays predictions without blocking incoming cash events. Online inference updates forecasts from eligible features; it does not retrain the model on each event.
 
-An alert result should include account ID, as-of time, forecast cutoff, current cash, forecast movement, projected cash, tier, minimum, projected shortfall, model version, and policy version. The exact API and storage schema are open.
+The [data specification](Data-Specification.md#72-ml-forecasting--alerts) lists the fields of a forecast and alert result. The exact API and storage schema are open.
 
 Alert writes need retry-safe identities. Late cash corrections or newly available dimension changes can revise or clear an alert. Preserve enough version and time information to explain the earlier result. Scoring cadence, latency targets, update triggers, and correction behavior still need definition.
 
@@ -317,7 +303,7 @@ This table is the project's reading of the rubric. The rubric names the problems
 
 Other Layer 1 rows depend on the choices above: lakehouse and warehouse optimization (C20, C21), three Airflow pipelines DP1 to DP3 with ingest and validate stages (B22 to C27), DataHub lineage and validation (B28 to C32), and table diagrams for each zone (B34). The rubric also asks for SCD2 history, timestamped features, and two demonstrated novel ideas. Later rows specify Feast, Kubeflow, MLflow, KServe, text retrieval (RAG), agents, and operations. This document does not define those parts yet.
 
-Cells A34 and A98 set the documentation rules. The [documentation guide](Documentation-Guide.md#course-requirements-behind-this-split) explains them.
+Cells A34 and A98 set the documentation rules. The [documentation guide](Documentation-Guide.md#course-requirements) explains them.
 
 ## Decisions so far
 
@@ -335,13 +321,13 @@ This table distinguishes accepted design choices from proposals and deferred wor
 | Generator engine | Open | The owner authorized an autonomous fresh Polars POC based on the Databricks logic and TPC-DI specification. This selects Polars for the experiment, not the production generator. Code quality, declarative configuration, and measured memory behavior are requirements. See [Generator](#generator). |
 | Generated characteristics | Decided | Report skew, cardinality, duplicate rate, schema variants, and volume as measured from the produced files, not from configured rates. A configured rate describes intent: it stays at 2 percent even if an injector stops working. Every injected problem therefore needs a measurable signature. |
 | Cash streaming | Decided | CashTransaction is the first stream. Use Kafka and Flink to retain cash events and produce balances and window results. Add a stable event identity before publication. Direct generation versus timed replay, window sizes, cutoffs, and sink mechanics remain open. |
-| TPC-DI baseline | Decided | Retain the source meanings, source-to-target rules, and daily batch patterns except for explicit project changes. Cash streaming changes delivery and execution. Silver schemas and ML features are additions. |
+| TPC-DI baseline | Decided | Retain source meanings, source-to-target rules, and historical-plus-daily processing except for explicit project changes. Extend the daily sequence beyond the benchmark's two daily batches; duration remains open. Cash streaming changes delivery and execution. Silver schemas and ML features are additions. |
 | ML target | Decided | Forecast future net account cash movement. Add it to recorded cash to obtain projected cash. The horizon, model, features, and evaluation thresholds remain open. |
 | Cash policy | Decided | Flag projected account cash below a configured minimum keyed by the customer's tier. TPC-DI supplies the category, while the project supplies the policy. Amounts, rationale, versioning, and invalid-tier handling remain open. |
 | ML generation | Decided | Design predictive behavior with the generator from the start. Document added synthetic behavior and preserve related records. The behavior model is open. |
 | Serving topology | Proposed | Flink supplies cash/features; a separate worker calls the model service and applies the policy; an API exposes retained alert state. Keep inference outside cash ingestion. |
 | Obligations | Deferred | A synthetic obligation schedule and payment-coverage model are future work. The first version uses forecast total movement and the tier-based minimum. |
-| Document split | Decided | TPC-DI facts go in the [TPC-DI wiki](TPC-DI/TPC-DI.md). Requirements, decisions, and designs go in this document. Implementation state goes in [Status](Status.md). Research evidence goes in `research/`. |
+| Document organization | Partly decided | The owner wants a full project data specification based on TPC-DI, with the README derived from it. The specification holds the data definitions: sources, zones and silver rules, the gold warehouse, cash stream data, and ML data. This document records choices and rationale, [Status](Status.md) records progress, and `research/` records evidence. The specification's editorial result awaits review. |
 
 ## Design considerations by area
 
@@ -359,11 +345,11 @@ These constraints guide storage, history handling, and generation. [Status](Stat
 
 ### History and SCD2
 
-Historical customer and account actions carry only changed fields. Each new version needs the previous value of every omitted field. An explicitly empty element clears a value to NULL. If the parser converts omitted and empty fields to the same NULL value, carry-forward can restore a value that should have been cleared. Preserve that distinction before constructing versions. The [historical action rules](TPC-DI/TPC-DI.md#historical-actions-are-partial-updates) define the source behavior.
+Historical customer and account actions carry only changed fields. Each new version needs the previous value of every omitted field. An explicitly empty element clears a value to NULL. If the parser converts omitted and empty fields to the same NULL value, carry-forward can restore a value that should have been cleared. Preserve that distinction before constructing versions. The [historical action rules](Data-Specification.md#historical-actions-xml) define the source behavior.
 
 Spark can carry values forward with `last(column, ignorenulls=True)` over an ordered window, provided that explicit clears are handled separately. PostgreSQL 16 has no `IGNORE NULLS` for window functions and needs another method, such as grouping changes. Building versions in Spark and storing them in PostgreSQL is proposed.
 
-TPC-DI defines daily versioning and the propagation of customer changes into accounts and company changes into securities. The silver/gold model must implement these [history rules](TPC-DI/TPC-DI.md#history-and-time) or state each project change.
+TPC-DI defines daily versioning and the propagation of customer changes into accounts and company changes into securities. The silver/gold model must implement these [history rules](Data-Specification.md#temporal-rules) or state each project change.
 
 ### Generator
 
@@ -387,7 +373,7 @@ The [selected use case](#selected-use-case) defines the target and policy. Apply
 
 | Question | Depends on | Current state |
 |---|---|---|
-| How does each data problem appear in TPC-DI data? | The requirements above and the [TPC-DI wiki](TPC-DI/TPC-DI.md) | The source scope is decided; fault definitions and rates remain open. [From TPC-DI to the project](#from-tpc-di-to-the-project) separates original behavior from extensions. Example: incremental Trade rows carry two CDC fields that historical rows lack. Whether this native layout difference counts as the rubric's schema evolution is part of the question. |
+| How does each data problem appear in TPC-DI data? | The requirements above and the [data specification](Data-Specification.md) | The source scope is decided; fault definitions and rates remain open. [From TPC-DI to the project](#from-tpc-di-to-the-project) separates original behavior from extensions. Example: incremental Trade rows carry two CDC fields that historical rows lack. Whether this native layout difference counts as the rubric's schema evolution is part of the question. |
 | How does cash enter the stream and become final results? | Cash gold rules, feature definitions, and delivery behavior | Direct generation versus timed replay, event-ID format, bootstrap boundary, ordering, windows, lateness, batch-date mapping, lookups, and daily finalization remain open. |
 | What forecast horizon, prediction cutoff, and scoring cadence do we use? | The account-review use case and available history | Future net cash movement is selected. Define the interval and timing before finalizing labels and features. |
 | What minimum does each tier require under our policy? | Policy rationale and generated balance/movement distributions | The tier mapping is accepted. Amounts, versioning, and missing/invalid-tier behavior remain open. |

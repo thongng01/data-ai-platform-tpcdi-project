@@ -14,7 +14,7 @@ The compatibility probe stopped at module import: the tested Spark image had Pyt
 
 The reference is [shannon-barrow/databricks-tpc-di at commit `2ac319db6e62927c5d4f772cf5654ad8981f9ec4`](https://github.com/shannon-barrow/databricks-tpc-di/tree/2ac319db6e62927c5d4f772cf5654ad8981f9ec4). The isolated checkout is `misc/generator-feasibility/reference`. All code links below use that commit.
 
-The governing source is [TPC-DI 1.1.0](https://www.tpc.org/TPC_Documents_Current_Versions/pdf/TPC-DI_v1.1.0.pdf), especially clauses 2.2, 2.4.5, 4.4 through 4.6, and 6. Existing [TPC-DI notes](../TPC-DI/TPC-DI.md) explain the full model; [streaming notes](Streaming-Candidates.md) explain replay limits.
+The governing source is [TPC-DI 1.1.0](https://www.tpc.org/TPC_Documents_Current_Versions/pdf/TPC-DI_v1.1.0.pdf), especially clauses 2.2, 2.4.5, 4.4 through 4.6, and 6. The [data specification](../Data-Specification.md) explains the full model; [streaming notes](Streaming-Candidates.md) explain replay limits.
 
 The local rubric was read directly from `docs/course/rubric.xlsx`, sheet `edai`. Rows 5 through 8 require at least 100 GB of offline data, skew, schema evolution, another problem and saved source data. Rows 9 and 10 require late arrivals and another streaming problem. Rows 11 through 19 require Spark/Flink processing evidence. Generation therefore needs measured source characteristics and controlled fault settings, beyond a reference generator's expected counts. The minimum volume remains a requirement.
 

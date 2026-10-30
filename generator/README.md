@@ -61,7 +61,7 @@ Every batch has a `BatchDate.txt`. Batch1 uses date `2017-07-07`; later batches 
 | Reference files | Includes TradeType, StatusType, Industry, TaxRate, Date, and Time. | The writer does not repeat them. |
 | FINWIRE | Contains fixed-width company, security, and financial records. | The writer does not emit later FINWIRE files. |
 
-The generator does not emit `HR.csv`, `Prospect.csv`, `Customer.txt`, or `Account.txt`. Its code uses misleading incremental Trade variable names; the [TPC-DI reference](../docs/TPC-DI/TPC-DI.md#trade-updates) defines the source identity and change semantics.
+The generator does not emit `HR.csv`, `Prospect.csv`, `Customer.txt`, or `Account.txt`. Its code uses misleading incremental Trade variable names; the [data specification](../docs/Data-Specification.md#trade-lifecycle-updates) defines the source identity and change semantics.
 
 Manifest counts are not measured output counts. Several file families use `-1`, and event entries use requested counts before duplicate insertion. Use the inspector for measured characteristics. The inspector reads whole files and assumes CRLF, so it needs a different reading strategy for a 100 GB dataset.
 

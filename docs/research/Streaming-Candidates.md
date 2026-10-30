@@ -2,7 +2,7 @@
 
 Research note, 2026-10-27. This note compares source records and proposes a replay experiment. CashTransaction is now the selected stream; the accepted scope and remaining contracts are in the [project design](../Project-Design.md#streaming-candidates).
 
-It supports the [project design](../Project-Design.md). The TPC-DI facts it uses are in the [TPC-DI wiki](../TPC-DI/TPC-DI.md).
+It supports the [project design](../Project-Design.md). The TPC-DI facts it uses are in the [data specification](../Data-Specification.md).
 
 ## Event meaning and replay constraints
 
@@ -12,20 +12,20 @@ The main constraints are record identity, business time, change order, initial s
 
 ## TPC-DI facts this note relies on
 
-The [TPC-DI wiki](../TPC-DI/TPC-DI.md) states these facts with sources:
+The [data specification](../Data-Specification.md) states these facts with sources:
 
-- A trade can have several source rows: one `TradeHistory.txt` row per historical status change, and one CDC row per incremental change. `T_ID` identifies the trade, and `CDC_DSN` orders its incremental changes. See [Trade updates](../TPC-DI/TPC-DI.md#trade-updates).
-- `TradeHistory.txt` exists only in Batch1 and is ordered by trade ID, not by time. See [TradeHistory.txt fields](../TPC-DI/TPC-DI.md#tradehistorytxt-fields).
-- `CDC_DSN` orders changes within one file. The specification gives no event ID or clock across files. See [Incremental files contain different kinds of change](../TPC-DI/TPC-DI.md#incremental-files-contain-different-kinds-of-change).
+- A trade can have several source rows: one `TradeHistory.txt` row per historical status change, and one CDC row per incremental change. `T_ID` identifies the trade, and `CDC_DSN` orders its incremental changes. See [Trade updates](../Data-Specification.md#trade-lifecycle-updates).
+- `TradeHistory.txt` exists only in Batch1 and is ordered by trade ID, not by time. See [TradeHistory.txt schema](../Data-Specification.md#tradehistorytxt).
+- `CDC_DSN` orders changes within one file. The specification gives no event ID or clock across files. See [Physical Source Files & Ingestion Rules](../Data-Specification.md#3-physical-source-files--ingestion-rules).
 - Execution price, fee, commission, and tax appear only in completed trade rows.
-- `CashTransaction.txt` has no transaction ID, and `HoldingHistory.txt` has no timestamp. See [CashTransaction.txt fields](../TPC-DI/TPC-DI.md#cashtransactiontxt-fields) and [HoldingHistory.txt fields](../TPC-DI/TPC-DI.md#holdinghistorytxt-fields).
-- `DATETIME` values have seconds and no time zone. See [Formats and types](../TPC-DI/TPC-DI.md#formats-and-types).
+- `CashTransaction.txt` has no transaction ID, and `HoldingHistory.txt` has no timestamp. See [CashTransaction.txt schema](../Data-Specification.md#cashtransactiontxt) and [HoldingHistory.txt schema](../Data-Specification.md#holdinghistorytxt).
+- `DATETIME` values have seconds and no time zone. See [Source File Schemas](../Data-Specification.md#92-source-file-schemas).
 
 ## What replay can recover
 
 TradeHistory records can replay recorded status and time. Joining the final Trade row supplies identifiers and other extracted attributes, but it cannot reconstruct every earlier field value. In particular, attaching the final execution price or commission to a pending event leaks a later outcome into an earlier event. Keep final attributes separate from the status event, or label them explicitly as later enrichment.
 
-Incremental Trade rows preserve insert/update order and the supplied row values. A replay can carry those rows as CDC messages without inventing a new lifecycle. Combining Batch1 state with Batch2 and Batch3 changes preserves [trade continuity](../TPC-DI/TPC-DI.md#trade-updates). Starting from Batch2 alone produces updates for trades whose creation was earlier.
+Incremental Trade rows preserve insert/update order and the supplied row values. A replay can carry those rows as CDC messages without inventing a new lifecycle. Combining Batch1 state with Batch2 and Batch3 changes preserves [trade continuity](../Data-Specification.md#trade-lifecycle-updates). Starting from Batch2 alone produces updates for trades whose creation was earlier.
 
 Neither source establishes exchange order-book depth, bid/ask quote changes, individual market ticks, partial fills, network arrival times, or actual Kafka failures. Accelerating timestamps changes delivery speed, not source detail. A new generator would be needed for events the files do not contain. That generator would be a project extension with a new contract, not recovered TPC-DI history.
 

@@ -2,8 +2,6 @@
 import re
 from pathlib import Path
 
-ALLOW_CRLF = {"docs/IaC.md"}
-ALLOW_BOM = {"README.md"}
 BANNED = re.compile(r"\b(honestly|genuinely|truly|frankly|quietly|silently|delve|leverage|ultimately)\b", re.I)
 
 
@@ -38,9 +36,9 @@ for f in files:
     raw = p.read_bytes()
     text = raw.decode("utf-8-sig")
     issues = []
-    if b"\r\n" in raw and f not in ALLOW_CRLF:
+    if b"\r\n" in raw:
         issues.append("CRLF")
-    if raw.startswith(b"\xef\xbb\xbf") and f not in ALLOW_BOM:
+    if raw.startswith(b"\xef\xbb\xbf"):
         issues.append("BOM")
     for i, line in enumerate(text.splitlines(), 1):
         if line != line.rstrip():
