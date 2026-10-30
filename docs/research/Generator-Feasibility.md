@@ -16,7 +16,7 @@ The reference is [shannon-barrow/databricks-tpc-di at commit `2ac319db6e62927c5d
 
 The governing source is [TPC-DI 1.1.0](https://www.tpc.org/TPC_Documents_Current_Versions/pdf/TPC-DI_v1.1.0.pdf), especially clauses 2.2, 2.4.5, 4.4 through 4.6, and 6. The [data specification](../Data-Specification.md) explains the full model; [streaming notes](Streaming-Candidates.md) explain replay limits.
 
-The local rubric was read directly from `docs/course/rubric.xlsx`, sheet `edai`. Rows 5 through 8 require at least 100 GB of offline data, skew, schema evolution, another problem and saved source data. Rows 9 and 10 require late arrivals and another streaming problem. Rows 11 through 19 require Spark/Flink processing evidence. Generation therefore needs measured source characteristics and controlled fault settings, beyond a reference generator's expected counts. The minimum volume remains a requirement.
+The course rubric requires at least 100 GB of offline data, skew, schema evolution, another problem, and saved source data. It also requires late arrivals, another streaming problem, and Spark and Flink processing evidence. Generation therefore needs measured source characteristics and controlled fault settings, beyond a reference generator's expected counts. The minimum volume remains a requirement.
 
 Clause 2.4.5 requires official DIGen files or exact copies for a compliant benchmark. Configurable distributions, new schema versions and extra faults make this a TPC-DI-based coursework generator. This report does not claim benchmark compliance or byte identity.
 
@@ -75,7 +75,7 @@ The probe used the already present `edai/spark:3.5.3` image (`b6d0ea4ba688`), wi
 
 The first launch failed because the isolated container hostname did not resolve. Setting hostname/host mapping to localhost and `SPARK_LOCAL_IP=127.0.0.1` passed that launch barrier. The next attempt failed importing unchanged `config.py:211`: `TypeError: unsupported operand type(s) for |: 'type' and 'NoneType'`. The captured runtime is Python 3.8.10 and PySpark 3.5.3. A final repeat saved this failure as structured evidence. No packages, images or production code were changed.
 
-Recoverable files are [probe.py](../../misc/generator-feasibility/probe.py), [run-probe.sh](../../misc/generator-feasibility/run-probe.sh), [probe-result.json](../../misc/generator-feasibility/probe-result.json) and [probe.log](../../misc/generator-feasibility/probe.log). The script contains a later substring compatibility branch, but that branch **did not execute**. There is no successful generation result. All probe containers exited and were removed through `--rm`.
+Recoverable local files in `misc/generator-feasibility/` are `probe.py`, `run-probe.sh`, `probe-result.json`, and `probe.log`. The script contains a later substring compatibility branch, but that branch **did not execute**. There is no successful generation result. All probe containers exited and were removed through `--rm`.
 
 A follow-up probe would use a scratch runtime with Python 3.11 and Spark 3.5.3 plus pinned UDF dependencies. Run the same 100-row HR probe, record unmodified-expression failure or success, then exercise the isolated substring adjustment. Only after that should a small customer/account and trade cohort test shared views and Parquet export. Keep that probe isolated from the project image until compatibility is established.
 

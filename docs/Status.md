@@ -9,11 +9,11 @@ Updated 2026-10-31. The session log and notes up to 2026-10-30 are in `misc/arch
 - **Design**: Cash-flow forecast with a tier-based minimum-cash policy, and cash streaming through Kafka and Flink, are decided. See [Project Design](Project-Design.md#decisions-so-far).
 - **Generator**: Polars POC complete: 50 tests, 1.01 GB validated output, 125 MiB peak RSS. See the [POC record](records/Polars-POC.md). Production engine: open.
 - **Delivery targets**: Final deadline about two months after 2026-10-26. First-week target: Layer 1 nearly complete, plus a working Layer 2 flow or a substantial foundation.
+- **Cleanup**: On 2026-10-31 the unlinked TPC-DI diagrams, specification extract, design paper, and infrastructure evidence record were removed; Git history keeps them. Infrastructure is to be rebuilt from a clean start.
 
 ## Open Decisions
 - **Data**: See [Open Decisions](Data-Specification.md#11-open-decisions) in the data specification.
 - **Design**: See [Open questions](Project-Design.md#open-questions) in Project Design.
-- **Unlinked files**: Keep, link, or remove the TPC-DI draw.io diagrams in `docs/TPC-DI/diagrams/`, the specification extract in `docs/TPC-DI/spec-extract/`, and the design paper `docs/TPC-DI/p1367-poess.pdf`. No document links to them since the data specification replaced the old TPC-DI document.
 
 ## Next Step
 1. Owner reviews the data specification and README.

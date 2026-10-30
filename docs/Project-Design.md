@@ -140,12 +140,12 @@ Generating later company, security, financial, or broker changes would extend th
 
 The source constraints explain the differences:
 
-- **Trades:** distinguish a trade from its changes. Count a completion once. Historical status rows do not contain every earlier trade attribute; final execution values must not appear in earlier events.
-- **Cash:** retain a stable change identity because the source has no standalone transaction ID. A running balance also needs prior state.
-- **Watches:** apply activation and cancellation in the correct order to derive active state.
-- **Holdings:** obtain time and account/security context from the modifying trade. Successive after-quantities must not be summed.
-- **Daily market:** the source has daily resolution. Kafka delivery does not create observed intraday prices.
-- **Customer/account CDC:** this is an alternative stream for lookup updates. Cash is the only selected stream; the other sources retain their batch paths.
+- **Trades**: distinguish a trade from its changes. Count a completion once. Historical status rows do not contain every earlier trade attribute; final execution values must not appear in earlier events.
+- **Cash**: retain a stable change identity because the source has no standalone transaction ID. A running balance also needs prior state.
+- **Watches**: apply activation and cancellation in the correct order to derive active state.
+- **Holdings**: obtain time and account/security context from the modifying trade. Successive after-quantities must not be summed.
+- **Daily market**: the source has daily resolution. Kafka delivery does not create observed intraday prices.
+- **Customer/account CDC**: this is an alternative stream for lookup updates. Cash is the only selected stream; the other sources retain their batch paths.
 
 For the cash stream, define event identity, event time, delivery time, ordering, initial state, windows, lateness, and output updates. The [streaming research note](research/Streaming-Candidates.md) gives the source evidence and replay procedure. Window sizes and lateness limits have not been selected.
 
@@ -244,37 +244,30 @@ A balance at the forecast cutoff cannot prove that every earlier payment was cov
 
 ## Coursework requirements
 
-Source: the local [rubric](course/rubric.xlsx), sheet `edai`, rows 5 to 19 of Layer 1. Column E gives the points. The rubric is partly in Vietnamese; the text below gives its meaning in English.
+These Layer 1 requirements come from the course rubric. The text below gives their meaning in English.
 
 ### Generated data
 
-| Cell | Requirement | Points | Evidence the rubric asks for |
-|---|---|---:|---|
-| B5 | Generate at least 100 GB of offline data. Use more if 100 GB does not show the effect of an optimization | | Data volume |
-| C5 | Simulate skew | 2 | Which columns are skewed, and in what proportion |
-| C6 | Simulate schema evolution | 2 | The schema before and after the change |
-| C7 | Simulate another offline problem, for example a 2% duplicate rate | 2 | The rate of the problem |
-| C8 | Store the generated data so that bronze ingestion can read it later, for example in MinIO or PostgreSQL that acts as another department's system | 2 | |
-| C9 | Simulate late arrivals in streaming data | 2 | Which data arrives late, and how late |
-| C10 | Simulate another streaming problem, for example a 1.5% duplicate rate | 2 | The rate of the problem |
+| Requirement | Evidence the rubric asks for |
+|---|---|
+| Generate at least 100 GB of offline data. Use more if 100 GB does not show the effect of an optimization | Data volume |
+| Simulate skew | Which columns are skewed, and in what proportion |
+| Simulate schema evolution | The schema before and after the change |
+| Simulate another offline problem, for example a 2% duplicate rate | The rate of the problem |
+| Store the generated data so that bronze ingestion can read it later, for example in MinIO or PostgreSQL that acts as another department's system | |
+| Simulate late arrivals in streaming data | Which data arrives late, and how late |
+| Simulate another streaming problem, for example a 1.5% duplicate rate | The rate of the problem |
 
-D5 also asks for the high-cardinality columns of the offline data, measured as distinct values divided by total values.
+The rubric also asks for the high-cardinality columns of the offline data, measured as distinct values divided by total values.
 
 ### Processing jobs
 
-| Cell | Requirement | Points |
-|---|---|---:|
-| C11 | Spark baseline job, without optimization | 2 |
-| C12 | Handle skew in Spark, with explanation | 3 |
-| C13 | Handle schema evolution in Spark, with explanation | 3 |
-| C14 | Handle the other offline problem in Spark, with explanation | 3 |
-| C15 | Integrate the Spark job into the data pipelines | 2 |
-| C16 | Flink baseline job, without optimization | 2 |
-| C17 | Handle late arrivals in Flink, with explanation | 3 |
-| C18 | Handle the other streaming problem in Flink, with explanation | 3 |
-| C19 | Window processing in Flink | 2 |
+| Engine | Requirements |
+|---|---|
+| Spark | A baseline job without optimization; handling of skew, schema evolution, and the other offline problem, each with an explanation; integration into the data pipelines |
+| Flink | A baseline job without optimization; handling of late arrivals and the other streaming problem, each with an explanation; window processing |
 
-D11 asks for each Spark step from the baseline, Spark UI screenshots that show the problem, and the Airflow integration. C12 gives the expected account: the data has this skew, the Spark UI shows this symptom, these methods were tried, and this is the gain over the baseline. D16 asks for the same account with the Flink UI. D19 asks for the window code and an explanation of what it does. B16 states that the streaming pipeline later feeds the feature store.
+Spark evidence covers each step from the baseline, Spark UI screenshots that show the problem, and the Airflow integration. Each handling explanation states the skew or problem in the data, the symptom in the UI, the methods tried, and the gain over the baseline. Flink evidence gives the same account with the Flink UI, plus the window code and an explanation of what it does. The streaming pipeline later feeds the feature store.
 
 ### What each requirement means
 
@@ -301,9 +294,9 @@ This table is the project's reading of the rubric. The rubric names the problems
 
 ### Other requirements
 
-Other Layer 1 rows depend on the choices above: lakehouse and warehouse optimization (C20, C21), three Airflow pipelines DP1 to DP3 with ingest and validate stages (B22 to C27), DataHub lineage and validation (B28 to C32), and table diagrams for each zone (B34). The rubric also asks for SCD2 history, timestamped features, and two demonstrated novel ideas. Later rows specify Feast, Kubeflow, MLflow, KServe, text retrieval (RAG), agents, and operations. This document does not define those parts yet.
+Other Layer 1 requirements depend on the choices above: lakehouse and warehouse optimization, three Airflow pipelines DP1 to DP3 with ingest and validate stages, DataHub lineage and validation, and table diagrams for each zone. The rubric also asks for SCD2 history, timestamped features, and two demonstrated novel ideas. The later layers require Feast, Kubeflow, MLflow, KServe, text retrieval (RAG), agents, and operations. This document does not define those parts yet.
 
-Cells A34 and A98 set the documentation rules. The [documentation guide](Documentation-Guide.md#course-requirements) explains them.
+The [documentation guide](Documentation-Guide.md#course-requirements) states the rubric's documentation rules.
 
 ## Decisions so far
 

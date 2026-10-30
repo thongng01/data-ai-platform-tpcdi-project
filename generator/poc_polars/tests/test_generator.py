@@ -130,11 +130,7 @@ def test_xml_structure_has_namespaced_actions_and_unqualified_children(generated
 def test_xml_against_specification_xsd(generated):
     etree = pytest.importorskip("lxml.etree")
     root, _ = generated
-    specification = Path(__file__).resolve().parents[3] / "docs/TPC-DI/spec-extract/Chapters-1-4.md"
-    text = specification.read_text()
-    schema = text[text.index("<xsd:schema"):text.index("</xsd:schema>") + len("</xsd:schema>")]
-    schema = schema.replace('maxOccurs=\u201dunbounded\u201d', 'maxOccurs="unbounded"')
-    checker = etree.XMLSchema(etree.fromstring(schema.encode()))
+    checker = etree.XMLSchema(etree.parse(str(Path(__file__).with_name("CustomerMgmt.xsd"))))
     checker.assertValid(etree.parse(str(root / "sources/Batch1/CustomerMgmt.xml")))
 
 

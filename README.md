@@ -14,28 +14,28 @@ The system has three layers: **Data**, **ML**, and **Agent**.
 
 The data platform turns source data into validated tables for analytics and machine learning.
 
-- **Data Generation:** Produces TPC-DI-based source files and events, with configurable volume and injected data problems.
-- **Integration & Storage:** Stores batch files in staging and lakehouse tables on SeaweedFS. Hive Metastore records schemas and locations, Trino provides SQL access, and PostgreSQL holds the gold model (proposed).
-- **Processing:** Uses Spark for batch ingestion and transformation, dbt for SQL modeling, and Kafka with Flink for streaming.
-- **Orchestration & Governance:** Uses Airflow to schedule pipelines and coordinate validation and data quality using Soda. DataHub catalogs tables and records lineage and validation results.
+- **Data Generation**: Produces TPC-DI-based source files and events, with configurable volume and injected data problems.
+- **Integration & Storage**: Stores batch files in staging and lakehouse tables on SeaweedFS. Hive Metastore records schemas and locations, Trino provides SQL access, and PostgreSQL holds the gold model (proposed).
+- **Processing**: Uses Spark for batch ingestion and transformation, dbt for SQL modeling, and Kafka with Flink for streaming.
+- **Orchestration & Governance**: Uses Airflow to schedule pipelines and coordinate validation and data quality using Soda. DataHub catalogs tables and records lineage and validation results.
 
 ### Layer 2: Machine Learning Platform
 
 The ML platform forecasts future net account cash movement and applies a tier-based minimum-cash policy for the firm.
 
-- **Feature Store:** Uses Feast to retrieve historical features for training and current features for inference.
-- **Training & Tracking:** Uses Kubeflow Pipelines to run training and evaluation. MLflow records models, data references, parameters, and metrics.
-- **Model Serving:** Uses KServe to expose the trained model through an inference endpoint.
-- **Text Processing & Retrieval:** Ingests documents, splits them into chunks, and stores embeddings through Feast for retrieval.
+- **Feature Store**: Uses Feast to retrieve historical features for training and current features for inference.
+- **Training & Tracking**: Uses Kubeflow Pipelines to run training and evaluation. MLflow records models, data references, parameters, and metrics.
+- **Model Serving**: Uses KServe to expose the trained model through an inference endpoint.
+- **Text Processing & Retrieval**: Ingests documents, splits them into chunks, and stores embeddings through Feast for retrieval.
 
 ### Layer 3: Agent Platform
 
 The agent platform connects language models to project data and ML services. User task and tool contracts: open.
 
-- **LLM Serving:** Hosts the language model and exposes its inference API.
-- **Agents & Tools:** Retrieves structured data, searches documents, and calls the prediction model.
-- **Routing & Access:** Uses gateways for model, MCP tool, and agent-to-agent requests, with access policies.
-- **Agent Management:** Registers available agents and coordinates work between them.
+- **LLM Serving**: Hosts the language model and exposes its inference API.
+- **Agents & Tools**: Retrieves structured data, searches documents, and calls the prediction model.
+- **Routing & Access**: Uses gateways for model, MCP tool, and agent-to-agent requests, with access policies.
+- **Agent Management**: Registers available agents and coordinates work between them.
 
 ## Repository Structure
 
@@ -85,9 +85,9 @@ The project ingests all 18 TPC-DI business and reference source files, plus `Bat
 
 ### Load Cycle
 
-- **Batch 1 (Historical):** Full extracts, SCD2 history, and opening cash balances and holdings. History length: open.
-- **Batch 2+ (Daily):** One day of CDC changes, new activity, and the full prospect snapshot per batch, up to one year.
-- **Cash Stream:** After Batch 1, cash transactions arrive through Kafka and Flink instead of daily files.
+- **Batch 1 (Historical)**: Full extracts, SCD2 history, and opening cash balances and holdings. History length: open.
+- **Batch 2+ (Daily)**: One day of CDC changes, new activity, and the full prospect snapshot per batch, up to one year.
+- **Cash Stream**: After Batch 1, cash transactions arrive through Kafka and Flink instead of daily files.
 
 ### Gold Warehouse
 
@@ -99,12 +99,12 @@ Gold keeps the TPC-DI warehouse: SCD2 dimensions for customers, accounts, broker
 
 The generator produces related source records using the TPC-DI specification and existing dataset as references. Predictive account behavior is designed together with the cash forecast task, while keeping accounts, trades, cash, and holdings consistent (behavior model open).
 
-- **Scale:** Supports small development runs and at least 100 GB of offline data.
-- **Relationships:** Preserves referential integrity and consistent entity histories.
-- **Load Patterns:** Produces historical data and daily changes.
-- **Offline Problems:** Injects skew, schema evolution, and an additional problem such as duplicates.
-- **Streaming Problems:** Injects late arrivals and an additional problem such as duplicate events.
-- **Inspection:** Measures output volume, cardinality, skew, schema variants, duplicate rates, and event delays.
+- **Scale**: Supports small development runs and at least 100 GB of offline data.
+- **Relationships**: Preserves referential integrity and consistent entity histories.
+- **Load Patterns**: Produces historical data and daily changes.
+- **Offline Problems**: Injects skew, schema evolution, and an additional problem such as duplicates.
+- **Streaming Problems**: Injects late arrivals and an additional problem such as duplicate events.
+- **Inspection**: Measures output volume, cardinality, skew, schema variants, duplicate rates, and event delays.
 
 Implementation references include the [Databricks TPC-DI generator](https://github.com/shannon-barrow/databricks-tpc-di/tree/main/src/tools/tpcdi_gen).
 
@@ -123,20 +123,20 @@ Hive Metastore records lakehouse table schemas and file locations. Spark process
 
 Spark handles batch source parsing and integration. dbt is planned for SQL modeling. Division of work between Spark, dbt, PostgreSQL, and Trino: open.
 
-- **Source Parsing:** Reads the different file formats and accounts for records that cannot be parsed.
-- **Cleaning and Integration:** Applies types, handles duplicates and daily changes, and validates relationships.
-- **Historical Modeling:** Applies SCD2 rules to the history-tracking dimensions.
-- **Warehouse Modeling:** Builds related dimensions and facts with defined grains.
-- **Feature Computation:** Retains historical feature values with event and availability timestamps.
-- **Baseline Comparison:** Spark task metrics, file layouts, and query plans before and after each optimization.
+- **Source Parsing**: Reads the different file formats and accounts for records that cannot be parsed.
+- **Cleaning and Integration**: Applies types, handles duplicates and daily changes, and validates relationships.
+- **Historical Modeling**: Applies SCD2 rules to the history-tracking dimensions.
+- **Warehouse Modeling**: Builds related dimensions and facts with defined grains.
+- **Feature Computation**: Retains historical feature values with event and availability timestamps.
+- **Baseline Comparison**: Spark task metrics, file layouts, and query plans before and after each optimization.
 
 ### Streaming Processing
 
 Each cash transaction after Batch 1 is one Kafka event with a stable event ID. Flink validates and deduplicates the events and keeps account cash state.
 
-- **Bronze:** Received events, including duplicates.
-- **Silver:** Unique cash events.
-- **Gold:** `FactCashBalances` daily balances, running balances, and window aggregates.
+- **Bronze**: Received events, including duplicates.
+- **Silver**: Unique cash events.
+- **Gold**: `FactCashBalances` daily balances, running balances, and window aggregates.
 
 Window sizes, lateness limits, and correction rules: open. The [data specification](docs/Data-Specification.md#71-cash-streaming-kafka-and-flink) defines the event fields and outputs.
 
@@ -169,20 +169,20 @@ TPC-DI supplies tiers 1, 2, and 3; the project sets the minimum amounts. Horizon
 
 ### Features and Training
 
-- **Offline Features:** Timestamped feature history for training and backfills.
-- **Online Features:** Latest eligible feature values for inference. Batch and streaming jobs can produce features for either use.
-- **Point-in-Time Rule:** Training uses only values available before the prediction time, including for late records and corrections.
-- **Feature Retrieval:** Uses Feast to assemble training examples.
-- **Training Pipeline:** Uses Kubeflow Pipelines for data loading, splitting, training, and evaluation.
-- **Run Tracking:** Uses MLflow to record model artifacts, parameters, metrics, and data versions.
-- **Evaluation:** A simple baseline against the selected model on held-out periods and generator seeds.
+- **Offline Features**: Timestamped feature history for training and backfills.
+- **Online Features**: Latest eligible feature values for inference. Batch and streaming jobs can produce features for either use.
+- **Point-in-Time Rule**: Training uses only values available before the prediction time, including for late records and corrections.
+- **Feature Retrieval**: Uses Feast to assemble training examples.
+- **Training Pipeline**: Uses Kubeflow Pipelines for data loading, splitting, training, and evaluation.
+- **Run Tracking**: Uses MLflow to record model artifacts, parameters, metrics, and data versions.
+- **Evaluation**: A simple baseline against the selected model on held-out periods and generator seeds.
 
 ### Serving and Retrieval
 
-- **Feature Materialization:** Updates the online feature store from offline tables and streaming jobs.
-- **Model Serving:** Uses KServe to expose the trained model to applications and agents.
-- **Alert Path (proposed):** Flink features go to a separate scorer, which calls the model, applies the minimum-cash policy, and keeps alerts for an API.
-- **Text Pipeline:** Ingests documents, creates chunks and embeddings, and records lineage and validation.
+- **Feature Materialization**: Updates the online feature store from offline tables and streaming jobs.
+- **Model Serving**: Uses KServe to expose the trained model to applications and agents.
+- **Alert Path (proposed)**: Flink features go to a separate scorer, which calls the model, applies the minimum-cash policy, and keeps alerts for an API.
+- **Text Pipeline**: Ingests documents, creates chunks and embeddings, and records lineage and validation.
 
 ## Layer 3: Agent Platform
 
@@ -190,12 +190,12 @@ The agent platform provides access to project data, documents, and predictions t
 
 ### Agent Components
 
-- **Model Server:** Hosts the LLM and exposes its inference API.
-- **Data and ML Tools:** Provides controlled access to structured data, retrieved documents, and model predictions.
-- **Coordinator:** Routes work between agents.
-- **Gateway:** Applies routing and access policies to model, tool, and agent requests.
-- **Registry:** Publishes available agents and their interfaces.
-- **Prompt Management:** Versions prompts used by deployed agents.
+- **Model Server**: Hosts the LLM and exposes its inference API.
+- **Data and ML Tools**: Provides controlled access to structured data, retrieved documents, and model predictions.
+- **Coordinator**: Routes work between agents.
+- **Gateway**: Applies routing and access policies to model, tool, and agent requests.
+- **Registry**: Publishes available agents and their interfaces.
+- **Prompt Management**: Versions prompts used by deployed agents.
 
 Framework, language model, tool contracts, and coordination rules: open.
 
@@ -205,21 +205,21 @@ Framework, language model, tool contracts, and coordination rules: open.
 
 Docker packages services and jobs. Docker Compose groups local services by function.
 
-- **Core Services:** Runs PostgreSQL, SeaweedFS, Hive Metastore, and Trino.
-- **Batch Compute:** Runs Spark and the service used to connect dbt to Spark.
-- **Streaming:** Runs Kafka and Flink.
-- **Orchestration:** Runs Airflow.
-- **Governance:** Runs DataHub and its supporting services.
+- **Core Services**: Runs PostgreSQL, SeaweedFS, Hive Metastore, and Trino.
+- **Batch Compute**: Runs Spark and the service used to connect dbt to Spark.
+- **Streaming**: Runs Kafka and Flink.
+- **Orchestration**: Runs Airflow.
+- **Governance**: Runs DataHub and its supporting services.
 
 Profiles control which groups start together. Container builds are reviewed for image size and required dependencies.
 
 ### Deployment and Service Operation
 
-- **Infrastructure as Code:** Uses Terraform and Ansible for infrastructure provisioning and service configuration.
-- **CI/CD:** Tests, builds, and deploys pipelines, streaming jobs, tools, and agents.
-- **Routing and Security:** Configures gateways, authentication, HTTPS, rate limits, and centralized secrets.
-- **Observability:** Collects service metrics, logs, traces, and model and agent telemetry.
-- **Testing:** Checks data correctness, rerun behavior, APIs, and performance under load.
+- **Infrastructure as Code**: Uses Terraform and Ansible for infrastructure provisioning and service configuration.
+- **CI/CD**: Tests, builds, and deploys pipelines, streaming jobs, tools, and agents.
+- **Routing and Security**: Configures gateways, authentication, HTTPS, rate limits, and centralized secrets.
+- **Observability**: Collects service metrics, logs, traces, and model and agent telemetry.
+- **Testing**: Checks data correctness, rerun behavior, APIs, and performance under load.
 
 The coursework also requires two demonstrated novel ideas; the [project design](docs/Project-Design.md#coursework-requirements) records the requirements.
 

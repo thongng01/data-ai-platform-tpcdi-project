@@ -10,7 +10,6 @@ The [root README](../README.md) introduces the system. The documents below hold 
 | [Project design](Project-Design.md) | Requirements, decisions with their rationale, and open questions. |
 | [Infrastructure](IaC.md) | How the services run, what they need, and which service mechanisms constrain the design. |
 | [Status](Status.md) | Current position, open decisions, next step, what exists, and known defects. |
-| [Infrastructure evidence](records/Infrastructure-Evidence.md) | Conditions, measurements, and source inspections behind the earlier build findings. Working record. |
 | [Polars generator evidence](records/Polars-POC.md) | What the generator POC established about correctness, repeatability, memory, and scale. Working record. |
 | [Diagram guide](Diagram-Guide.md) | How to create, revise, and export draw.io diagrams. ERDs use native Mermaid instead. |
 | [Research notes](research/) | Evidence for design choices, such as [generator feasibility](research/Generator-Feasibility.md) and [streaming candidates](research/Streaming-Candidates.md). |
@@ -69,8 +68,6 @@ One document can cover related subjects until it becomes hard to navigate. Movin
 
 ## Course Requirements
 
-The local [rubric](course/rubric.xlsx), sheet `edai`, cells A34 and A98, asks for a summary README that links to detailed documents under `docs/`, and for screenshots embedded with explanations.
+The course rubric asks for a summary README that links to detailed documents under `docs/`, and for screenshots embedded with explanations.
 
-Cell A98 requires the README to introduce the business domain, include a table of contents and the repository structure, and show the overall deployment. Diagram components should be deployable units, with described and numbered flows.
-
-The course files are local reference material and are ignored by Git.
+The README must introduce the business domain, include a table of contents and the repository structure, and show the overall deployment. Diagram components should be deployable units, with described and numbered flows.

@@ -104,14 +104,12 @@ The tool validates the final document before writing, saves previous bytes in `m
 
 Inspection output is not a creation specification. Apply a targeted patch to the current document. Rebuilding from an old specification does not merge native edits. Unknown native XML remains unless a requested operation changes it. XML serialization and compression can change.
 
-## Checks and legacy files
+## Checks and installation
 
 ```bash
 .venv/bin/python -m unittest discover -s misc/tools/diagrams -p test_diagram.py -v
 ```
 
 The tests cover text contrast, native XML preservation, compressed pages, page-scoped IDs, stale updates, invalid references and geometry, table fields, dense master pages, and export borders. Structural checks do not establish visual quality. Inspect each changed render for wrapping, overlap, routes, containment, and icon proportions.
-
-`build_core_diagrams.py` and `build_overviews.py` generate TPC-DI diagrams from definitions embedded in the scripts. They overwrite generated files and can discard native edits. Use `diagram.py apply` to update a diagram that has been edited in draw.io. `extract_core_spec.py` extracts specification text.
 
 Install draw.io outside the repository from the [official desktop releases](https://github.com/jgraph/drawio-desktop/releases). Application binaries do not belong in this directory.

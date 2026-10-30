@@ -1,6 +1,6 @@
 # Infrastructure as Code
 
-This reference describes the Compose configuration, service connections, and operating commands. It distinguishes configured behavior from runtime evidence. Design choices are in [Project Design](Project-Design.md), implementation state is in [Status](Status.md), and earlier trials are in the [infrastructure evidence record](records/Infrastructure-Evidence.md).
+This reference describes the Compose configuration, service connections, and operating commands. It distinguishes configured behavior from runtime evidence. Design choices are in [Project Design](Project-Design.md), and implementation state is in [Status](Status.md).
 
 ## 1. How to run it
 
@@ -26,7 +26,7 @@ The accepted DP1 boundary is source to bronze. The existing `make dp1` command c
 
 ## 2. Environment
 
-The commands assume Linux tools and Docker inside WSL. Host resources, installed versions, and free disk space can change. The [earlier environment snapshot](records/Infrastructure-Evidence.md#environment-snapshot) records the machine used for the original runs.
+The commands assume Linux tools and Docker inside WSL. Host resources, installed versions, and free disk space can change.
 
 Container image settings are in `infra/.env`. Compose reads that file to substitute variables; a container receives only the values its service passes through. The file contains committed local development defaults. SeaweedFS uses the mutable `latest` tag, so a later pull can change behavior without a configuration edit.
 
@@ -52,7 +52,7 @@ PostgreSQL uses `postgres:16-alpine`. Bootstrap creates `warehouse`, `metastore`
 
 SeaweedFS runs master, volume server, filer, and S3 gateway through one `weed server` command. The mounted `infra/seaweedfs/s3.json` defines the S3 identities. `-volume.max=0` derives the volume limit from available disk capacity; `-volume.minFreeSpacePercent=5` reserves free space. Volume allocation failures can surface as S3 retries; see [section 8.3](#83-the-object-store-runs-out-of-volumes).
 
-Hive Metastore uses `starburstdata/hive:3.1.2-e.18` and PostgreSQL's `metastore` database. The service provides the image's required environment variables, including empty values for unused cloud settings. `SERVICE_OPTS` supplies JVM and metastore properties. This image's earlier startup behavior is recorded in the [evidence record](records/Infrastructure-Evidence.md#image-and-storage-trials).
+Hive Metastore uses `starburstdata/hive:3.1.2-e.18` and PostgreSQL's `metastore` database. The service provides the image's required environment variables, including empty values for unused cloud settings. `SERVICE_OPTS` supplies JVM and metastore properties.
 
 Trino uses `trinodb/trino:476`. Its Hive catalog reads table metadata from Hive Metastore and objects from SeaweedFS. The existing batch job does not use Trino to ingest data. The [Hive catalog configuration](../infra/trino/catalog/hive.properties) disables exclusive create with `s3.exclusive-create=false`; the earlier SeaweedFS run rejected conditional writes with HTTP 501.
 
@@ -151,7 +151,7 @@ Separate databases keep each application's tables in a separate namespace while 
 
 ## 8. Operating constraints
 
-These operating notes explain failure mechanisms found in the earlier build. Trial values and their limits are in the [infrastructure evidence record](records/Infrastructure-Evidence.md#earlier-trials).
+These operating notes explain failure mechanisms found in the earlier build.
 
 ### 8.1 A path write is not a table write
 

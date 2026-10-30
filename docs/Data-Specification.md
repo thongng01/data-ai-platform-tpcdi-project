@@ -92,7 +92,7 @@ The TPC-DI specification does not define a silver layer. The Silver layer is the
 ## 6. Gold Warehouse
 The Gold layer implements the TPC-DI warehouse model. Dimensions describe business entities; facts record activity.
 
-**SCD2 Dimension Rules:**
+**SCD2 Dimension Rules**:
 - **Keys**: A natural key (`CustomerID`) identifies the entity across time. A surrogate key (`SK_CustomerID`) identifies one specific version.
 - **Versioning**: On a change, the current version gets `IsCurrent = 0` and `EndDate` = the new version's `EffectiveDate`. A new row is inserted with a new `SK`, `IsCurrent = 1`, and `EndDate = 9999-12-31`.
 - **Collapse**: Multiple changes to one entity on the same day collapse into a single daily version.
