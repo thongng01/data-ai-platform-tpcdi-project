@@ -1,0 +1,9 @@
+{
+  "name": "project-diagram-tools",
+  "private": true,
+  "description": "Mermaid renderer for project ERDs. Python's diagram.py calls it.",
+  "dependencies": {
+    "@mermaid-js/mermaid-cli": "12.0.0",
+    "yauzl": "3.4.0"
+  }
+}

@@ -7,12 +7,11 @@ The [root README](../README.md) introduces the system. The documents below hold 
 | Document | Purpose |
 | --- | --- |
 | [Data specification](Data-Specification.md) | The project's data: business domains and origin systems, load cycle, source files, data zones and silver rules, gold warehouse and ERD, cash stream data, ML data, transformations, and field schemas. |
-| [Project design](Project-Design.md) | Requirements, decisions with their rationale, and open questions. |
+| [Project design](Project-Design.md) | Coursework requirements, decisions and rationale, engineering constraints, and open questions. |
 | [Infrastructure](IaC.md) | How the services run, what they need, and which service mechanisms constrain the design. |
 | [Status](Status.md) | Current position, open decisions, next step, what exists, and known defects. |
 | [Polars generator evidence](records/Polars-POC.md) | What the generator POC established about correctness, repeatability, memory, and scale. Working record. |
-| [Diagram guide](Diagram-Guide.md) | How to create, revise, and export draw.io diagrams. ERDs use native Mermaid instead. |
-| [Research notes](research/) | Evidence for design choices, such as [generator feasibility](research/Generator-Feasibility.md) and [streaming candidates](research/Streaming-Candidates.md). |
+| [Diagram guide](Diagram-Guide.md) | How to create, revise, and export diagrams: draw.io files and Mermaid ERDs. |
 | [TPC-DI specification](TPC-DI/TPC-DI_v1.1.0.pdf) | The benchmark's full definitions. The data specification summarizes the parts this project uses. |
 
 ## Style
@@ -47,24 +46,22 @@ Keep discussion, progress, session updates, and test inventories out of the READ
 
 | Subject | README | Dedicated document |
 | --- | --- | --- |
-| **Data** | Domains, sources, zones, load cycle in brief | Data specification: schemas, grains, transformations, stream and ML data |
-| **Decisions** | Main choices | Project design: requirements, decisions, rationale, open questions |
-| **Generation** | What is generated; configurable problems | Generator documentation, once its design is chosen; research notes until then |
-| **Batch processing** | DP1, DP2, DP3 in brief | Pipeline documentation: tasks, validation, reruns, lineage, measurements |
-| **Streaming** | Selected events, processor, outputs | Data specification for the event data; project design for the choices |
-| **Machine learning** | Prediction task, main components | Data specification for features and labels; project design for the choices |
-| **Agents** | Platform scope | Agent design, once the user task is chosen |
-| **Infrastructure** | Deployment shape, basic startup | Infrastructure document and its evidence records |
-| **Progress** | Link to Status | Status |
+| **Data** | Domains, sources, load cycle, zones, Gold warehouse and ERD, stream and ML tables | `Data-Specification.md`: cross-layer data contract, full field schemas, and edge cases |
+| **Decisions & Rubric** | Main choices | `Project-Design.md`: coursework requirements, decisions and rationale, constraints, open questions |
+| **Layer 1: Data Platform** | Zones, generation, DP1 to DP3 batch, Flink stream, orchestration and governance | `Data-Platform.md` (when built): generator, Spark/dbt, Flink, Airflow, Soda, DataHub, and UI optimization evidence |
+| **Layer 2: ML Platform** | Prediction task, feature store, training, serving, and RAG | `ML-Platform.md` (when built): synthetic behavior, Feast, KFP, MLflow, KServe, alert scorer, and RAG pipeline |
+| **Layer 3: Agent Platform** | Agent components and scope | `Agent-Platform.md` (when built): user task, LLM serving, MCP tools, gateway policies, and agent coordination |
+| **Infrastructure & Ops** | Compose profiles, IaC, CI/CD, security, observability, startup | `IaC.md`: service configuration, ports, memory limits, Terraform/Ansible, and operating commands |
+| **Progress** | Link to Status | `Status.md`: current position, open decisions, next steps, what exists, and known defects |
 
 One document can cover related subjects until it becomes hard to navigate. Moving, renaming, splitting, and merging documents is normal; update incoming links in the same change and run `make check-docs`.
 
 ## Evidence and Records
 
-- **Evidence**: Configuration, input and scale, observed result, and limits, next to the claim it supports. Screenshots go beside their explanation.
-- **Working records**: Routine command output, test results, and run reports go in `docs/records/`, linked from Status.
+- **Evidence**: Configuration, input and scale, observed result, and limits, next to the claim it supports. Screenshots go beside their explanation. Rubric evidence, such as Spark and Flink UI screenshots and baseline-versus-treated results, belongs in the layer document that makes the claim.
+- **Working records**: Measured results from development runs, such as benchmarks, test results, and run reports, go in `docs/records/`, linked from Status. Raw command output and logs go in `misc/tmp/`. A record stays while the code or decision it measures is current. When that changes, copy any result that still supports a claim into the owning document, then archive the record to `misc/archive/` if a later phase may need it, or remove it.
 - **Status**: Current state only. Older entries move to `misc/archive/`.
-- **Research notes**: Evidence for one choice, linked from the design that uses it. A research note decides nothing.
+- **Research notes**: Evidence for one open choice, in `docs/research/`, linked from the design that uses it. A research note decides nothing. When the choice is made, integrate the conclusions into the owning document, then archive or remove the note.
 
 ## Course Requirements
 

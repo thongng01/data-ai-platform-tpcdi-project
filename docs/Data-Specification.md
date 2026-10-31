@@ -117,155 +117,11 @@ The Gold layer implements the TPC-DI warehouse model. Dimensions describe busine
 | `DImessages` | Load Log | Status messages and data alerts | One message | The load process | Each batch | Each batch |
 
 ### Gold Layer Entity Relationships
-The ERD shows all 19 tables with their primary and foreign keys. Dashed lines represent the prospect match by name and address.
+The ERD shows all 19 tables, their key fields, and the main entity relationships. The `Prospect` relationship is a match by name and address, not a key.
 
-```mermaid
-erDiagram
-    direction LR
+![Gold layer ERD with all 19 tables, their keys, and their relationships.](diagrams/data-specification/gold-erd.png)
 
-    DimBroker ||--o{ DimAccount : manages
-    DimSecurity ||--o{ FactWatches : "is watched"
-    DimSecurity ||--o{ DimTrade : "is traded"
-    DimTrade ||--o{ FactHoldings : "opens, changes"
-    Prospect |o..o{ DimCustomer : "matched, enriches"
-    DimCompany ||--o{ Financial : reports
-    DimSecurity ||--o{ FactMarketHistory : "is priced"
-    DimCompany ||--o{ DimSecurity : issues
-    DimAccount ||--o{ FactCashBalances : "has cash"
-    DimCustomer ||--o{ DimAccount : owns
-    DimAccount ||--o{ DimTrade : places
-    DimCustomer ||--o{ FactWatches : watches
-
-    DimCustomer {
-        NUM(11) SK_CustomerID PK
-        NUM(11) CustomerID "business key"
-        CHAR(10) Status
-        NUM(1) Tier
-        CHAR(30) AgencyID "matched prospect"
-        DATE EffectiveDate
-        DATE EndDate
-    }
-    DimAccount {
-        NUM(11) SK_AccountID PK
-        NUM(11) AccountID "business key"
-        NUM(11) SK_CustomerID FK
-        NUM(11) SK_BrokerID FK
-        CHAR(10) Status
-        DATE EffectiveDate
-        DATE EndDate
-    }
-    DimBroker {
-        NUM(11) SK_BrokerID PK
-        NUM(11) BrokerID "business key"
-        DATE EffectiveDate
-        DATE EndDate
-    }
-    DimCompany {
-        NUM(11) SK_CompanyID PK
-        NUM(11) CompanyID "business key, CIK"
-        CHAR(60) Name
-        CHAR(50) Industry
-        DATE EffectiveDate
-        DATE EndDate
-    }
-    DimSecurity {
-        NUM(11) SK_SecurityID PK
-        CHAR(15) Symbol "business key"
-        NUM(11) SK_CompanyID FK
-        SNUM Dividend
-        DATE EffectiveDate
-        DATE EndDate
-    }
-    Financial {
-        NUM(11) SK_CompanyID FK
-        NUM(4) FI_YEAR
-        NUM(1) FI_QTR
-        SNUM FI_BASIC_EPS
-    }
-    DimTrade {
-        NUM(11) TradeID PK
-        NUM(11) SK_AccountID FK
-        NUM(11) SK_CustomerID FK
-        NUM(11) SK_BrokerID FK
-        NUM(11) SK_SecurityID FK
-        NUM(11) SK_CompanyID FK
-        NUM(11) SK_CreateDateID FK
-        NUM(11) SK_CreateTimeID FK
-        NUM(11) SK_CloseDateID FK
-        NUM(11) SK_CloseTimeID FK
-        CHAR(10) Status
-        CHAR(12) Type
-    }
-    FactHoldings {
-        NUM(11) TradeID FK
-        NUM(11) CurrentTradeID FK
-        NUM(11) SK_AccountID FK
-        NUM(11) SK_CustomerID FK
-        NUM(11) SK_SecurityID FK
-        NUM(11) SK_CompanyID FK
-        NUM(11) SK_DateID FK
-        NUM(11) SK_TimeID FK
-        SNUM(6) CurrentHolding
-    }
-    FactCashBalances {
-        NUM(11) SK_AccountID FK
-        NUM(11) SK_CustomerID FK
-        NUM(11) SK_DateID FK
-        SNUM Cash
-    }
-    FactMarketHistory {
-        NUM(11) SK_SecurityID FK
-        NUM(11) SK_CompanyID FK
-        NUM(11) SK_DateID FK
-        NUM(11) SK_FiftyTwoWeekHighDate FK
-        NUM(11) SK_FiftyTwoWeekLowDate FK
-        NUM ClosePrice
-        NUM(12) Volume
-    }
-    FactWatches {
-        NUM(11) SK_CustomerID FK
-        NUM(11) SK_SecurityID FK
-        NUM(11) SK_DateID_DatePlaced FK
-        NUM(11) SK_DateID_DateRemoved FK
-    }
-    Prospect {
-        CHAR(30) AgencyID PK
-        NUM(11) SK_RecordDateID FK
-        NUM(11) SK_UpdateDateID FK
-        BOOLEAN IsCustomer
-    }
-    DimDate {
-        NUM(11) SK_DateID PK
-        DATE DateValue
-    }
-    DimTime {
-        NUM(11) SK_TimeID PK
-        TIME TimeValue
-    }
-    Industry {
-        CHAR(2) IN_ID PK
-        CHAR(50) IN_NAME
-    }
-    StatusType {
-        CHAR(4) ST_ID PK
-        CHAR(10) ST_NAME
-    }
-    TaxRate {
-        CHAR(4) TX_ID PK
-        CHAR(50) TX_NAME
-        NUM TX_RATE
-    }
-    TradeType {
-        CHAR(3) TT_ID PK
-        CHAR(12) TT_NAME
-    }
-    DImessages {
-        DATETIME MessageDateAndTime
-        NUM(5) BatchID
-        CHAR(12) MessageType
-        CHAR(50) MessageText
-    }
-```
+*Header colors: blue for dimensions, orange for facts, green for current-state tables, gray for reference tables and the load log.*
 
 ## 7. Cash Streaming & ML
 After Batch 1, cash transactions arrive as a stream, and the cash data feeds the ML forecast.
@@ -457,7 +313,7 @@ I|6440|4728|031-80-9744|ACTV|Kempffer|Tandie|||3|1933-04-19|16132 Corsicana Road
 | `C_ADLINE2` | `CHAR(80)` |  | Address Line 2 |
 | `C_ZIPCODE` | `CHAR(12)` | Not NULL | Zip or postal code |
 | `C_CITY` | `CHAR(25)` | Not NULL | City |
-| `C_STATE_PRO V` | `CHAR(20)` | Not NULL | State or province |
+| `C_STATE_PROV` | `CHAR(20)` | Not NULL | State or province |
 | `C_CTRY` | `CHAR(24)` |  | Country |
 | `C_CTRY_1` | `CHAR(3)` |  | Country code for Customer's phone 1. |
 | `C_AREA_1` | `CHAR(3)` |  | Area code for customer’s phone 1. |
@@ -696,7 +552,7 @@ Pipe-delimited. Daily batches are ordered by `CDC_DSN`.
 | `DM_DATE` | `DATE` | Not Null | Date of last completed trading day. |
 | `DM_S_SYMB` | `CHAR(15)` | Not Null | Security symbol of the security |
 | `DM_CLOSE` | `S_PRICE_T` | Not Null | Closing price of the security on this day. |
-| `DM_HIGH` | `S_PRICE_T` | Not Null | Highest price for the secuirity on this day. |
+| `DM_HIGH` | `S_PRICE_T` | Not Null | Highest price for the security on this day. |
 | `DM_LOW` | `S_PRICE_T` | Not Null | Lowest price for the security on this day. |
 | `DM_VOL` | `S_COUNT_T` | Not Null | Volume of the security on this day. |
 
@@ -1098,9 +954,9 @@ Fact. One row per security per day.
 | `PERatio` | `NUM(10,2)` |  | Price to earnings per share ratio |
 | `Yield` | `NUM(5,2)` | Not Null | Dividend to price ratio, as a percentage |
 | `FiftyTwoWeekHigh` | `NUM(8,2)` | Not Null | Security highest price in last 52 weeks from this day |
-| `SK_FiftyTwoWeek HighDate` | `SK_T` | Not Null | Earliest date on which the 52 week high price was set |
+| `SK_FiftyTwoWeekHighDate` | `SK_T` | Not Null | Earliest date on which the 52 week high price was set |
 | `FiftyTwoWeekLow` | `NUM(8,2)` | Not Null | Security lowest price in last 52 weeks from this day |
-| `SK_FiftyTwoWeekL owDate` | `SK_T` | Not Null | Earliest date on which the 52 week low price was set |
+| `SK_FiftyTwoWeekLowDate` | `SK_T` | Not Null | Earliest date on which the 52 week low price was set |
 | `ClosePrice` | `NUM(8,2)` | Not Null | Security closing price on this day |
 | `DayHigh` | `NUM(8,2)` | Not Null | Highest price for the security on this day |
 | `DayLow` | `NUM(8,2)` | Not Null | Lowest price for the security on this day |
@@ -1158,7 +1014,7 @@ Fact. One row per holding change.
 
 | Field | Type | Restrictions | Description |
 | --- | --- | --- | --- |
-| `TradeID` | `IDENT_T` | Not NULL | Key for Orignial Trade Indentifier |
+| `TradeID` | `IDENT_T` | Not NULL | Key for Original Trade Identifier |
 | `CurrentTradeID` | `IDENT_T` | Not Null | Key for the current trade |
 | `SK_CustomerID` | `SK_T` | Not NULL | Surrogate key for Customer Identifier |
 | `SK_AccountID` | `SK_T` | Not NULL | Surrogate key for Account Identifier |

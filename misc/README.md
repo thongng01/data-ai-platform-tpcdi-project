@@ -5,11 +5,11 @@ Keep reusable tools in Git. Put temporary work in `misc/tmp/`. Keep project docu
 | Path | Purpose | Git treatment |
 | --- | --- | --- |
 | `tools/` | Contains reusable checks, inspection scripts, and SQL queries in `tools/sql/`. | Git tracks these files. |
-| `tools/diagrams/` | Contains diagram scripts and the [draw.io instructions](tools/diagrams/README.md). Install the draw.io application outside the repository. | Git tracks the scripts and instructions. |
+| `tools/diagrams/` | Contains diagram scripts and the [tool instructions](tools/diagrams/README.md). Install the draw.io application outside the repository. `npm ci` installs the Mermaid renderer in `node_modules/`. | Git tracks the scripts, instructions, and npm lock file. Git ignores `node_modules/`. |
 | `tmp/` | Holds one-off scripts, extracted text, logs, downloads, and intermediate output. | Git ignores these files. |
-| `archive/` | Preserves earlier document copies and handoffs for recovery. These are historical records, not current instructions or runnable migration scripts. | Git ignores these local copies. |
+| `archive/` | Holds material a later phase may need, such as reference notes and earlier document copies and handoffs. Remove material that no later work needs instead of archiving it. These are historical records, not current instructions or runnable migration scripts. | Git ignores these local copies. |
 | `tpcdi/` | Holds the pinned upstream TPC-DI checkout and SF3 reference dataset. Existing fixture tools use this path. | Git ignores the checkout and data. |
-| `generator-feasibility/` | Holds the pinned Databricks generator checkout and the original compatibility probe and its evidence. | Git ignores this local study material. |
+| `generator-feasibility/reference/` | Holds the pinned Databricks generator checkout. [Project Design](../docs/Project-Design.md#33-generator) lists the corrections it needs before reuse. | Git ignores the checkout. |
 | `sample_run/` | Holds the existing generator output that the current pipeline reads. | Git ignores the generated data. |
 
 Use a task subdirectory under `tmp/` when a task produces several files. Move a useful helper into `tools/` before another task starts to depend on it. Record findings needed for future work in the relevant document before discarding temporary output.

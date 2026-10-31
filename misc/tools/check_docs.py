@@ -1,5 +1,6 @@
-"""Check links, anchors, whitespace, dashes and banned words in all docs."""
+"""Check links, anchors, whitespace, dashes and banned words in all tracked Markdown files."""
 import re
+import subprocess
 from pathlib import Path
 
 BANNED = re.compile(r"\b(honestly|genuinely|truly|frankly|quietly|silently|delve|leverage|ultimately)\b", re.I)
@@ -27,9 +28,12 @@ def anchors(path):
     return out
 
 
-files = sorted(str(p) for p in Path("docs").rglob("*.md") if "course" not in p.parts)
-files += ["README.md", "AGENTS.md", "misc/README.md"]
-files += sorted(str(p) for p in Path("misc/tools").rglob("*.md") if "drawio" not in p.parts)
+# Git decides the scope: tracked and new non-ignored files, so a new README is checked before it is staged.
+listed = subprocess.run(
+    ["git", "ls-files", "--cached", "--others", "--exclude-standard", "*.md"],
+    capture_output=True, text=True, check=True,
+).stdout.split()
+files = sorted({f for f in listed if Path(f).exists()})
 bad = 0
 for f in files:
     p = Path(f)

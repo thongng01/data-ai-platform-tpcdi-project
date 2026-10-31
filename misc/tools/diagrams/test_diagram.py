@@ -12,6 +12,7 @@ import xml.etree.ElementTree as ET
 import zlib
 
 import diagram
+import erd
 from PIL import Image
 
 
@@ -23,7 +24,7 @@ def specification():
 
 
 def dense_specification():
-    page = {"id": "dense", "title": "Nested deployment fixture", "profile": "master", "canvas": [2240, 1780],
+    page = {"id": "dense", "title": "Nested deployment fixture", "profile": "large", "canvas": [2240, 1780],
             "nodes": [{"id": "host", "kind": "group", "label": "Test host", "box": [64, 112, 2112, 1600]}], "edges": []}
     previous = None
     for group in range(8):
@@ -52,6 +53,8 @@ class DiagramTest(unittest.TestCase):
             pairs = [(diagram.THEME["text"], colors["fill"]),
                      (colors["heading_text"], colors["heading"]),
                      (group_text, colors["fill"]), (group_text, "#FFFFFF")]
+            if role in {r for k, r in erd.KINDS.items() if k not in erd.QUIET_KINDS}:
+                pairs.append(("#FFFFFF", colors["stroke"]))  # Solid ERD header with white table name.
             for foreground, background in pairs:
                 with self.subTest(role=role, foreground=foreground, background=background):
                     low, high = sorted((luminance(foreground), luminance(background)))
@@ -108,23 +111,6 @@ class DiagramTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "changed after inspection"):
             diagram.apply(self.data + b"\n", patch)
 
-    def test_svg_warning_is_removed_only_when_text_has_embedded_fallbacks(self):
-        for embedded in (True, False):
-            with self.subTest(embedded=embedded):
-                fallback = '<image xlink:href="data:image/png;base64,iVBORw0KGgo="/>' if embedded else ''
-                data = ('<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">'
-                        '<switch><foreignObject><div xmlns="http://www.w3.org/1999/xhtml">A label</div></foreignObject>'
-                        + fallback + '</switch><switch><g requiredFeatures="unsupported"/><a '
-                        'xlink:href="https://www.drawio.com/doc/faq/svg-export-text-problems">'
-                        '<text>Text is not SVG - cannot display</text></a></switch></svg>')
-                path = self.directory / 'export.svg'
-                path.write_text(data, encoding='utf-8')
-                diagram.normalize_svg(path)
-                result = diagram.xml_parse(path.read_bytes())
-                self.assertEqual('Text is not SVG - cannot display' in ''.join(result.itertext()), not embedded)
-                self.assertIn('A label', ''.join(result.itertext()))
-                self.assertEqual(len(result.findall('.//{http://www.w3.org/2000/svg}foreignObject')), 1)
-
     def test_invalid_changes_are_rejected(self):
         cases = [
             {"op": "remove", "page": "flow", "id": "input"},
@@ -143,18 +129,23 @@ class DiagramTest(unittest.TestCase):
                              {"op": "remove", "page": "flow", "id": "input"}])
         self.assertNotIn("input", diagram.cells(diagram.load(result).find("diagram")))
 
-    def test_field_connections_and_container_relative_positions(self):
-        spec = {"version": 1, "pages": [{"id": "model", "title": "Example model", "nodes": [
+    def test_container_relative_positions_and_erd_only_shapes(self):
+        spec = {"version": 1, "pages": [{"id": "model", "title": "Example scope", "nodes": [
             {"id": "group", "kind": "group", "label": "Records", "box": [32, 112, 896, 520]},
-            {"id": "customer", "kind": "table", "label": "Customer", "parent": "group", "box": [24, 56, 300, 0],
-             "fields": [{"id": "key", "label": "PK  CustomerID : INT"}]},
-            {"id": "account", "kind": "table", "label": "Account", "parent": "group", "box": [544, 56, 300, 0],
-             "fields": [{"id": "customer", "label": "FK  CustomerID : INT"}]}
-        ], "edges": [{"id": "owns", "kind": "relationship", "source": "customer.key", "target": "account.customer"}]}]}
+            {"id": "job", "label": "Validate records", "parent": "group", "box": [24, 56, 240, 112]},
+            {"id": "store", "kind": "data", "label": "Rejected rows", "parent": "group", "box": [544, 56, 240, 112]}
+        ], "edges": [{"id": "reject", "source": "job", "target": "store", "label": "Write"}]}]}
         self.assertEqual(diagram.check(diagram.create(spec)), 1)
-        spec["pages"][0]["nodes"][1]["fields"][0]["id"] = "header"
-        with self.assertRaisesRegex(ValueError, "repeated cell ID"):
+        spec["pages"][0]["nodes"][2]["box"] = [700, 56, 240, 112]
+        with self.assertRaisesRegex(ValueError, "exceeds the canvas"):
             diagram.create(spec)
+        table = copy.deepcopy(specification())
+        table["pages"][0]["nodes"][0]["kind"] = "table"
+        relationship = copy.deepcopy(specification())
+        relationship["pages"][0]["edges"][0]["kind"] = "relationship"
+        for spec in (table, relationship):
+            with self.subTest(spec=spec), self.assertRaisesRegex(ValueError, "ERD"):
+                diagram.create(spec)
 
     def test_cli_refuses_to_replace_existing_drawio(self):
         spec = self.directory / "input.json"
@@ -179,7 +170,7 @@ class DiagramTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unknown node properties"):
             diagram.create(spec)
 
-    def test_dense_master_and_standard_page_rules(self):
+    def test_dense_large_page_and_small_page_rules(self):
         data = diagram.encode(diagram.create(dense_specification()))
         snapshot = diagram.inspect(data)
         self.assertEqual(len(snapshot["pages"][0]["cells"]), 171)
@@ -188,7 +179,37 @@ class DiagramTest(unittest.TestCase):
         self.assertEqual(item.get("semanticId"), "service-7-9")
         self.assertEqual(diagram.label(item, cell), "Updated service")
         with self.assertRaisesRegex(ValueError, "960 x 720"):
-            self.patch([{"op": "set-page", "page": "dense", "profile": "standard"}], data)
+            self.patch([{"op": "set-page", "page": "dense", "profile": "small"}], data)
+
+    def test_size_profiles(self):
+        medium = specification()
+        medium["pages"][0]["profile"] = "medium"
+        model = diagram.create(medium).find("diagram/mxGraphModel")
+        self.assertEqual((model.get("pageWidth"), model.get("pageHeight")), ("1440", "1080"))
+        cases = [({"profile": "standard"}, "unsupported page profile"),
+                 ({"profile": "medium"}, "1440 x 1080"),
+                 ({"profile": "large", "canvas": [960, 720]}, "larger than a small page")]
+        for change, message in cases:
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, message):
+                self.patch([{"op": "set-page", "page": "flow", **change}])
+        large = specification()
+        large["pages"][0]["profile"] = "large"
+        with self.assertRaisesRegex(ValueError, "explicit canvas"):
+            diagram.create(large)
+
+    def test_png_placement_centers_render_on_size_canvas(self):
+        path, preview = self.directory / "render.png", self.directory / "preview.png"
+        Image.new("RGB", (100, 50), "black").save(path)
+        diagram.place_png(path, (2880, 2160), preview)
+        with Image.open(path) as result:
+            self.assertEqual(result.size, (2880, 2160))
+            self.assertEqual(result.getpixel((1440, 1080)), (0, 0, 0))
+            self.assertEqual(result.getpixel((0, 0)), (255, 255, 255))
+        with Image.open(preview) as result:
+            self.assertEqual(result.size, (960, 720))
+        Image.new("RGB", (2000, 1500), "black").save(path)
+        with self.assertRaisesRegex(ValueError, "does not fit"):
+            diagram.place_png(path, (1920, 1440), preview)
 
     def test_export_normalization_does_not_resize_or_remove_content(self):
         path, preview = self.directory / "raw.png", self.directory / "preview.png"

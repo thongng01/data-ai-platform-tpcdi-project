@@ -13,8 +13,7 @@ Build the data, ML, and agent platform with the owner, and explain the engineeri
 
 ## Documents
 - **Writing**: Follow the documentation guide's style section.
-- **ERDs**: Native Mermaid inside the document, without styling directives.
-- **Other diagrams**: Editable draw.io with the shared tooling. Read the [diagram guide](docs/Diagram-Guide.md) and the [tool instructions](misc/tools/diagrams/README.md) first.
+- **Diagrams**: ERDs are Mermaid `.mmd` files with a kind tag per table and no styling directives; other diagrams are editable draw.io files. Both render with the shared tooling. Read the [diagram guide](docs/Diagram-Guide.md) and the [tool instructions](misc/tools/diagrams/README.md) first.
 
 ## Visual Artifacts
 

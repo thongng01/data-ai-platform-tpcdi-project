@@ -6,10 +6,6 @@
 /misc/tpcdi/
 /misc/generator-feasibility/
 /misc/sample_run/
-/misc/data/
-/misc/clean_run/
-/misc/tpcdi_out/
-/misc/abandoned-tpcds/
 
 # Exclude draw.io application binaries if copied into the workspace.
 /misc/tools/diagrams/drawio/
@@ -53,3 +49,4 @@ Thumbs.db
 *.swp
 .idea/
 .vscode/
+/misc/tools/diagrams/node_modules/

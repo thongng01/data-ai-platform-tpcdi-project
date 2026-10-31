@@ -1,0 +1,145 @@
+erDiagram
+direction LR
+
+DimBroker ||--o{ DimAccount : manages
+DimSecurity ||--o{ FactWatches : "is watched"
+DimSecurity ||--o{ DimTrade : "is traded"
+DimTrade ||--o{ FactHoldings : "opens, changes"
+Prospect |o--o{ DimCustomer : "matched, enriches"
+DimCompany ||--o{ Financial : reports
+DimSecurity ||--o{ FactMarketHistory : "is priced"
+DimCompany ||--o{ DimSecurity : issues
+DimAccount ||--o{ FactCashBalances : "has cash"
+DimCustomer ||--o{ DimAccount : owns
+DimAccount ||--o{ DimTrade : places
+DimCustomer ||--o{ FactWatches : watches
+
+DimCustomer:::entity {
+    NUM(11) SK_CustomerID PK
+    NUM(11) CustomerID "business key"
+    CHAR(10) Status
+    NUM(1) Tier
+    CHAR(30) AgencyID "matched prospect"
+    DATE EffectiveDate
+    DATE EndDate
+}
+DimAccount:::entity {
+    NUM(11) SK_AccountID PK
+    NUM(11) AccountID "business key"
+    NUM(11) SK_CustomerID FK
+    NUM(11) SK_BrokerID FK
+    CHAR(10) Status
+    DATE EffectiveDate
+    DATE EndDate
+}
+DimBroker:::entity {
+    NUM(11) SK_BrokerID PK
+    NUM(11) BrokerID "business key"
+    DATE EffectiveDate
+    DATE EndDate
+}
+DimCompany:::entity {
+    NUM(11) SK_CompanyID PK
+    NUM(11) CompanyID "business key, CIK"
+    CHAR(60) Name
+    CHAR(50) Industry
+    DATE EffectiveDate
+    DATE EndDate
+}
+DimSecurity:::entity {
+    NUM(11) SK_SecurityID PK
+    CHAR(15) Symbol "business key"
+    NUM(11) SK_CompanyID FK
+    SNUM Dividend
+    DATE EffectiveDate
+    DATE EndDate
+}
+Financial:::state {
+    NUM(11) SK_CompanyID FK
+    NUM(4) FI_YEAR
+    NUM(1) FI_QTR
+    SNUM FI_BASIC_EPS
+}
+DimTrade:::entity {
+    NUM(11) TradeID PK
+    NUM(11) SK_AccountID FK
+    NUM(11) SK_CustomerID FK
+    NUM(11) SK_BrokerID FK
+    NUM(11) SK_SecurityID FK
+    NUM(11) SK_CompanyID FK
+    NUM(11) SK_CreateDateID FK
+    NUM(11) SK_CreateTimeID FK
+    NUM(11) SK_CloseDateID FK
+    NUM(11) SK_CloseTimeID FK
+    CHAR(10) Status
+    CHAR(12) Type
+}
+FactHoldings:::event {
+    NUM(11) TradeID FK
+    NUM(11) CurrentTradeID FK
+    NUM(11) SK_AccountID FK
+    NUM(11) SK_CustomerID FK
+    NUM(11) SK_SecurityID FK
+    NUM(11) SK_CompanyID FK
+    NUM(11) SK_DateID FK
+    NUM(11) SK_TimeID FK
+    SNUM(6) CurrentHolding
+}
+FactCashBalances:::event {
+    NUM(11) SK_AccountID FK
+    NUM(11) SK_CustomerID FK
+    NUM(11) SK_DateID FK
+    SNUM Cash
+}
+FactMarketHistory:::event {
+    NUM(11) SK_SecurityID FK
+    NUM(11) SK_CompanyID FK
+    NUM(11) SK_DateID FK
+    NUM(11) SK_FiftyTwoWeekHighDate FK
+    NUM(11) SK_FiftyTwoWeekLowDate FK
+    NUM ClosePrice
+    NUM(12) Volume
+}
+FactWatches:::event {
+    NUM(11) SK_CustomerID FK
+    NUM(11) SK_SecurityID FK
+    NUM(11) SK_DateID_DatePlaced FK
+    NUM(11) SK_DateID_DateRemoved FK
+}
+Prospect:::state {
+    CHAR(30) AgencyID PK
+    NUM(11) SK_RecordDateID FK
+    NUM(11) SK_UpdateDateID FK
+    BOOLEAN IsCustomer
+}
+DimDate:::reference {
+    NUM(11) SK_DateID PK
+    DATE DateValue
+}
+DimTime:::reference {
+    NUM(11) SK_TimeID PK
+    TIME TimeValue
+}
+Industry:::reference {
+    CHAR(2) IN_ID PK
+    CHAR(50) IN_NAME
+}
+StatusType:::reference {
+    CHAR(4) ST_ID PK
+    CHAR(10) ST_NAME
+}
+TaxRate:::reference {
+    CHAR(4) TX_ID PK
+    CHAR(50) TX_NAME
+    NUM TX_RATE
+}
+TradeType:::reference {
+    CHAR(3) TT_ID PK
+    CHAR(12) TT_NAME
+}
+DImessages:::reference {
+    DATETIME MessageDateAndTime
+    NUM(5) BatchID
+    CHAR(12) MessageType
+    CHAR(50) MessageText
+}

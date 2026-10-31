@@ -1,6 +1,6 @@
 # Polars generator POC evidence
 
-The owner authorized an autonomous fresh Polars POC on 2026-10-29, with code quality and declarative configuration as priorities. The [POC guide](../../generator/poc_polars/README.md) explains its rules, implementation, and commands. The production generator engine remains open in [Project Design](../Project-Design.md#generator).
+The owner authorized an autonomous fresh Polars POC on 2026-10-29, with code quality and declarative configuration as priorities. The [POC guide](../../generator/poc_polars/README.md) explains its rules, implementation, and commands. The production generator engine remains open in [Project Design](../Project-Design.md#33-generator).
 
 ## Scope and acceptance
 

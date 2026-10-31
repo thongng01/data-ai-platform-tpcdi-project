@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "canvas": {"width": 960, "height": 720, "scale": 2, "margin": 32},
+  "canvas": {"scale": 2, "margin": 32, "sizes": {"small": [960, 720], "medium": [1440, 1080]}},
   "font": "Ubuntu Sans",
   "mono_font": "Ubuntu Sans Mono",
   "text": "#183246",

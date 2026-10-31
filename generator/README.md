@@ -1,6 +1,6 @@
 # Synthetic TPC-DI generator
 
-`datagen` is the existing Python generator. It writes selected TPC-DI-shaped files and a run manifest. Its file shapes do not establish coherent brokerage history or complete benchmark behavior. The accepted redesign starts from the specification and a reference generator; see [Project Design](../docs/Project-Design.md#generator). [Status](../docs/Status.md#what-exists) records progress and defects.
+`datagen` is the existing Python generator. It writes selected TPC-DI-shaped files and a run manifest. Its file shapes do not establish coherent brokerage history or complete benchmark behavior. The accepted redesign starts from the specification and a reference generator; see [Project Design](../docs/Project-Design.md#33-generator). [Status](../docs/Status.md#what-exists) records progress and defects.
 
 The separate [Polars POC](poc_polars/README.md) generates connected source files with bounded calculations, YAML definitions, and independent validation. Its [evidence record](../docs/records/Polars-POC.md) gives the measured scale and limits. The commands below still operate the earlier `datagen` implementation.
 
@@ -93,4 +93,4 @@ Without an explicit path, the helper uses `../misc/tpcdi`. Review fixture change
 | `cli.py` | Converts command arguments into configuration. |
 | `inspect.py` | Measures supported file characteristics. |
 
-The earlier implementation drew on the local `misc/tpcdi` sample for formats, benchbox for generation patterns, and `stewartbryson/dbt-tpcdi` for downstream transformation ideas. These are design influences, not evidence that this generator reproduces their behavior. The [generator feasibility study](../docs/research/Generator-Feasibility.md) evaluates the proposed replacement approach.
+The earlier implementation drew on the local `misc/tpcdi` sample for formats, benchbox for generation patterns, and `stewartbryson/dbt-tpcdi` for downstream transformation ideas. These are design influences, not evidence that this generator reproduces their behavior. [Project Design](../docs/Project-Design.md#33-generator) lists the corrections that the Databricks reference generator needs before reuse.

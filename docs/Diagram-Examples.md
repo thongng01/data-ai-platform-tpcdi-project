@@ -1,14 +1,12 @@
-# Diagram examples
+# Diagram Examples
 
-These examples apply the [diagram guide](Diagram-Guide.md) to source flows, deployment scopes, and data relationships. The PNG views use the standard 1920 x 1440 export. The larger deployment master uses SVG for separate viewing and zooming.
+These examples apply the [diagram guide](Diagram-Guide.md) to source flows, deployment scopes, and data relationships. The data-integration view is a `small` draw.io page. The deployment is a `large` 1440 x 960 draw.io page, exported as a 2880 x 1920 PNG. The record relationships are a `medium` Mermaid ERD; the [gold layer ERD](Data-Specification.md#gold-layer-entity-relationships) is a `large` one. Each PNG has its source beside it, with the same file name.
 
-## Data integration
+## Data Integration
 
 This view separates TPC-DI source origins from extracted files, integration work, and warehouse output. The lower band shows the historical load followed by two incremental updates. It summarizes the conceptual environment in Clause 1 of the [TPC-DI specification](TPC-DI/TPC-DI_v1.1.0.pdf); individual source files and warehouse tables are outside this view.
 
 ![TPC-DI sources feed the staging area, integration system, and warehouse.](diagrams/style-examples/data-integration.png)
-
-[Edit the data-integration view.](diagrams/style-examples/data-integration.drawio)
 
 ## Deployment
 
@@ -16,14 +14,12 @@ This illustrative deployment places ingestion and processing on two virtual mach
 
 The diagram illustrates notation and layout. It does not define the coursework architecture, a production deployment recipe, or all required network connections. The batch loader sends rows to the transform worker and keeps raw files. The load from curated files to PostgreSQL summarizes a publishing operation whose implementation is outside this view.
 
-[Open the 1440 x 960 deployment master as SVG.](diagrams/style-examples/analytics-deployment.svg) View it at its native width or zoom in to read the complete detail.
+![Ingestion and compute virtual machines inside an Azure subscription, with managed data services and shared services.](diagrams/style-examples/analytics-deployment.png)
 
-[Edit the deployment master.](diagrams/style-examples/analytics-deployment.drawio)
+## Data Relationships
 
-## Data relationships
+This illustrative ERD uses crow's-foot notation. A source system can have zero or more batches. A batch can have zero or more rejected records. Each batch belongs to one source system, and each rejected record belongs to one batch. These example tables do not define the TPC-DI data model.
 
-This illustrative model uses native tables, fields, and crow's-foot connectors. A source system can have zero or more batches. A batch can have zero or more rejected records. Each batch belongs to one source system, and each rejected record belongs to one batch. These example tables do not define the TPC-DI data model.
+![Source-system, load-batch, and rejected-record tables with their keys and relationships.](diagrams/style-examples/record-relationships.png)
 
-![Source-system, load-batch, and rejected-record tables with field-level relationships.](diagrams/style-examples/record-relationships.png)
-
-[Edit the record relationships.](diagrams/style-examples/record-relationships.drawio)
+*Header colors: blue for entities, orange for events.*

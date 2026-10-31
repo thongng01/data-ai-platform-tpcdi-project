@@ -16,11 +16,15 @@ from urllib.parse import unquote
 import xml.etree.ElementTree as ET
 import zlib
 
+import erd
+
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
 TEMP = ROOT / "misc/tmp/diagrams"
 THEME = json.loads((HERE / "theme.json").read_text(encoding="utf-8"))
 CANVAS = THEME["canvas"]
+SIZES = CANVAS["sizes"]
+PROFILES = ("small", "medium", "large")
 
 
 def digest(data):
@@ -114,8 +118,10 @@ def create(spec):
     book = ET.Element("mxfile", host="app.diagrams.net", type="device")
     for page_spec in spec["pages"]:
         allowed(page_spec, "id title purpose profile canvas layers nodes edges", "page")
-        profile = page_spec.get("profile", "standard")
-        width, height = page_spec.get("canvas", [CANVAS["width"], CANVAS["height"]])
+        profile = page_spec.get("profile", "small")
+        if profile == "large" and "canvas" not in page_spec:
+            raise ValueError("A large page needs an explicit canvas.")
+        width, height = page_spec.get("canvas", SIZES.get(profile, SIZES["small"]))
         page = ET.SubElement(book, "diagram", id=page_spec["id"], name=page_spec["title"])
         model = ET.SubElement(page, "mxGraphModel", page="1", pageScale="1", grid="1", gridSize="8",
                               pageWidth=str(width), pageHeight=str(height), projectProfile=profile,
@@ -129,11 +135,11 @@ def create(spec):
         add_cell(root, "title", page_spec["title"], [32, 24, width - 64, 48],
                  style_update(style(kind="text"), {"fontSize": 28, "fontStyle": 1}))
         for index, node in enumerate(page_spec.get("nodes", [])):
-            allowed(node, "id label kind role box parent fields style link semantic_id", "node")
+            allowed(node, "id label kind role box parent style link semantic_id", "node")
             ident, kind = node["id"], node.get("kind", "node")
-            if kind not in ("node", "data", "group", "text", "table"):
-                raise ValueError(f"Unknown node kind: {kind}.")
-            default_role = "data" if kind in ("data", "table") else "scope" if kind == "group" else "component"
+            if kind not in ("node", "data", "group", "text"):
+                raise ValueError(f"Unknown node kind: {kind}. Draw tables and their fields in an ERD.")
+            default_role = "data" if kind == "data" else "scope" if kind == "group" else "component"
             role = node.get("role", default_role)
             if role not in THEME["roles"]:
                 raise ValueError(f"Unknown color role: {role}.")
@@ -143,26 +149,10 @@ def create(spec):
                 raise ValueError("A box needs x, y, width, and height.")
             if node.get("parent") and "box" not in node:
                 raise ValueError("A child node needs a box relative to its parent.")
-            fields = node.get("fields", [])
-            if fields and kind != "table":
-                raise ValueError("Only table nodes accept fields.")
-            if kind == "table":
-                box = [*box[:3], 44 + 32 * len(fields)]
-                cell = add_cell(root, ident, "", box, style_update(style(role), node.get("style", {})), node.get("parent", "1"))
-                add_cell(root, ident + ".header", node["label"], [0, 0, box[2], 44],
-                         style_update(style(role), {"fontSize": 20, "fontStyle": 1,
-                                      "fillColor": THEME["roles"][role]["heading"],
-                                      "fontColor": THEME["roles"][role].get("heading_text", "#FFFFFF")}), ident)
-                for row, field in enumerate(fields):
-                    allowed(field, "id label", "field")
-                    add_cell(root, ident + "." + field["id"], field["label"], [0, 44 + row * 32, box[2], 32],
-                             style_update(style(role), {"fontFamily": THEME["mono_font"], "fontSize": 16,
-                                          "align": "left", "spacing": 8, "fillColor": "#FFFFFF", "strokeWidth": 0.5}), ident)
-            else:
-                styling = style(role, kind)
-                if kind == "data":
-                    styling = style_update(styling, {"shape": "document", "size": 0.12})
-                cell = add_cell(root, ident, node["label"], box, style_update(styling, node.get("style", {})), node.get("parent", "1"))
+            styling = style(role, kind)
+            if kind == "data":
+                styling = style_update(styling, {"shape": "document", "size": 0.12})
+            cell = add_cell(root, ident, node["label"], box, style_update(styling, node.get("style", {})), node.get("parent", "1"))
             if "link" in node or "semantic_id" in node:
                 root.remove(cell)
                 wrapper = ET.SubElement(root, "object", id=ident, label=cell.get("value", ""))
@@ -173,18 +163,14 @@ def create(spec):
                 del cell.attrib["id"]
                 wrapper.append(cell)
         for edge in page_spec.get("edges", []):
-            allowed(edge, "id source target label kind points source_end target_end style", "edge")
+            allowed(edge, "id source target label kind points style", "edge")
             kind = edge.get("kind", "flow")
-            if kind not in ("flow", "control", "relationship"):
-                raise ValueError(f"Unknown edge kind: {kind}.")
+            if kind not in ("flow", "control"):
+                raise ValueError(f"Unknown edge kind: {kind}. Draw data relationships in an ERD.")
             styling = style_update("", dict(edgeStyle="orthogonalEdgeStyle", rounded=0, html=0,
                                    fontFamily=THEME["font"], fontSize=16, fontColor=THEME["text"],
                                    strokeColor=THEME["line"], strokeWidth=1.5, labelBackgroundColor="#FFFFFF",
-                                   endArrow="none" if kind == "relationship" else "open", endFill=0,
-                                   dashed=int(kind == "control")))
-            if kind == "relationship":
-                styling = style_update(styling, {"startArrow": edge.get("source_end", "ERone"),
-                                                 "endArrow": edge.get("target_end", "ERmany")})
+                                   endArrow="open", endFill=0, dashed=int(kind == "control")))
             cell = ET.SubElement(root, "mxCell", id=edge["id"], value=edge.get("label", ""), edge="1",
                                  parent="1", source=edge["source"], target=edge["target"],
                                  style=style_update(styling, edge.get("style", {})))
@@ -206,13 +192,15 @@ def check(book):
         page_ids.add(pid)
         model = page.find("mxGraphModel")
         width, height = float(model.get("pageWidth", 0)), float(model.get("pageHeight", 0))
-        profile = model.get("projectProfile", "standard")
-        if profile not in ("standard", "master"):
-            raise ValueError(f"{pid}: unsupported page profile {profile}.")
+        profile = model.get("projectProfile", "small")
+        if profile not in PROFILES:
+            raise ValueError(f"{pid}: unsupported page profile {profile}. Use small, medium, or large.")
         if not all(map(math.isfinite, (width, height))) or min(width, height) <= 0:
             raise ValueError(f"{pid}: invalid canvas dimensions.")
-        if profile == "standard" and (width, height) != (CANVAS["width"], CANVAS["height"]):
-            raise ValueError(f"{pid}: expected a 960 x 720 drawing canvas.")
+        if profile in SIZES and (width, height) != tuple(SIZES[profile]):
+            raise ValueError(f"{pid}: expected a {SIZES[profile][0]} x {SIZES[profile][1]} canvas for a {profile} page.")
+        if profile == "large" and width <= SIZES["small"][0] and height <= SIZES["small"][1]:
+            raise ValueError(f"{pid}: a large page must be larger than a small page.")
         if float(model.get("pageScale", 1)) != 1 or model.get("page") != "1":
             raise ValueError(f"{pid}: page mode must be enabled at scale 1.")
         entries = cells(page)
@@ -383,83 +371,90 @@ def write_atomic(path, data, expected=None, new=False):
         temporary.unlink(missing_ok=True)
 
 
-def export(source, output, page_index):
+def png_size(canvas):
+    return tuple(math.ceil(value * CANVAS["scale"]) for value in canvas)
+
+
+def export(source, output, page_index=1):
     source, output = Path(source).resolve(), Path(output).resolve()
-    output_format = output.suffix.lower().removeprefix(".")
-    if output_format not in ("png", "svg") or source == output:
-        raise ValueError("The export destination must be a separate PNG or SVG file.")
+    if output.suffix.lower() != ".png" or source == output:
+        raise ValueError("The export destination must be a separate PNG file.")
     data = source.read_bytes()
-    book = load(data)
-    count = check(book)
-    if not 1 <= page_index <= count:
-        raise ValueError(f"Page index must be between 1 and {count}.")
-    model = book.findall("diagram")[page_index - 1].find("mxGraphModel")
-    if model.get("projectProfile") == "master" and output_format != "svg":
-        raise ValueError("Export a large master as SVG. Use a standard view for the Markdown PNG.")
-    executable = shutil.which("drawio")
-    if not executable:
-        raise ValueError("Install draw.io Desktop and put drawio on PATH.")
     TEMP.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix="export-", dir=TEMP))
-    snapshot, preview = work / "source.drawio", work / ("preview." + output_format)
-    snapshot.write_bytes(data)
-    command = [executable, "--export", "--format", output_format, "--size", "page", "--theme", "light",
-               "--scale", str(CANVAS["scale"] if output_format == "png" else 1),
-               "--page-index", str(page_index), "--output", str(preview), str(snapshot)]
-    if output_format == "svg":
-        command.extend(["--embed-svg-images", "--embed-svg-fonts", "true"])
-    result = subprocess.run(command, capture_output=True, text=True, timeout=60)
-    (work / "export.log").write_text(result.stdout + result.stderr, encoding="utf-8")
-    if result.returncode or not preview.exists():
-        raise ValueError(f"draw.io export failed. Read {work / 'export.log'}.")
-    expected = None
-    if output_format == "png":
-        expected = (CANVAS["width"] * CANVAS["scale"], CANVAS["height"] * CANVAS["scale"])
-        normalize_png(preview, expected, work / "reading-preview.png")
+    if source.suffix == ".mmd":
+        erd.check(data.decode("utf-8"))
+        preview, profile, size, command = erd.render(data, work, THEME)
+        # A large ERD has no fixed canvas, so it gets the standard margin around its own size.
+        expected = png_size(SIZES.get(profile) or [value + 2 * CANVAS["margin"] for value in size])
+        place_png(preview, expected, work / "reading-preview.png")
     else:
-        normalize_svg(preview)
+        preview, profile, canvas, command = export_drawio(data, page_index, work)
+        expected = png_size(canvas)
+        normalize_png(preview, expected, work / "reading-preview.png")
     rendered = preview.read_bytes()
     if digest(source.read_bytes()) != digest(data):
         raise ValueError("The source changed during export. Run the export again.")
     write_atomic(output, rendered)
     (work / "render.json").write_text(json.dumps({"source": str(source), "source_sha256": digest(data),
-        "render_sha256": digest(rendered), "page": page_index, "size": expected,
+        "render_sha256": digest(rendered), "page": page_index, "size_class": profile, "size": expected,
         "theme_sha256": digest((HERE / "theme.json").read_bytes()), "command": command}, indent=2) + "\n", encoding="utf-8")
-    return work
+    return work, profile
 
 
-def normalize_svg(path):
-    svg = "{http://www.w3.org/2000/svg}"
-    xlink = "{http://www.w3.org/1999/xlink}"
-    root = xml_parse(path.read_bytes())
-    if root.tag != svg + "svg":
-        raise ValueError(f"Invalid SVG: {path}.")
-    parents = {child: parent for parent in root.iter() for child in parent}
-    for rich_text in root.iter(svg + "foreignObject"):
-        parent = parents[rich_text]
-        fallback = parent.find(svg + "image") if parent.tag == svg + "switch" else None
-        if fallback is None or not fallback.get(xlink + "href", fallback.get("href", "")).startswith("data:image/"):
-            return
-    # Draw.io adds this footer even when every rich-text label has an embedded fallback.
-    # Remove only that known warning; preserve it when a renderer could lose label content.
-    removed = False
-    for node in root.findall(svg + "switch"):
-        link = node.find(svg + "a")
-        if (link is not None and link.get(xlink + "href") == "https://www.drawio.com/doc/faq/svg-export-text-problems"
-                and "".join(link.itertext()) == "Text is not SVG - cannot display"):
-            root.remove(node)
-            removed = True
-    if removed:
-        ET.register_namespace("", svg[1:-1])
-        ET.register_namespace("xlink", xlink[1:-1])
-        path.write_bytes(encode(root))
+def export_drawio(data, page_index, work):
+    book = load(data)
+    count = check(book)
+    if not 1 <= page_index <= count:
+        raise ValueError(f"Page index must be between 1 and {count}.")
+    model = book.findall("diagram")[page_index - 1].find("mxGraphModel")
+    profile = model.get("projectProfile", "small")
+    canvas = (float(model.get("pageWidth")), float(model.get("pageHeight")))
+    executable = shutil.which("drawio")
+    if not executable:
+        raise ValueError("Install draw.io Desktop and put drawio on PATH.")
+    snapshot, preview = work / "source.drawio", work / "preview.png"
+    snapshot.write_bytes(data)
+    command = [executable, "--export", "--format", "png", "--size", "page", "--theme", "light",
+               "--scale", str(CANVAS["scale"]), "--page-index", str(page_index),
+               "--output", str(preview), str(snapshot)]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=60)
+    (work / "export.log").write_text(result.stdout + result.stderr, encoding="utf-8")
+    if result.returncode or not preview.exists():
+        raise ValueError(f"draw.io export failed. Read {work / 'export.log'}.")
+    return preview, profile, canvas, command
 
 
-def normalize_png(path, expected, reading_preview):
+def pillow():
     try:
         from PIL import Image, ImageChops
     except ImportError as error:
         raise ValueError("Install misc/tools/diagrams/requirements.txt before PNG export.") from error
+    return Image, ImageChops
+
+
+def save_with_reading_preview(image, path, reading_preview):
+    Image, _ = pillow()
+    image.save(path)
+    # Markdown shows every size at the small width, so the preview shows the text size a reader sees.
+    width = SIZES["small"][0]
+    image.resize((width, round(image.height * width / image.width)), Image.Resampling.LANCZOS).save(reading_preview)
+
+
+def place_png(path, expected, reading_preview):
+    Image, _ = pillow()
+    with Image.open(path) as original:
+        rendered = original.convert("RGB")
+    if rendered.width > expected[0] or rendered.height > expected[1]:
+        raise ValueError(f"The render {rendered.size} does not fit the {expected} canvas.")
+    # Same-size canvases give every diagram of a size the same text scale in Markdown.
+    page = Image.new("RGB", expected, "white")
+    page.paste(rendered, ((expected[0] - rendered.width) // 2, (expected[1] - rendered.height) // 2))
+    save_with_reading_preview(page, path, reading_preview)
+
+
+def normalize_png(path, expected, reading_preview):
+    Image, ImageChops = pillow()
     with Image.open(path) as original:
         rendered = original.convert("RGB")
     if rendered.size != expected:
@@ -472,8 +467,7 @@ def normalize_png(path, expected, reading_preview):
         if any(ImageChops.difference(band, Image.new("RGB", band.size, "white")).getbbox() for band in bands):
             raise ValueError("The extra export border contains content. Inspect the layout before cropping.")
         rendered = rendered.crop((0, 0, *expected))
-    rendered.save(path)
-    rendered.resize((CANVAS["width"], CANVAS["height"]), Image.Resampling.LANCZOS).save(reading_preview)
+    save_with_reading_preview(rendered, path, reading_preview)
 
 
 def main():
@@ -482,17 +476,23 @@ def main():
     creation = commands.add_parser("create", help="Create a new draw.io file from a JSON specification.")
     creation.add_argument("spec", type=Path)
     creation.add_argument("output", type=Path)
+    helps = {"inspect": "Report the cells and source hash of a draw.io file.",
+             "check": "Check a draw.io file or an ERD (.mmd) without rendering it.",
+             "apply": "Apply a JSON patch to a draw.io file.",
+             "export": "Export a draw.io page or an ERD (.mmd) as PNG."}
     for name in ("inspect", "check", "apply", "export"):
-        sub = commands.add_parser(name)
+        sub = commands.add_parser(name, help=helps[name])
         sub.add_argument("source", type=Path)
         if name == "apply":
             sub.add_argument("patch", type=Path)
         if name in ("inspect", "export"):
             sub.add_argument("--output", type=Path)
         if name == "export":
-            sub.add_argument("--page", type=int, default=1)
+            sub.add_argument("--page", type=int, default=1, help="draw.io page number")
     args = parser.parse_args()
     try:
+        if args.command in ("inspect", "apply") and args.source.suffix == ".mmd":
+            raise ValueError(f"{args.command} reads draw.io files. Edit the ERD text directly.")
         if args.command == "create":
             if args.output.suffix != ".drawio":
                 raise ValueError("The destination must have the .drawio extension.")
@@ -508,8 +508,12 @@ def main():
             else:
                 print(report, end="")
         elif args.command == "check":
-            count = check(load(args.source.read_bytes()))
-            print(f"Checked {count} page(s). Rendered inspection is still required.")
+            if args.source.suffix == ".mmd":
+                erd.check(args.source.read_text(encoding="utf-8"))
+                print("Checked the ERD source. Rendered inspection is still required.")
+            else:
+                count = check(load(args.source.read_bytes()))
+                print(f"Checked {count} page(s). Rendered inspection is still required.")
         elif args.command == "apply":
             before = args.source.read_bytes()
             after = apply(before, json.loads(args.patch.read_text(encoding="utf-8")))
@@ -520,8 +524,8 @@ def main():
             print(f"Updated {args.source}. Previous bytes: {backup}.")
         elif args.command == "export":
             output = args.output or args.source.with_suffix(".png")
-            work = export(args.source, output, args.page)
-            print(f"Exported {output}. Render evidence: {work}.")
+            work, profile = export(args.source, output, args.page)
+            print(f"Exported {output} as a {profile} diagram. Render evidence: {work}.")
     except (ValueError, KeyError, TypeError, OSError, ET.ParseError, zlib.error, subprocess.TimeoutExpired) as error:
         parser.exit(1, f"Error: {error}\n")
 

@@ -1,0 +1,23 @@
+erDiagram
+direction LR
+
+SourceSystem ||--o{ LoadBatch : has
+LoadBatch ||--o{ RejectedRecord : "may reject"
+
+SourceSystem:::entity {
+    INT SourceSystemID PK
+    VARCHAR(80) SystemName
+    VARCHAR(24) SourceKind
+}
+LoadBatch:::event {
+    BIGINT BatchID PK
+    INT SourceSystemID FK
+    TIMESTAMP ExtractedAt
+    VARCHAR(24) LoadStatus
+}
+RejectedRecord:::event {
+    BIGINT RejectionID PK
+    BIGINT BatchID FK
+    BIGINT SourceRowNumber
+    VARCHAR(40) ReasonCode
+}

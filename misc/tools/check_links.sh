@@ -36,7 +36,7 @@ while IFS= read -r file; do
   done < <(grep -oE '\]\(([^)]+)\)' "$file" 2>/dev/null | sed 's/^](//; s/)$//')
 done < <(
   find . -name '*.md' -type f -not -path './.git/*' -not -path './.venv/*' -not -path './misc/*'
-  find misc/tools -name '*.md' -type f -not -path 'misc/tools/diagrams/drawio/*'
+  find misc/tools -name '*.md' -type f -not -path 'misc/tools/diagrams/drawio/*' -not -path '*/node_modules/*'
   printf '%s\n' misc/README.md
 )
 
