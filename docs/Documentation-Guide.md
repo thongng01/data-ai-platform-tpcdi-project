@@ -8,10 +8,13 @@ The [root README](../README.md) introduces the system. The documents below hold 
 | --- | --- |
 | [Data specification](Data-Specification.md) | The project's data: business domains and origin systems, load cycle, source files, data zones and silver rules, gold warehouse and ERD, cash stream data, ML data, transformations, and field schemas. |
 | [Project design](Project-Design.md) | Coursework requirements, decisions and rationale, engineering constraints, and open questions. |
+| [Design method](Design-Method.md) | How to frame a design problem, map its attributes, research references, compare options, balance simplicity against need, and record the choice. Uses this project's decisions as examples. |
 | [Infrastructure](IaC.md) | How the services run, what they need, and which service mechanisms constrain the design. |
 | [Status](Status.md) | Current position, open decisions, next step, what exists, and known defects. |
 | [Polars generator evidence](records/Polars-POC.md) | What the generator POC established about correctness, repeatability, memory, and scale. Working record. |
 | [Diagram guide](Diagram-Guide.md) | How to create, revise, and export diagrams: draw.io files and Mermaid ERDs. |
+| [Diagram examples](Diagram-Examples.md) | Worked diagrams that apply the diagram guide: a source flow, a deployment, and an ERD. |
+| [Course material](course/coursework_proposal.md) | The coursework proposal, the layer descriptions in `course/domain/`, and the rubric in `course/rubric.xlsx`. Project Design Section 1 summarizes the requirements. |
 | [TPC-DI specification](TPC-DI/TPC-DI_v1.1.0.pdf) | The benchmark's full definitions. The data specification summarizes the parts this project uses. |
 
 ## Style
@@ -56,12 +59,20 @@ Keep discussion, progress, session updates, and test inventories out of the READ
 
 One document can cover related subjects until it becomes hard to navigate. Moving, renaming, splitting, and merging documents is normal; update incoming links in the same change and run `make check-docs`.
 
+## Decision Records
+
+Project Design records each decision in two places. The [design method](Design-Method.md) explains how to reach it.
+- **Decision row**: One row in Section 2.1 with the subject, state, choice, and main reason in one to three sentences. **Decided** means the owner chose it; an agent recommendation stays **Proposed**.
+- **Rationale section**: Required when real alternatives exist. A one-line rule, the criteria as bold-label bullets, and the choice in a table. A collapsed `<details>` block holds the sources and an `Alternative | Why Not Selected` table.
+- **Simplifications and deferrals**: State the cost of each simplification and what brings each deferred item back.
+- **Data specification**: States the resulting rule without the debate and links to the rationale.
+
 ## Evidence and Records
 
 - **Evidence**: Configuration, input and scale, observed result, and limits, next to the claim it supports. Screenshots go beside their explanation. Rubric evidence, such as Spark and Flink UI screenshots and baseline-versus-treated results, belongs in the layer document that makes the claim.
 - **Working records**: Measured results from development runs, such as benchmarks, test results, and run reports, go in `docs/records/`, linked from Status. Raw command output and logs go in `misc/tmp/`. A record stays while the code or decision it measures is current. When that changes, copy any result that still supports a claim into the owning document, then archive the record to `misc/archive/` if a later phase may need it, or remove it.
 - **Status**: Current state only. Older entries move to `misc/archive/`.
-- **Research notes**: Evidence for one open choice, in `docs/research/`, linked from the design that uses it. A research note decides nothing. When the choice is made, integrate the conclusions into the owning document, then archive or remove the note.
+- **Research notes**: Evidence for one open choice, in `docs/research/` (created when needed), linked from the design that uses it. A research note decides nothing. When the choice is made, integrate the conclusions into the owning document, then archive or remove the note.
 
 ## Course Requirements
 

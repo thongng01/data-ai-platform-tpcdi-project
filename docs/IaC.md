@@ -2,7 +2,7 @@
 
 This reference describes the Compose configuration, service connections, and operating commands. It distinguishes configured behavior from runtime evidence. Design choices are in [Project Design](Project-Design.md), and implementation state is in [Status](Status.md).
 
-## 1. How to run it
+## 1. How to Run It
 
 Run commands from the repository root in WSL, where the project filesystem and Docker socket are available. The [Makefile](../Makefile) defines these commands.
 
@@ -30,7 +30,7 @@ The commands assume Linux tools and Docker inside WSL. Host resources, installed
 
 Container image settings are in `infra/.env`. Compose reads that file to substitute variables; a container receives only the values its service passes through. The file contains committed local development defaults. SeaweedFS uses the mutable `latest` tag, so a later pull can change behavior without a configuration edit.
 
-## 3. The compose files
+## 3. The Compose Files
 
 `infra/.env` sets `COMPOSE_FILE` to five files. The Makefile runs Compose from `infra/`, and profiles select the optional services.
 
@@ -107,7 +107,7 @@ These are the defaults in `infra/.env`. Other stacks can use the same host ports
 | 9002 | DataHub frontend. |
 | 8086 | DataHub GMS API. |
 
-## 6. Memory budget
+## 6. Memory Budget
 
 Compose declares the limits below. They are limits, not measured use or a guarantee that simultaneous workloads fit. JVM heap is only part of a process's memory. One-shot runners such as `spark-jobs`, `bootstrap`, and `datahub-ingest` have no explicit memory limit in these files.
 
@@ -131,71 +131,73 @@ Compose declares the limits below. They are limits, not measured use or a guaran
 
 `bash misc/tools/check_memory.sh` reads the resolved core and compute limits. It does not measure runtime memory. Leave capacity for the operating system, Docker, drivers, and concurrent one-shot tasks when selecting profiles.
 
-## 7. Why these choices
+## 7. Why These Choices
 
-### 7.1 Five compose files rather than one
+### 7.1 Five Compose Files Rather Than One
 
 Files group services by role. Profiles control which optional services start. Splitting files alone does not control memory use because `COMPOSE_FILE` loads all five files.
 
-### 7.2 Every lakehouse table is external
+### 7.2 Every Lakehouse Table Is External
 
 The earlier build used external Hive tables with explicit object locations. In that run, Spark rejected a managed table location with `LOCATION_ALREADY_EXISTS` even when the SeaweedFS prefix listed as empty. External table metadata avoids that managed-location check. The pipeline must then manage object retention, replacement, and partition registration explicitly.
 
-### 7.3 Hive DDL rather than the DataSource V2 syntax
+### 7.3 Hive DDL Rather Than the DataSource V2 Syntax
 
 The existing tables use `PARTITIONED BY` and `STORED AS PARQUET` so Hive Metastore stores the SerDe and file-format metadata used by Trino's Hive connector. Spark's `USING parquet` syntax has different partition declaration rules. Any replacement DDL or table format needs a read/write compatibility check across the selected engines.
 
-### 7.4 One Postgres instance, four databases
+### 7.4 One Postgres Instance, Four Databases
 
 Separate databases keep each application's tables in a separate namespace while sharing one process and buffer pool. They still share memory, connections, storage, and failure exposure. This configuration reduces local service overhead but does not provide process or resource isolation. PostgreSQL gold storage remains a proposal.
 
-## 8. Operating constraints
+## 8. Operating Constraints
 
 These operating notes explain failure mechanisms found in the earlier build.
 
-### 8.1 A path write is not a table write
+### 8.1 A Path Write Is Not a Table Write
 
 A Parquet path write can create partition directories without registering them in Hive Metastore. A query engine that reads registered partitions can then return no rows. The existing jobs call `MSCK REPAIR TABLE` after partitioned writes. A table-aware insert can register partitions as part of its write; the correct choice depends on who owns the table and its location.
 
-### 8.2 A HiveServer2 takes the whole worker
+### 8.2 A HiveServer2 Takes the Whole Worker
 
 A long-lived Thrift server can occupy all worker cores and leave a batch application waiting with `Initial job has not accepted any resources`. Setting `spark.executor.cores` limits each executor, not the total application's cores. Inspect application resource requests with `make spark-state`.
 
 The project separates the Thrift server into the `dbt` profile, and `make dp1` stops it before submission. dbt-spark can use a Thrift endpoint; it does not accept a Spark master URL as a Thrift endpoint. Session mode starts a PySpark session, whose Spark configuration determines its execution target. It does not inherently require local execution.
 
-### 8.3 The object store runs out of volumes
+### 8.3 The Object Store Runs Out of Volumes
 
 SeaweedFS can report `failed to find writable volumes for collection:landing` while the S3 client reports retries or `InternalError`. A collection needs writable volume capacity. The current command uses `-volume.max=0` after an earlier fixed cap was reached. Check both the S3 response and server logs; increasing a volume count cannot fix exhausted disk space. `misc/tools/s3_probe.py` provides a request-level check.
 
-### 8.4 PySpark launcher arguments
+Each bucket is a separate collection. With the defaults, a new collection can create up to 7 volumes at once, each with a 30 GiB size limit (`-master.volumeSizeLimitMB`, default 30720). `-volume.max=0` sets the volume limit to free disk space divided by that size limit, so the limit falls as data fills the disk. When the infrastructure is rebuilt, set the volume growth count to 1 and a smaller volume size limit; the exact limit remains open ([SeaweedFS guidance](https://github.com/seaweedfs/seaweedfs/wiki/Optimization-for-Many-Small-Buckets)).
+
+### 8.4 PySpark Launcher Arguments
 
 The earlier build associated a malformed launch and zero-core request with `PYSPARK_SUBMIT_ARGS`. The current Spark image leaves it unset. This variable belongs to PySpark's launcher; its presence is not evidence that every direct `spark-submit` invocation appends it. Inspect the actual launch arguments when diagnosing a resource request.
 
-### 8.5 An off-by-one bind mount looks like a working mount
+### 8.5 An Off-by-One Bind Mount Looks Like a Working Mount
 
 Relative bind paths resolve against the base Compose file directory, `infra/`. A repository sibling is therefore `../pipelines`, not `../../pipelines`. Short bind syntax can create a missing host directory and mount an empty path. Inspect the resolved configuration and source path when expected code or settings are absent. The current Flink submit mount has this path defect, recorded in [Status](Status.md#known-defects).
 
-### 8.6 `spark-class` does not read `spark-defaults.conf`
+### 8.6 `spark-class` Does Not Read `spark-defaults.conf`
 
 The cluster configuration uses `start-master.sh`, `start-slave.sh`, and `start-thriftserver.sh`. These scripts start different kinds of processes. Master and worker daemons use daemon settings and command arguments; a Spark application uses submission settings. Do not assume that every start script wraps `spark-submit` or that application defaults configure the master daemon. `make spark-conf` prints the configuration resolved by a submitted job.
 
-### 8.7 S3 has no directories, and Spark checks for one
+### 8.7 S3 Has No Directories, and Spark Checks for One
 
 S3 stores object keys rather than directories. Filesystem clients infer directories from prefixes and marker objects. Bootstrap creates `_keep` objects under the configured output prefixes because the earlier Spark event-log initialization required a directory-like prefix.
 
-### 8.8 An unfiltered union doubles an evolved file
+### 8.8 An Unfiltered Union Doubles an Evolved File
 
 Parsing every source row under two schemas and unioning both results duplicates the input. Filter each branch by its declared field count before the union, then account for matched and unmatched source rows. The existing pure `variants.validate_split` helper checks arithmetic, but it does not prove that the Spark parser measured unmatched rows correctly. The current parser counts them after replacing the original frame, so unknown shapes can disappear without a warning.
 
-### 8.9 A business key narrower than the record deletes real rows
+### 8.9 A Business Key Narrower Than the Record Deletes Real Rows
 
-A deduplication key must distinguish repeated delivery from separate business events. Watch actions at different times and trade status changes are separate records even when other fields agree. The existing job uses whole-record keys for most tables. Incremental Trade still needs review against the specification: `T_ID` identifies the trade, and each CDC record represents a change. A generated column name or a sample field position does not define benchmark identity.
+A deduplication key must distinguish repeated delivery from separate business events. Watch actions at different times and trade status changes are separate records even when other fields agree. The existing job uses whole-record keys for most tables. Daily `Trade.txt` still needs review against the specification: `T_ID` identifies the trade, and each CDC record represents a change. A generated column name or a sample field position does not define benchmark identity.
 
-### 8.10 Partition replacement and reruns
+### 8.10 Partition Replacement and Reruns
 
 Dynamic partition overwrite replaces the partitions touched by the write. Files outside those partitions can remain, including files left by an earlier layout. The existing silver job deletes its whole output location before overwrite. That removes stray files but also removes valid earlier batches. This is a known data-loss defect, not a general rerun strategy. An append also needs duplicate and retry rules; sharing a location does not make append safe by itself.
 
-### 8.11 Shutdown deadlines and run reports
+### 8.11 Shutdown Deadlines and Run Reports
 
 The earlier run blocked during Spark shutdown while closing the event log against SeaweedFS. `stop_session` now waits up to 90 seconds on a separate thread. The caller writes the report after that wait, including `stopped_cleanly`. If cleanup does not finish, the code signals the parent JVM and exits directly.
 

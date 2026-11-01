@@ -4,8 +4,8 @@ Build the data, ML, and agent platform with the owner, and explain the engineeri
 
 ## Working Agreement
 - **Owner drafts**: Refine in place. Keep structure, density, and tone; fix facts; add sections only when asked.
-- **Decisions**: Record a choice as decided only when the owner made it. Agent proposals stay proposals.
-- **Status record**: One short record: position, open decisions, next step. Update it at the end of each task.
+- **Decisions**: Work through design and architecture choices with the [design method](docs/Design-Method.md), and show the reasoning at each step. Record the outcome as a [decision record](docs/Documentation-Guide.md#decision-records). A choice is Decided only when the owner made it; agent recommendations stay Proposed.
+- **Status record**: One short record: position, open decisions, next step, what exists, and known defects. Update it at the end of each task.
 - **Resuming**: Start from the status record. Open older records only when it points to them.
 - **Restructuring**: Moving, renaming, splitting, and merging documents is normal. Update incoming links in the same change, then run the documentation checks.
 - **Finding things**: The [documentation guide](docs/Documentation-Guide.md) maps each document to its purpose; the README shows the repository layout.

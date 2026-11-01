@@ -23,7 +23,7 @@ coursework/
 ├── governance/       # DataHub ingestion and metadata configuration
 ├── infra/            # Docker Compose files, container builds, service configuration
 ├── tests/            # Pipeline tests
-├── docs/             # Data specification, design, infrastructure, status, research
+├── docs/             # Data specification, design, design method, infrastructure, status, records, course material
 └── misc/             # Tools, temporary work, archives, reference data
 ```
 
@@ -49,7 +49,9 @@ The project uses the TPC-DI retail brokerage as its business domain and raw sour
 
 ### Physical Source Files & Ingestion Rules
 
-The project ingests all 18 TPC-DI business and reference source files, plus `BatchDate.txt`. Metadata used only for formal benchmark audit validation is excluded.
+The project uses all 18 TPC-DI business and reference source families. It does not generate or ingest `BatchDate.txt`. Metadata used only for formal benchmark audit validation is also excluded.
+
+The table uses standard source names. Historical files keep those names under `historical/`, including the existing quarter in `FINWIREyyyyQq`. Daily files use `incremental/YYYYMMDD/<Source>_YYYYMMDD.<extension>`, such as `incremental/20170708/Customer_20170708.txt`. A quarterly FINWIRE file arrives in the daily folder of its release date. The pipeline keeps a predefined list of expected files; a delivery is complete when all of them are present, and a zero-record file means no activity.
 
 **Change Data Capture (CDC) Rules**: Daily OLTP files are CDC extracts. Each row starts with a `CDC_FLAG` (`I` for insert, `U` for update) and a `CDC_DSN` (sequence number). Insert-only files always carry `I`; historical files omit both fields.
 
@@ -60,28 +62,30 @@ The project ingests all 18 TPC-DI business and reference source files, plus `Bat
 | OLTP | `Account.txt` | Pipe-delimited | One changed account | No | Yes | `I`, `U` |
 | OLTP Trading DB | `Trade.txt` | Pipe-delimited | One trade (state or change) | Yes | Yes | `I`, `U` |
 | OLTP Trading DB | `TradeHistory.txt` | Pipe-delimited | One trade status change | Yes | No | N/A (Historical only) |
-| OLTP Trading DB | `CashTransaction.txt` | Pipe-delimited | One cash movement | Yes | Yes | `I` only |
+| OLTP Trading DB | `CashTransaction.txt` | Pipe-delimited | One cash movement | Yes | Stream | N/A (events after Batch 1) |
 | OLTP Trading DB | `HoldingHistory.txt` | Pipe-delimited | One holding change per trade | Yes | Yes | `I` only |
 | OLTP Trading DB | `WatchHistory.txt` | Pipe-delimited | One watch placement or cancellation | Yes | Yes | `I` only |
 | OLTP Trading DB | `DailyMarket.txt` | Pipe-delimited | One security per day | Yes | Yes | `I` only |
 | Internal HR DB | `HR.csv` | Comma-delimited | One employee | Yes | No | N/A (Full extract) |
 | External Marketing | `Prospect.csv` | Comma-delimited | One prospect | Yes | Yes | N/A (Full snapshot) |
-| Financial Newswire | `FINWIREyyyyQq` | Fixed-width | One company, security, or financial report | Yes | No | N/A (One file per quarter) |
+| Financial Newswire | `FINWIREyyyyQq` | Fixed-width | One company, security, or financial report | Yes | Release dates | N/A (One file per posting quarter) |
 | Static Reference | `Date.txt`, `Time.txt`, `Industry.txt`, `StatusType.txt`, `TaxRate.txt`, `TradeType.txt` | Pipe-delimited | One row per code, day, or second | Yes | No | N/A (Static) |
-| Load Metadata | `BatchDate.txt` | Text | The batch extraction date | Yes | Yes | N/A |
 
 ### Load Cycle & Processing Strategy
 
-TPC-DI defines one historical load followed by two daily batches. This project keeps the pattern and extends the daily batches to support ML feature engineering:
+TPC-DI defines one historical load followed by two daily batches. This project keeps the historical load, extends the daily batches up to one year, delivers FINWIRE quarterly inside the daily batches, and sends later cash movements as a continuous stream:
 
-| Batch | Starting State | Data Volume & Duration | Work |
+| Phase | Path | Coverage | Work |
 | --- | --- | --- | --- |
-| **Batch 1 (Historical)** | Empty warehouse | All history before the first daily batch (length open). | Load reference data and full extracts, build SCD2 history, and calculate opening cash balances and holdings. |
-| **Batch 2+ (Daily)** | Previous batch complete | One day per batch, up to one year. | Apply the day's CDC changes (`I`, `U`), new activity, and full `Prospect.csv` snapshot. |
+| **Historical load (Batch 1)** | Files in `historical/` | `start_date` through `end_date` (length open) | Load reference data and full extracts, build SCD2 history, and calculate opening cash balances and holdings. |
+| **Daily batches (Batch 2+)** | Files in `incremental/YYYYMMDD/` | One `data_date` per batch, up to one year | Apply the day's CDC changes (`I`, `U`), new activity, the full `Prospect.csv` snapshot, and FINWIRE on release dates. |
+| **Cash stream** | Events on Kafka | Cash movements after `end_date` | Update running balances, window aggregates, and daily balances as events arrive. |
 
-Each day is its own batch with a unique `BatchID` and `BatchDate.txt`. SCD2 versions, cash balances, and prospect updates are dated by batch. Batch 1 requires at least one year of prices and four quarters of earnings to calculate 52-week highs and lows and P/E ratios. Daily batches contain no HR, FINWIRE, or reference files; therefore, brokers, companies, and securities do not change after Batch 1.
+- **Calendar**: Every calendar date has a daily batch, from midnight UTC to the next midnight. `data_date` is the business date that an extract represents; extraction and arrival dates do not change it. The historical load takes inclusive `start_date` and `end_date` as run parameters. `BatchID` assignment is deferred.
+- **Cadence**: OLTP changes except cash, market data, and `Prospect.csv` arrive daily; cash arrives only through the stream. FINWIRE arrives in the daily batch of its release date, the last day of the month after each quarter. Its file names follow the posting quarter, so Q1 results released April 30 belong in a Q2 file but remain Q1 in `Financial`. HR and reference files load once and stay static.
+- **Handoff**: The stream starts from the final historical balances and never reprocesses historical movements. A cash event's date is the UTC date of `CT_DTS`; a late event updates its day and every later day.
 
-*Note: While batch sources follow this pattern, this project processes subsequent `CashTransaction` records as a continuous Kafka and Flink stream.*
+Batch 1 requires at least one year of prices and four quarters of earnings to calculate 52-week highs and lows and P/E ratios.
 
 ## Layer 1: Data Platform
 
@@ -91,18 +95,18 @@ The data platform turns source data into validated tables for analytics and mach
 
 | # | Zone | Purpose | Grain | Storage |
 | --- | --- | --- | --- | --- |
-| 1 | **Staging** | Immutable landing zone for raw batch files. The cash stream enters through Kafka instead. | One file | SeaweedFS (object storage) |
-| 2 | **Bronze** | Source records and received events as delivered, including duplicates and parse failures. Preserves provenance. | One source record or one delivery | SeaweedFS (lakehouse tables) |
-| 3 | **Silver** | Cleaned, typed, deduplicated, and conformed records. Ready for joins. | One validated business record | SeaweedFS (lakehouse tables) |
+| 1 | **Staging** | Immutable raw batch files as delivered. The cash stream enters through Kafka instead. | One file | SeaweedFS `staging` bucket |
+| 2 | **Bronze** | Source records and received events as delivered, including duplicates and parse failures. Preserves provenance. | One source record or one delivery | SeaweedFS `lakehouse` bucket, `bronze/` tables |
+| 3 | **Silver** | Cleaned, typed, deduplicated, and conformed records. Ready for joins. | One validated business record | SeaweedFS `lakehouse` bucket, `silver/` tables |
 | 4 | **Gold** | The warehouse, cash stream outputs, and ML tables. | Per business entity or metric | PostgreSQL (proposed) |
 
-Hive Metastore records lakehouse table schemas and file locations. Spark processes the tables, and Trino provides SQL access for inspection and queries. Table format: open.
+Operational files, such as Spark event logs, use a separate `platform` bucket ([bucket rationale](docs/Project-Design.md#25-object-storage-layout-rationale)). Hive Metastore records lakehouse table schemas and file locations. Spark processes the tables, and Trino provides SQL access for inspection and queries. Table format: open.
 
 The TPC-DI specification does not define a silver layer. The Silver layer is the project's own model, with the following traits:
-- **Preserve Change Order**: Keep `CDC_FLAG`, `CDC_DSN`, `BatchID`, and batch date. SCD2 versioning depends on them.
+- **Preserve Change Order**: Keep `CDC_FLAG`, `CDC_DSN`, `BatchID`, and `data_date`. SCD2 versioning depends on them.
 - **Handle XML Nuance**: For `CustomerMgmt.xml`, preserve the distinction between omitted and empty elements until Gold versions are built.
 - **Deduplicate Correctly**: Remove repeated deliveries of the same event, but keep legitimate repeated business changes (such as two updates to one trade).
-- **Separate Temporal Data**: Keep event dates strictly separate from batch dates and system arrival dates.
+- **Separate Temporal Data**: Keep event dates strictly separate from `data_date` and system arrival dates.
 
 ### Data Lineage: Source-to-Gold Mapping
 
@@ -112,7 +116,7 @@ The TPC-DI specification does not define a silver layer. The Silver layer is the
 | `CustomerMgmt.xml` + `Account.txt` | Same pattern. Resolve customer and broker keys; add a version when the customer changes. | `DimAccount` |
 | `HR.csv` | Keep employees with job code 314. | `DimBroker` |
 | FINWIRE (`CMP`, `SEC`) | Parse fixed-width records in posting order; build histories; link securities to companies by CIK or name. | `DimCompany`, `DimSecurity` |
-| FINWIRE (`FIN`) | Load quarterly results; find the company by CIK or name at posting time. | `Financial` |
+| FINWIRE (`FIN`) | Copy the report year and quarter from the record; resolve the company at `PTS`; retain publication and availability metadata. | `Financial` |
 | `Trade.txt` + `TradeHistory.txt` | Insert each trade, then update its status. Keys are set at creation and kept at close. | `DimTrade` |
 | `CashTransaction.txt` | Sum each account's daily movements and add them to the previous balance. *(Subsequent movements go through Kafka and Flink.)* | `FactCashBalances` |
 | `HoldingHistory.txt` + `DimTrade` | Copy `HH_AFTER_QTY`; take keys, date, time, and price from the changing trade. | `FactHoldings` |
@@ -122,7 +126,7 @@ The TPC-DI specification does not define a silver layer. The Silver layer is the
 
 ### Gold Warehouse
 
-The Gold layer implements the TPC-DI warehouse model. Dimensions describe business entities; facts record activity.
+The Gold layer uses the TPC-DI warehouse model with ongoing FINWIRE releases. Dimensions describe business entities; facts record activity. Financial publication and availability fields remain open.
 
 **SCD2 Dimension Rules**:
 - **Keys**: A natural key (`CustomerID`) identifies the entity across time. A surrogate key (`SK_CustomerID`) identifies one specific version.
@@ -136,22 +140,22 @@ The Gold layer implements the TPC-DI warehouse model. Dimensions describe busine
 | `DimCustomer` | SCD2 Dimension | Identity, contacts, tier, tax rates, prospect data | One customer version | `CustomerMgmt.xml`, `Customer.txt`, `Prospect.csv` | Versions from XML actions | New versions from CDC |
 | `DimAccount` | SCD2 Dimension | Owner, broker, tax status, status | One account version | `CustomerMgmt.xml`, `Account.txt` | Versions from XML actions | New versions from CDC and customer changes |
 | `DimBroker` | SCD2 Dimension | Name, manager, branch, office, phone | One broker | `HR.csv` | One version per broker | No change |
-| `DimCompany` | SCD2 Dimension | Name, industry, credit rating, CEO, address | One company version | FINWIRE `CMP` | Versions from postings | No change |
-| `DimSecurity` | SCD2 Dimension | Symbol, exchange, shares, dividend, issuing company | One security version | FINWIRE `SEC` | Versions from postings | No change |
+| `DimCompany` | SCD2 Dimension | Name, industry, credit rating, CEO, address | One company version | FINWIRE `CMP` | Versions from postings | New versions from quarterly FINWIRE |
+| `DimSecurity` | SCD2 Dimension | Symbol, exchange, shares, dividend, issuing company | One security version | FINWIRE `SEC` | Versions from postings | New versions from quarterly FINWIRE |
 | `DimTrade` | Mutable Dimension | Type, status, quantity, prices, fees, account, security | One trade | `Trade.txt`, `TradeHistory.txt` | One row per trade | Insert new trades; update status on close |
 | `FactCashBalances` | Fact | End-of-day account cash | One account per day with transactions | `CashTransaction.txt` | Daily balances | From the cash stream |
 | `FactHoldings` | Fact | Quantity held after a trade | One holding change | `HoldingHistory.txt` | One row per change | One row per change |
 | `FactMarketHistory` | Fact | Prices, volume, 52-week high and low, P/E, yield | One security per day | `DailyMarket.txt` | One row per day | One row per day |
 | `FactWatches` | Fact | Period a customer watches a security | One watch | `WatchHistory.txt` | Watches from actions | Insert placements; set removal dates |
 | `Prospect` | Current State | Agency record, marketing tags, `IsCustomer` | One prospect | `Prospect.csv` | One row per prospect | Insert new; update changed |
-| `Financial` | Current State | Quarterly results | One company per quarter | FINWIRE `FIN` | One row per report | No change |
+| `Financial` | Current State | Quarterly results | One company per quarter | FINWIRE `FIN` | One row per report | New quarterly reports |
 | `DimDate`, `DimTime` | Reference | Calendar and clock attributes | One day; one second | `Date.txt`, `Time.txt` | Loaded once | No change |
 | `Industry`, `StatusType`, `TaxRate`, `TradeType` | Reference | Code lookups | One code | Matching `.txt` files | Loaded once | No change |
 | `DImessages` | Load Log | Status messages and data alerts | One message | The load process | Each batch | Each batch |
 
 #### Gold Layer Entity Relationships
 
-The ERD shows all 19 tables, their key fields, and the main entity relationships. The `Prospect` relationship is a match by name and address, not a key.
+The ERD shows all 19 tables, their key fields, and the main entity relationships. Financial publication and availability fields remain open and are not shown. The `Prospect` relationship is a match by name and address, not a key.
 
 ![Gold layer ERD with all 19 tables, their keys, and their relationships.](docs/diagrams/data-specification/gold-erd.png)
 
@@ -159,16 +163,17 @@ The ERD shows all 19 tables, their key fields, and the main entity relationships
 
 ### Data Generation
 
-The generator produces related source records using the TPC-DI specification and existing dataset as references. Predictive account behavior is designed together with the cash forecast task, while keeping accounts, trades, cash, and holdings consistent (behavior model open).
+The generator produces related source records using the TPC-DI specification, the official TPC-DI sample dataset, and the Databricks reference generator as references. Predictive account behavior is designed together with the cash forecast task, while keeping accounts, trades, cash, and holdings consistent (behavior model open).
 
 - **Scale**: Supports small development runs and at least 100 GB of offline data.
 - **Relationships**: Preserves referential integrity and consistent entity histories.
-- **Load Patterns**: Produces historical data and daily changes.
+- **Load Patterns**: Produces historical data and daily changes locally. A separate delivery step sends batch files to Staging and cash events to Kafka.
 - **Offline Problems**: Injects skew, schema evolution, and an additional problem such as duplicates.
-- **Streaming Problems**: Injects late arrivals and an additional problem such as duplicate events.
-- **Inspection**: Measures output volume, cardinality, skew, schema variants, duplicate rates, and event delays.
+- **Streaming Problems**: The delivery step injects late arrivals and an additional problem such as duplicate events.
+- **Inspection**: Measures volume, cardinality, skew, schema variants, and duplicates in generated data. Measures event delays and streaming duplicates during delivery.
+- **Generator Summary**: Keeps generation settings, output counts, and simulated data characteristics in one reference summary on local disk. It is never uploaded, and ingestion does not read it.
 
-Implementation references include the [Databricks TPC-DI generator](https://github.com/shannon-barrow/databricks-tpc-di/tree/main/src/tools/tpcdi_gen).
+Implementation references include the [Databricks TPC-DI generator](https://github.com/shannon-barrow/databricks-tpc-di/tree/2ac319db6e62927c5d4f772cf5654ad8981f9ec4/src/tools/tpcdi_gen).
 
 ### Batch Processing
 
@@ -245,11 +250,11 @@ Candidate features include previous daily balance, earlier daily inflow and outf
 
 - **Offline Features**: Timestamped feature history for training and backfills.
 - **Online Features**: Latest eligible feature values for inference. Batch and streaming jobs can produce features for either use.
-- **Point-in-Time Rule**: Training uses only values available before the prediction time, including for late records and corrections.
+- **Point-in-Time Rule**: Training uses only values available before the prediction time, including for late records.
 - **Feature Retrieval**: Uses Feast to assemble training examples.
 - **Training Pipeline**: Uses Kubeflow Pipelines for data loading, splitting, training, and evaluation.
 - **Run Tracking**: Uses MLflow to record model artifacts, parameters, metrics, and data versions.
-- **Evaluation**: A simple baseline against the selected model on held-out periods and generator seeds.
+- **Evaluation**: A simple baseline against the selected model on held-out time periods.
 
 ### Serving and Retrieval
 

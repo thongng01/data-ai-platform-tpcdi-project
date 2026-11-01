@@ -1,16 +1,17 @@
 # Status
 
-Updated 2026-11-01. The session log and notes up to 2026-10-30 are in `misc/archive/status-log-2026-10.md`; Git holds earlier versions of every document.
+Updated 2026-11-01. The session log, notes up to 2026-10-30, and the 2026-10-31 to 2026-11-01 cleanup history are in `misc/archive/status-log-2026-10.md`; Git holds earlier versions of every document.
 
 ## Current Position
-- **Data specification**: Rewritten from the owner's version as [`docs/Data-Specification.md`](Data-Specification.md): domains, load cycle, sources, zones, gold warehouse and ERD, cash stream, ML data, and field schemas generated from the PDF tables. Awaits owner review.
-- **README**: Data section follows the specification; repository structure is an ASCII tree. Awaits owner review.
-- **Instructions**: `AGENTS.md`, the [documentation guide](Documentation-Guide.md), and the Paseo instruction were updated on 2026-10-30. New sessions get the Paseo change after the owner restarts the daemon.
-- **Design**: `docs/Project-Design.md` trimmed and aligned with the data specification and README: coursework requirements, decisions and rationale, engineering constraints, and open questions. See [Project Design](Project-Design.md#2-decisions--rationale).
-- **Existing code**: Not a design constraint. The generator, pipelines, tests, infrastructure, and Makefile will be rebuilt; the Polars POC replaces `datagen`. The What Exists and Known Defects tables below describe the earlier build.
+- **Data specification**: Owner review continues in [Data Specification](Data-Specification.md). Section 2 defines the processing cycle: the historical load with `start_date` and `end_date` run parameters, daily batches on UTC calendar dates, FINWIRE in the daily batch of its quarterly release date, and the cash stream after Batch 1. Source naming, delivery completeness, buckets, dataset scope, and the data versioning baseline are decided. Open items are in [Section 11](Data-Specification.md#11-open-decisions); financial availability fields and Gold ERD refinements belong to the Gold schema work.
+- **Design**: [Project Design](Project-Design.md#2-decisions--rationale) records each decision with its rationale: source and delivery (Section 2.4), object storage (Section 2.5), and data versioning (Section 2.6). Catch-up, reruns, corrections, `BatchID` assignment, and HR and reference evolution are deferred. ML evaluation uses held-out time periods only.
+- **Design method**: [Design Method](Design-Method.md) describes how decisions are framed, explored, and chosen. The [documentation guide](Documentation-Guide.md#decision-records) defines decision records, and `AGENTS.md` directs agents to both.
+- **README**: Data section follows the specification. The remaining content awaits owner review.
+- **Work order**: Refine and define the data specification, then design the overall project and its layers, then build the generator.
+- **Existing code**: Not a design constraint. The generator, pipelines, tests, infrastructure, and Makefile will be rebuilt. The Polars POC supersedes `datagen` as the starting point for the generator rebuild. The What Exists and Known Defects tables below describe the earlier build.
 - **Generator**: Polars POC complete: 50 tests, 1.01 GB validated output, 125 MiB peak RSS. See the [POC record](records/Polars-POC.md). Production engine: open.
 - **Delivery targets**: Final deadline about two months after 2026-10-26. First-week target: Layer 1 nearly complete, plus a working Layer 2 flow or a substantial foundation.
-- **Cleanup**: On 2026-10-31 the unlinked TPC-DI diagrams, specification extract, design paper, and infrastructure evidence record were removed; Git history keeps them. Infrastructure is to be rebuilt from a clean start. On 2026-11-01 `docs/research/` was removed: generator corrections, fault configuration rules, and stream verification rules moved into [Project Design](Project-Design.md#3-engineering-constraints); reference notes for later phases moved to `misc/tpcdi/NOTES.md` and `misc/archive/`; the diagram tooling notes were deleted. The superseded TPC-DI drafts, diagram trials, temporary diagram exports, and generator probe files were deleted from `misc/`; the handoffs, the old `master` bundle, and the Polars benchmark reports remain in `misc/archive/`. `check_docs.py` now checks every Markdown file that Git tracks or would track.
+- **Paseo instruction**: The 2026-10-30 Paseo instruction change applies to new sessions after the owner restarts the daemon.
 - **Diagrams**: Diagram sizes are `small`, `medium`, and `large`, replacing `standard` and `master`. ERDs are Mermaid `.mmd` files that the shared tool renders with ELK and the project theme; each table carries a kind tag (`entity`, `event`, `state`, `reference`) that sets its header color. Documents embed PNG for every size, because the Paseo mobile app does not show SVG images. Tables, fields, and data relationships appear only in ERDs; the draw.io tool no longer creates tables or relationship connectors. The gold layer ERD is embedded in both the data specification and the README.
 
 ## Open Decisions
@@ -18,7 +19,7 @@ Updated 2026-11-01. The session log and notes up to 2026-10-30 are in `misc/arch
 - **Design**: See [Open Questions](Project-Design.md#41-open-questions) in Project Design.
 
 ## Next Step
-1. Resolve the next set of data model and Layer 1 design choices (Silver schemas, Gold model refinements, generator engine and fault parameters).
+1. The source delivery and staging contract is complete enough to build on. Choose the next data specification topic from the [open decisions](Data-Specification.md#11-open-decisions). Do not reopen deferred HR and reference evolution, catch-up, or reruns.
 
 ## What Exists
 
@@ -27,7 +28,7 @@ Runtime measurements and test counts are those of the earlier build, except the 
 | Area | Location | State |
 |---|---|---|
 | Generator | `generator/` | Writes selected TPC-DI-shaped files and configurable problems. The earlier record lists 31 tests. Missing: `HR.csv`, `Prospect.csv`, the `Customer.txt` and `Account.txt` deltas, a price walk, and the lateness wiring. Reference-based redesign is selected ([Decisions & Rationale](Project-Design.md#2-decisions--rationale)). |
-| Polars generator POC | `generator/poc_polars/` | Covers all 19 business and reference source families with simplified connected histories, YAML configuration and source definitions, bounded calculations, ordered exports, and independent validation. Passed 50 tests. The largest validated pilot produced 1.01 GB at 125.16 MiB peak RSS. It does not implement the complete reference scheduler, fault controls, predictive behavior, or downstream integration. |
+| Polars generator POC | `generator/poc_polars/` | Covers the 18 source families plus `BatchDate.txt`, an earlier convention, with simplified connected histories, YAML configuration and source definitions, bounded calculations, ordered exports, and independent validation. Passed 50 tests. The largest validated pilot produced 1.01 GB at 125.16 MiB peak RSS. It does not implement the complete reference scheduler, fault controls, predictive behavior, or downstream integration. |
 | Characteristics inspector | `generator/src/datagen/inspect.py` | Built and tested. It reads whole files and assumes CRLF, so it does not scale to 100 GB unchanged. |
 | Core platform | `infra/` | SeaweedFS, Hive Metastore, Trino, and PostgreSQL. `make verify` passed 8 smoke tests in the earlier build. |
 | Spark cluster | `infra/` | Image `edai/spark:3.5.3`, which has Python 3.8.10. |
