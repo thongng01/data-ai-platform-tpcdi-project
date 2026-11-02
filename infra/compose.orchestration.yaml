@@ -1,6 +1,6 @@
 # Orchestration: Airflow, running the three data pipelines.
 #
-# Behind the `airflow` profile. Start with `make up-airflow`.
+# Behind the `airflow` profile. Start with `docker compose --project-directory infra --profile airflow up -d`.
 #
 # Airflow keeps its own metadata in the `airflow` database on the shared
 # Postgres instance. Connections and Variables are seeded by airflow-init, so no
@@ -37,11 +37,11 @@ x-airflow: &airflow
     PGUSER: ${POSTGRES_USER}
     PGPASSWORD: ${POSTGRES_PASSWORD}
   volumes: &airflow_volumes
-    - ../orchestration/dags:/opt/airflow/dags:ro
-    - ../orchestration/connections.yaml:/opt/airflow/connections.yaml:ro
-    - ../orchestration/variables.yaml:/opt/airflow/variables.yaml:ro
-    - ../pipelines:/opt/pipelines:ro
-    - ../dbt:/opt/dbt:ro
+    - ../data/airflow/dags:/opt/airflow/dags:ro
+    - ../data/airflow/connections.yaml:/opt/airflow/connections.yaml:ro
+    - ../data/airflow/variables.yaml:/opt/airflow/variables.yaml:ro
+    - ../data/spark:/opt/pipelines:ro
+    - ../data/dbt:/opt/dbt:ro
     - airflow-logs:/opt/airflow/logs
   logging:
     driver: json-file

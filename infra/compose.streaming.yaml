@@ -1,6 +1,6 @@
 # Streaming: the Kafka broker and the Flink cluster that consumes it.
 #
-# Behind the `stream` profile. Start with `make up-stream`.
+# Behind the `stream` profile. Start with `docker compose --project-directory infra --profile stream up -d`.
 #
 # Topics are named tpcdi.<table> so the producer that replays a batch and the
 # Flink job that reads it agree on a name without sharing a config file.
@@ -155,7 +155,7 @@ services:
       S3_ACCESS_KEY: ${SEAWEEDFS_ACCESS_KEY}
       S3_SECRET_KEY: ${SEAWEEDFS_SECRET_KEY}
     volumes:
-      - ../../pipelines:/opt/pipelines:ro
+      - ../data/flink:/opt/pipelines:ro
     depends_on:
       - jobmanager
 

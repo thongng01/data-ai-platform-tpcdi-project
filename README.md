@@ -8,26 +8,23 @@
 
 This project is a data and AI system for a retail brokerage, based on the TPC-DI domain. It generates related financial records, processes them through batch and streaming pipelines, and uses the resulting data for analytics, machine learning, and agent applications.
 
-- **Layer 1 (Data Platform)**: Turns raw batch files and streaming cash events into validated lakehouse and warehouse tables, using SeaweedFS, Hive Metastore, Trino, PostgreSQL (proposed), Spark, dbt, Kafka, Flink, Airflow, Soda, and DataHub.
-- **Layer 2 (Machine Learning Platform)**: Forecasts future net account cash movement and applies a tier-based minimum-cash policy, using Feast, Kubeflow Pipelines, MLflow, and KServe, plus document chunking and embedding retrieval.
-- **Layer 3 (Agent Platform)**: Connects language models to project data, retrieved documents, and model predictions through gateways, MCP tools, and agent coordination.
+- **Layer 1 ([Data Platform](docs/Data-Platform.md))**: Turns raw batch files and streaming cash events into validated lakehouse and warehouse tables, using SeaweedFS, Hive Metastore, Trino, PostgreSQL, Spark, dbt, Kafka, Flink, Airflow, Soda, and DataHub.
+- **Layer 2 ([Machine Learning Platform](docs/ML-Platform.md))**: Forecasts future net account cash movement and applies a tier-based minimum-cash policy, using Feast, Kubeflow Pipelines, MLflow, and KServe, plus document chunking and embedding retrieval.
+- **Layer 3 ([Agent Platform](docs/Agent-Platform.md))**: Connects language models to project data, retrieved documents, and model predictions through gateways, MCP tools, and agent coordination.
 
 ## Repository Structure
 
 ```text
-coursework/
-├── generator/        # Source-data generator, tests, reference fixtures
-├── pipelines/        # Data-processing jobs
-├── dbt/              # dbt configuration and warehouse transformations
-├── orchestration/    # Airflow configuration and DAGs
-├── governance/       # DataHub ingestion and metadata configuration
-├── infra/            # Docker Compose files, container builds, service configuration
-├── tests/            # Pipeline tests
-├── docs/             # Data specification, design, design method, infrastructure, status, records, course material
-└── misc/             # Tools, temporary work, archives, reference data
+data-ai-platform-tpcdi-project/
+├── data/             # Layer 1: Data platform (generator, spark, dbt, flink, airflow, soda, datahub)
+├── ml/               # Layer 2: ML platform (feature_repo, training, kfp, serving, rag)
+├── agents/           # Layer 3: Agent platform (mcp, coordinator, gateway, prompts, registry)
+├── infra/            # Infrastructure, containers, cloud IaC, CI/CD, security, and observability
+├── docs/             # System documentation: data specification, Layer 1-3 designs, and infrastructure
+└── workflow/         # Engineering workflow guides, status, working records, and verification tools
 ```
 
-The [documentation guide](docs/Documentation-Guide.md) maps each document to its purpose.
+Each main section below summarizes one part of the system and links to its detailed document in `docs/`: [Data Specification](docs/Data-Specification.md), [Data Platform](docs/Data-Platform.md), [ML Platform](docs/ML-Platform.md), [Agent Platform](docs/Agent-Platform.md), and [Infrastructure](docs/IaC.md).
 
 ## Business Domain and Data
 
@@ -77,11 +74,11 @@ TPC-DI defines one historical load followed by two daily batches. This project k
 
 | Phase | Path | Coverage | Work |
 | --- | --- | --- | --- |
-| **Historical load (Batch 1)** | Files in `historical/` | `start_date` through `end_date` (length open) | Load reference data and full extracts, build SCD2 history, and calculate opening cash balances and holdings. |
+| **Historical load (Batch 1)** | Files in `historical/` | `start_date` through `end_date` | Load reference data and full extracts, build SCD2 history, and calculate opening cash balances and holdings. |
 | **Daily batches (Batch 2+)** | Files in `incremental/YYYYMMDD/` | One `data_date` per batch, up to one year | Apply the day's CDC changes (`I`, `U`), new activity, the full `Prospect.csv` snapshot, and FINWIRE on release dates. |
 | **Cash stream** | Events on Kafka | Cash movements after `end_date` | Update running balances, window aggregates, and daily balances as events arrive. |
 
-- **Calendar**: Every calendar date has a daily batch, from midnight UTC to the next midnight. `data_date` is the business date that an extract represents; extraction and arrival dates do not change it. The historical load takes inclusive `start_date` and `end_date` as run parameters. `BatchID` assignment is deferred.
+- **Calendar**: Every calendar date has a daily batch, from midnight UTC to the next midnight. `data_date` is the business date that an extract represents; extraction and arrival dates do not change it. The historical load takes inclusive `start_date` and `end_date` as run parameters.
 - **Cadence**: OLTP changes except cash, market data, and `Prospect.csv` arrive daily; cash arrives only through the stream. FINWIRE arrives in the daily batch of its release date, the last day of the month after each quarter. Its file names follow the posting quarter, so Q1 results released April 30 belong in a Q2 file but remain Q1 in `Financial`. HR and reference files load once and stay static.
 - **Handoff**: The stream starts from the final historical balances and never reprocesses historical movements. A cash event's date is the UTC date of `CT_DTS`; a late event updates its day and every later day.
 
@@ -89,7 +86,7 @@ Batch 1 requires at least one year of prices and four quarters of earnings to ca
 
 ## Layer 1: Data Platform
 
-The data platform turns source data into validated tables for analytics and machine learning, with scheduled quality checks and catalog lineage.
+The data platform turns source data into validated tables for analytics and machine learning, with scheduled quality checks and catalog lineage. The [Layer 1 design](docs/Data-Platform.md) holds the full architecture, problem-injection rules, and rationale.
 
 ### Data Zones and Silver Layer
 
@@ -98,9 +95,9 @@ The data platform turns source data into validated tables for analytics and mach
 | 1 | **Staging** | Immutable raw batch files as delivered. The cash stream enters through Kafka instead. | One file | SeaweedFS `staging` bucket |
 | 2 | **Bronze** | Source records and received events as delivered, including duplicates and parse failures. Preserves provenance. | One source record or one delivery | SeaweedFS `lakehouse` bucket, `bronze/` tables |
 | 3 | **Silver** | Cleaned, typed, deduplicated, and conformed records. Ready for joins. | One validated business record | SeaweedFS `lakehouse` bucket, `silver/` tables |
-| 4 | **Gold** | The warehouse, cash stream outputs, and ML tables. | Per business entity or metric | PostgreSQL (proposed) |
+| 4 | **Gold** | The warehouse, cash stream outputs, and ML tables. | Per business entity or metric | PostgreSQL and `lakehouse` tables |
 
-Operational files, such as Spark event logs, use a separate `platform` bucket ([bucket rationale](docs/Project-Design.md#25-object-storage-layout-rationale)). Hive Metastore records lakehouse table schemas and file locations. Spark processes the tables, and Trino provides SQL access for inspection and queries. Table format: open.
+Operational files, such as Spark event logs, use a separate `platform` bucket ([bucket rationale](docs/Data-Platform.md#62-object-storage-layout-and-dataset-scope)). Hive Metastore records lakehouse table schemas and file locations. Spark processes the tables, and Trino provides SQL access for inspection and queries.
 
 The TPC-DI specification does not define a silver layer. The Silver layer is the project's own model, with the following traits:
 - **Preserve Change Order**: Keep `CDC_FLAG`, `CDC_DSN`, `BatchID`, and `data_date`. SCD2 versioning depends on them.
@@ -126,7 +123,7 @@ The TPC-DI specification does not define a silver layer. The Silver layer is the
 
 ### Gold Warehouse
 
-The Gold layer uses the TPC-DI warehouse model with ongoing FINWIRE releases. Dimensions describe business entities; facts record activity. Financial publication and availability fields remain open.
+The Gold layer uses the TPC-DI warehouse model with ongoing FINWIRE releases. Dimensions describe business entities; facts record activity.
 
 **SCD2 Dimension Rules**:
 - **Keys**: A natural key (`CustomerID`) identifies the entity across time. A surrogate key (`SK_CustomerID`) identifies one specific version.
@@ -155,7 +152,7 @@ The Gold layer uses the TPC-DI warehouse model with ongoing FINWIRE releases. Di
 
 #### Gold Layer Entity Relationships
 
-The ERD shows all 19 tables, their key fields, and the main entity relationships. Financial publication and availability fields remain open and are not shown. The `Prospect` relationship is a match by name and address, not a key.
+The ERD shows all 19 tables, their key fields, and the main entity relationships. The `Prospect` relationship is a match by name and address, not a key.
 
 ![Gold layer ERD with all 19 tables, their keys, and their relationships.](docs/diagrams/data-specification/gold-erd.png)
 
@@ -163,7 +160,7 @@ The ERD shows all 19 tables, their key fields, and the main entity relationships
 
 ### Data Generation
 
-The generator produces related source records using the TPC-DI specification, the official TPC-DI sample dataset, and the Databricks reference generator as references. Predictive account behavior is designed together with the cash forecast task, while keeping accounts, trades, cash, and holdings consistent (behavior model open).
+The generator produces related source records using the TPC-DI specification, the official TPC-DI sample dataset, and the Databricks reference generator as references. Predictive account behavior is designed together with the cash forecast task, while keeping accounts, trades, cash, and holdings consistent.
 
 - **Scale**: Supports small development runs and at least 100 GB of offline data.
 - **Relationships**: Preserves referential integrity and consistent entity histories.
@@ -177,7 +174,7 @@ Implementation references include the [Databricks TPC-DI generator](https://gith
 
 ### Batch Processing
 
-Spark handles batch source parsing and integration. dbt is planned for SQL modeling. Division of work between Spark, dbt, PostgreSQL, and Trino: open.
+Spark and dbt handle batch source parsing, cleaning, SCD2 integration, and warehouse modeling.
 
 - **Source Parsing**: Reads the different file formats and accounts for records that cannot be parsed.
 - **Cleaning and Integration**: Applies types, handles duplicates and daily changes, and validates relationships.
@@ -192,7 +189,7 @@ After Batch 1, each new cash transaction is published to Kafka as one event with
 
 | Cash Event Field | Type | Meaning |
 | --- | --- | --- |
-| Event ID | Project-defined (format open) | Identifies the cash movement. A repeated delivery keeps the same ID. |
+| Event ID | Project-defined identifier | Identifies the cash movement. A repeated delivery keeps the same ID. |
 | `CT_CA_ID` | `NUM(11)` | Account ID |
 | `CT_DTS` | `DATETIME` | Event time |
 | `CT_AMT` | `SNUM(10,2)` | Signed amount (+ adds cash, - removes cash) |
@@ -205,11 +202,11 @@ After Batch 1, each new cash transaction is published to Kafka as one event with
 | Cash events | Silver | One cash movement | Validated events with duplicates removed |
 | `FactCashBalances` | Gold | One account per day | TPC-DI daily balance: previous balance plus the day's net movement |
 | Running balance | Gold | One account | Current cash after each event |
-| Window aggregates | Gold | One account per window | Inflow, outflow, net movement, and count. Window sizes are open. |
+| Window aggregates | Gold | One account per window | Inflow, outflow, net movement, and count |
 
 - **Start**: Flink initializes state from the final Batch 1 Gold balances and never reprocesses historical transactions.
 - **Duplicates**: Repeated deliveries share an Event ID and are counted once.
-- **Late events**: A late event changes its day's balance and every later balance. Lateness limits and correction rules: open.
+- **Late events**: A late event changes its day's balance and every later balance.
 
 ### Orchestration and Governance
 
@@ -225,7 +222,7 @@ Airflow connections and variables provide shared configuration. DataHub records 
 
 ## Layer 2: Machine Learning Platform
 
-The ML platform connects feature computation, training, and serving in a reproducible workflow.
+The ML platform connects feature computation, training, serving, and document retrieval in a reproducible workflow. The [Layer 2 design](docs/ML-Platform.md) holds the full details and rationale.
 
 ### Prediction Task
 
@@ -236,15 +233,15 @@ projected_cash = current_cash + forecast_net_movement
 alert = projected_cash < configured_minimum[customer_tier]
 ```
 
-| Data | Grain | Contents | Open |
-| --- | --- | --- | --- |
-| **Offline features** | One account per feature time | Feature history for training and backfills | Feature list and windows |
-| **Online features** | One account | Latest feature values for scoring | Storage details |
-| **Label** | One account per prediction time | Sum of unique `CT_AMT` values after the prediction time, up to the forecast cutoff | Forecast horizon |
-| **Tier minimums** | One tier (1, 2, 3) | Minimum cash per tier. TPC-DI supplies the tier; the project supplies the amount. | Amounts |
-| **Forecast and alert** | One account per as-of time | Account ID, as-of time, forecast cutoff, current cash, forecast movement, projected cash, tier, minimum, shortfall, model version, policy version | Storage schema |
+| Data | Grain | Contents |
+| --- | --- | --- |
+| **Offline features** | One account per feature time | Feature history for training and backfills (`event_timestamp` and `created`) |
+| **Online features** | One account | Latest feature values for low-latency scoring |
+| **Label** | One account per prediction time | Sum of unique `CT_AMT` values after the prediction time, up to the forecast cutoff |
+| **Tier minimums** | One tier (1, 2, 3) | Minimum cash per tier. TPC-DI supplies the tier; the project supplies the threshold amount. |
+| **Forecast and alert** | One account per as-of time | Account ID, as-of time, forecast cutoff, current cash, forecast movement, projected cash, tier, minimum, shortfall, model version, policy version |
 
-Candidate features include previous daily balance, earlier daily inflow and outflow totals, recent movement counts and amounts from Flink, and optional trade-type totals. Horizon, scoring cadence, features, model, and metrics: open. Obligations and payment coverage: future work.
+Candidate features include previous daily balance, earlier daily inflow and outflow totals, recent movement counts and amounts from Flink, and trade-type totals.
 
 ### Features and Training
 
@@ -254,29 +251,27 @@ Candidate features include previous daily balance, earlier daily inflow and outf
 - **Feature Retrieval**: Uses Feast to assemble training examples.
 - **Training Pipeline**: Uses Kubeflow Pipelines for data loading, splitting, training, and evaluation.
 - **Run Tracking**: Uses MLflow to record model artifacts, parameters, metrics, and data versions.
-- **Evaluation**: A simple baseline against the selected model on held-out time periods.
+- **Evaluation**: Compares a heuristic baseline, a batch-only model, and a batch-plus-streaming model on held-out time periods.
 
 ### Serving and Retrieval
 
 - **Feature Materialization**: Updates the online feature store from offline tables and streaming jobs.
 - **Model Serving**: Uses KServe to expose the trained model to applications and agents.
-- **Alert Path (proposed)**: Flink features go to a separate scorer, which calls the model, applies the minimum-cash policy, and keeps alerts for an API.
-- **Text Pipeline**: Ingests documents, creates chunks and embeddings, and records lineage and validation.
+- **Alert Path**: Flink features go to a separate scorer, which calls the model, applies the minimum-cash policy, and exposes alerts through an API.
+- **Text Pipeline**: Ingests documents, creates chunks and embeddings in Feast, and records lineage and validation in DataHub.
 
 ## Layer 3: Agent Platform
 
-The agent platform provides access to project data, documents, and predictions through defined tools. User task, expected output, and tool permissions: open.
+The agent platform provides governed access to project data, documents, and predictions through MCP tools and multi-agent coordination. The [Layer 3 design](docs/Agent-Platform.md) describes the architecture.
 
 ### Agent Components
 
 - **Model Server**: Hosts the LLM and exposes its inference API.
-- **Data and ML Tools**: Provides controlled access to structured data, retrieved documents, and model predictions.
-- **Coordinator**: Routes work between agents.
-- **Gateway**: Applies routing and access policies to model, tool, and agent requests.
+- **Data and ML Tools**: Provides controlled MCP access to structured data, retrieved documents, and model predictions.
+- **Coordinator**: Routes work between specialist agents.
+- **Gateway**: Applies routing, authentication, rate limiting, and PII safety policies to model, tool, and agent requests.
 - **Registry**: Publishes available agents and their interfaces.
 - **Prompt Management**: Versions prompts used by deployed agents.
-
-Framework, language model, tool contracts, and coordination rules: open.
 
 ## Infrastructure and Operations
 
@@ -300,44 +295,39 @@ Profiles control which groups start together. Container builds are reviewed for 
 - **Observability**: Collects service metrics, logs, traces, and model and agent telemetry.
 - **Testing**: Checks data correctness, rerun behavior, APIs, and performance under load.
 
-The coursework also requires two demonstrated novel ideas; the [project design](docs/Project-Design.md#1-coursework-requirements) records the requirements.
+See [Infrastructure and Operations](docs/IaC.md) for container profiles, ports, memory limits, and operating commands.
 
 ## Getting Started
 
-Run project commands from the repository directory in Ubuntu WSL. These commands operate the existing platform and batch pipeline. Read [Project Status](docs/Status.md) for its limits and [Infrastructure](docs/IaC.md) for service setup.
+Run project commands from the repository directory in Ubuntu WSL. Read [Infrastructure](docs/IaC.md) for service setup and operating details.
 
-1. Start the core services.
+1. Start the core services (PostgreSQL, SeaweedFS, Hive Metastore, and Trino).
 
    ```bash
-   make up-core
+   docker compose --project-directory infra up -d postgres seaweedfs hive-metastore trino
    ```
 
-2. Initialize storage and databases.
+2. Initialize storage buckets and databases.
 
    ```bash
-   make bootstrap
+   docker compose --project-directory infra --profile init run --rm bootstrap
    ```
 
-3. Check core service integration.
+3. Verify core service integration.
 
    ```bash
-   make verify
+   docker compose --project-directory infra --profile tools run --rm tools
    ```
 
-4. Start Spark.
+4. Start the Spark cluster.
 
    ```bash
-   make up-compute
+   docker compose --project-directory infra --profile compute up -d spark-master spark-worker
    ```
 
-5. Generate the small input dataset. This command replaces `misc/sample_run`.
+5. Generate a small input dataset and validate its source contracts.
 
    ```bash
-   make generate
-   ```
-
-6. Run the existing batch pipeline. Its default overwrite mode removes earlier silver data; see [the command's scope and limits](docs/IaC.md#1-how-to-run-it).
-
-   ```bash
-   make dp1
+   .venv/bin/python -m data.generator run --config data/generator/configs/small.yaml --output local/sample_run
+   .venv/bin/python -m data.generator validate local/sample_run
    ```

@@ -1,6 +1,6 @@
 """Create the buckets and databases the platform needs, then exit.
 
-Run once after `docker compose up -d`, via `make bootstrap`. Safe to re-run: a
+Run once after `docker compose --project-directory infra up -d`, via `--profile init run --rm bootstrap`. Safe to re-run: a
 bucket that already exists is skipped and a database that already exists is
 skipped.
 

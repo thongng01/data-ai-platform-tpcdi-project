@@ -1,6 +1,6 @@
 # Governance: DataHub and its search backend.
 #
-# Behind the `governance` profile. Start with `make up-governance`.
+# Behind the `governance` profile. Start with `docker compose --project-directory infra --profile governance up -d`.
 #
 # Memory is the constraint here. DataHub plus OpenSearch needs about 4 GB, and
 # the whole platform shares 15 GB, so this profile is meant to run on its own:
@@ -135,7 +135,7 @@ services:
         limits:
           memory: 1G
 
-# Runs a DataHub ingestion recipe. Recipes live in ../governance/recipes.
+# Runs a DataHub ingestion recipe. Recipes live in ../data/datahub/recipes.
   #   docker compose --profile governance run --rm datahub-ingest \
   #     /opt/governance/recipes/dp1_lineage.yml
   #
@@ -155,7 +155,7 @@ services:
       DATAHUB_GMS_PORT: "8080"
       DATAHUB_GMS_TOKEN: ""
     volumes:
-      - ../governance:/opt/governance:ro
+      - ../data/datahub:/opt/governance:ro
     command: ["datahub", "ingest", "-c", "/opt/governance/recipes/dp1_lineage.yml"]
 
 volumes:

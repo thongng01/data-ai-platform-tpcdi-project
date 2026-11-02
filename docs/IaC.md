@@ -1,28 +1,23 @@
 # Infrastructure as Code
 
-This reference describes the Compose configuration, service connections, and operating commands. It distinguishes configured behavior from runtime evidence. Design choices are in [Project Design](Project-Design.md), and implementation state is in [Status](Status.md).
+This reference describes the Compose configuration, service connections, resource limits, and operating commands. Layer 1 storage and pipeline design choices are in [Data Platform](Data-Platform.md).
 
 ## 1. How to Run It
 
-Run commands from the repository root in WSL, where the project filesystem and Docker socket are available. The [Makefile](../Makefile) defines these commands.
+Run commands directly from the repository root in WSL, where the project filesystem and Docker socket are available. Passing `--project-directory infra` tells Docker Compose to read `infra/.env` (which sets `COMPOSE_FILE` across all five Compose files) and resolve relative paths against `infra/`.
 
-| Command | Effect and prerequisites |
+| Command | Effect and Prerequisites |
 |---|---|
-| `make up-core` | Starts PostgreSQL, SeaweedFS, Hive Metastore, and Trino. Required local images must be available or buildable. |
-| `make bootstrap` | Creates the configured buckets, database objects, and prefix markers against the core services. |
-| `make verify` | Runs the platform smoke checks. A pass checks those operations, not every pipeline or optional service. |
-| `make up-compute` | Starts the Spark master and worker. |
-| `make generate` | Regenerates `misc/sample_run` with the existing generator at scale 0.02. It deletes the prior output first. |
-| `make dp1 BATCH=Batch1` | Stops the Thrift server, publishes local source files, and runs the existing landing-to-bronze-to-silver job. It requires generated input and the core and compute services. |
-| `make up-dbt` | Starts the Spark master, worker, and Thrift server. |
-| `make spark-state` | Reads the Spark master's workers and applications. |
-| `make list-ports` | Prints published ports from resolved Compose configuration and checks for duplicates within that configuration. |
-| `make stop` | Stops containers and retains data. |
-| `make down` | Removes containers and retains named volumes. |
-
-`make help` lists the available targets. `make up-stream`, `make up-airflow`, and `make up-governance` are not defined. The optional profiles have incomplete build inputs; see [Status](Status.md#known-defects) before attempting to run them. `make images` also includes the incomplete governance build.
-
-The accepted DP1 boundary is source to bronze. The existing `make dp1` command continues to silver and can delete earlier silver batches in its default overwrite mode. It does not implement the revised pipeline boundary.
+| `docker compose --project-directory infra up -d postgres seaweedfs hive-metastore trino` | Starts PostgreSQL, SeaweedFS, Hive Metastore, and Trino. |
+| `docker compose --project-directory infra --profile init run --rm bootstrap` | Creates the configured buckets, databases, and prefix markers against the core services. |
+| `docker compose --project-directory infra --profile tools run --rm tools` | Runs the platform smoke checks across Postgres, SeaweedFS, Hive Metastore, and Trino. |
+| `docker compose --project-directory infra --profile compute up -d spark-master spark-worker` | Starts the Spark master and worker. |
+| `docker compose --project-directory infra --profile compute --profile dbt up -d spark-master spark-worker spark-thrift` | Starts the Spark master, worker, and HiveServer2 Thrift endpoint for dbt. |
+| `.venv/bin/python -m data.generator run --config data/generator/configs/small.yaml --output local/sample_run` | Generates a validated TPC-DI dataset in `local/sample_run`. |
+| `curl -fsS http://localhost:8082/json/` | Reads the Spark standalone master's registered workers and applications JSON state. |
+| `docker compose --project-directory infra config` | Prints the fully resolved Compose configuration across active profiles. |
+| `docker compose --project-directory infra stop` | Stops running containers and retains data. |
+| `docker compose --project-directory infra down --remove-orphans` | Removes containers and retains named volumes (add `--volumes` to remove data volumes). |
 
 ## 2. Environment
 
@@ -32,7 +27,7 @@ Container image settings are in `infra/.env`. Compose reads that file to substit
 
 ## 3. The Compose Files
 
-`infra/.env` sets `COMPOSE_FILE` to five files. The Makefile runs Compose from `infra/`, and profiles select the optional services.
+`infra/.env` sets `COMPOSE_FILE` to five files. Running `docker compose --project-directory infra` loads `infra/.env`, and `--profile` flags select the optional service groups.
 
 | File | Services | Profiles |
 |---|---|---|
@@ -48,13 +43,13 @@ Services share `edai-net` and resolve each other by service name. If a selected 
 
 ### 4.1 Storage
 
-PostgreSQL uses `postgres:16-alpine`. Bootstrap creates `warehouse`, `metastore`, `airflow`, and `datahub` in one instance. `shared_buffers=512MB` sets shared buffer capacity. `default_statistics_target=200` increases the detail available to the planner and the cost of collecting statistics. It is not a fixed sample of 200 rows. The presence of a `warehouse` database does not settle the proposed gold placement.
+PostgreSQL uses `postgres:16-alpine`. Bootstrap creates `warehouse`, `metastore`, `airflow`, and `datahub` in one instance. `shared_buffers=512MB` sets shared buffer capacity. `default_statistics_target=200` increases the detail available to the planner and the cost of collecting statistics. It is not a fixed sample of 200 rows.
 
 SeaweedFS runs master, volume server, filer, and S3 gateway through one `weed server` command. The mounted `infra/seaweedfs/s3.json` defines the S3 identities. `-volume.max=0` derives the volume limit from available disk capacity; `-volume.minFreeSpacePercent=5` reserves free space. Volume allocation failures can surface as S3 retries; see [section 8.3](#83-the-object-store-runs-out-of-volumes).
 
 Hive Metastore uses `starburstdata/hive:3.1.2-e.18` and PostgreSQL's `metastore` database. The service provides the image's required environment variables, including empty values for unused cloud settings. `SERVICE_OPTS` supplies JVM and metastore properties.
 
-Trino uses `trinodb/trino:476`. Its Hive catalog reads table metadata from Hive Metastore and objects from SeaweedFS. The existing batch job does not use Trino to ingest data. The [Hive catalog configuration](../infra/trino/catalog/hive.properties) disables exclusive create with `s3.exclusive-create=false`; the earlier SeaweedFS run rejected conditional writes with HTTP 501.
+Trino uses `trinodb/trino:476`. Its Hive catalog reads table metadata from Hive Metastore and objects from SeaweedFS. The [Hive catalog configuration](../infra/trino/catalog/hive.properties) disables exclusive create with `s3.exclusive-create=false` because SeaweedFS rejects conditional writes with HTTP 501.
 
 ### 4.2 Compute
 
@@ -74,19 +69,17 @@ The Flink configuration names local image `edai/flink:1.20.1`, one job manager, 
 
 ### 4.4 Orchestration
 
-The Airflow configuration names local image `edai/airflow:2.10.5` and selects `LocalExecutor`. It mounts DAGs, connection settings, and variables from `orchestration/`. Initialization attempts to import those settings. Both import commands allow failure with `|| true`, so a successful initialization exit does not prove that the imports succeeded.
-
-LocalExecutor runs task processes from the scheduler. The additional `airflow-worker` service with a `worker` command is inconsistent with that execution model. The missing image build and this configuration need resolution before the profile can be treated as an operating Airflow deployment.
+The Airflow configuration names local image `edai/airflow:2.10.5`, selects `LocalExecutor`, and mounts DAGs, connection settings, and variables from `data/airflow/`.
 
 ### 4.5 Governance
 
 The DataHub definitions use version `v1.5.0.6` for upgrade, GMS, and frontend images. OpenSearch uses `2.19.3`. The configuration points DataHub at PostgreSQL and the Kafka service in the stream profile. Enabling only the governance profile does not start Kafka.
 
-The ingestion runner mounts `governance/` and names a recipe path. A service definition does not establish that a recipe, dataset lineage, or validation publication exists. See [Status](Status.md#what-exists).
+The ingestion runner mounts `data/datahub/` and names a recipe path. A service definition alone does not establish that a recipe, dataset lineage, or validation publication exists.
 
 ## 5. Ports
 
-These are the defaults in `infra/.env`. Other stacks can use the same host ports. `make list-ports` checks this project's definitions, not every process listening on the host.
+These are the defaults in `infra/.env`. Other stacks on the host can use the same ports.
 
 | Host port | Service endpoint |
 |---|---|
@@ -129,7 +122,7 @@ Compose declares the limits below. They are limits, not measured use or a guaran
 | DataHub upgrade, frontend | 1G each | Upgrade is a one-shot process. |
 | DataHub GMS | 1536M | Kafka and OpenSearch add separate costs. |
 
-`bash misc/tools/check_memory.sh` reads the resolved core and compute limits. It does not measure runtime memory. Leave capacity for the operating system, Docker, drivers, and concurrent one-shot tasks when selecting profiles.
+Leave capacity for the operating system, Docker, drivers, and concurrent one-shot tasks when selecting profiles.
 
 ## 7. Why These Choices
 
@@ -143,62 +136,42 @@ The earlier build used external Hive tables with explicit object locations. In t
 
 ### 7.3 Hive DDL Rather Than the DataSource V2 Syntax
 
-The existing tables use `PARTITIONED BY` and `STORED AS PARQUET` so Hive Metastore stores the SerDe and file-format metadata used by Trino's Hive connector. Spark's `USING parquet` syntax has different partition declaration rules. Any replacement DDL or table format needs a read/write compatibility check across the selected engines.
+Hive DDL (`PARTITIONED BY` and `STORED AS PARQUET`) stores the SerDe and file-format metadata used by Trino's Hive connector, whereas Spark's `USING parquet` syntax has different partition declaration rules. Any table format choice requires verifying both read and write compatibility across Spark, dbt, and Trino.
 
 ### 7.4 One Postgres Instance, Four Databases
 
-Separate databases keep each application's tables in a separate namespace while sharing one process and buffer pool. They still share memory, connections, storage, and failure exposure. This configuration reduces local service overhead but does not provide process or resource isolation. PostgreSQL gold storage remains a proposal.
+Separate databases keep each application's tables in a separate namespace while sharing one process and buffer pool. They still share memory, connections, storage, and failure exposure. This configuration reduces local service overhead but does not provide process or resource isolation.
 
 ## 8. Operating Constraints
 
-These operating notes explain failure mechanisms found in the earlier build.
+These operating notes document service behaviors that constrain pipeline and storage configuration.
 
 ### 8.1 A Path Write Is Not a Table Write
 
-A Parquet path write can create partition directories without registering them in Hive Metastore. A query engine that reads registered partitions can then return no rows. The existing jobs call `MSCK REPAIR TABLE` after partitioned writes. A table-aware insert can register partitions as part of its write; the correct choice depends on who owns the table and its location.
+A Parquet path write can create partition directories without registering them in Hive Metastore, causing a query engine that reads registered partitions to return no rows. Register partitions through a catalog write, `MSCK REPAIR TABLE`, or a transactional table format (Delta Lake or Iceberg).
 
 ### 8.2 A HiveServer2 Takes the Whole Worker
 
-A long-lived Thrift server can occupy all worker cores and leave a batch application waiting with `Initial job has not accepted any resources`. Setting `spark.executor.cores` limits each executor, not the total application's cores. Inspect application resource requests with `make spark-state`.
+A long-lived Thrift server can occupy all worker cores and leave a batch application waiting with `Initial job has not accepted any resources`. Setting `spark.executor.cores` limits each executor, not the total application's cores (`spark.cores.max`). Inspect application resource requests on the Spark master UI (`http://localhost:8082/json/`).
 
-The project separates the Thrift server into the `dbt` profile, and `make dp1` stops it before submission. dbt-spark can use a Thrift endpoint; it does not accept a Spark master URL as a Thrift endpoint. Session mode starts a PySpark session, whose Spark configuration determines its execution target. It does not inherently require local execution.
+The project separates the Thrift server into the `dbt` profile so batch jobs can run without contention. dbt-spark can connect through the Thrift endpoint or run in session mode.
 
 ### 8.3 The Object Store Runs Out of Volumes
 
-SeaweedFS can report `failed to find writable volumes for collection:landing` while the S3 client reports retries or `InternalError`. A collection needs writable volume capacity. The current command uses `-volume.max=0` after an earlier fixed cap was reached. Check both the S3 response and server logs; increasing a volume count cannot fix exhausted disk space. `misc/tools/s3_probe.py` provides a request-level check.
-
-Each bucket is a separate collection. With the defaults, a new collection can create up to 7 volumes at once, each with a 30 GiB size limit (`-master.volumeSizeLimitMB`, default 30720). `-volume.max=0` sets the volume limit to free disk space divided by that size limit, so the limit falls as data fills the disk. When the infrastructure is rebuilt, set the volume growth count to 1 and a smaller volume size limit; the exact limit remains open ([SeaweedFS guidance](https://github.com/seaweedfs/seaweedfs/wiki/Optimization-for-Many-Small-Buckets)).
+Each SeaweedFS bucket is a separate collection with its own volumes. With default settings, a new collection can allocate up to 7 volumes at once, each with a 30 GiB size limit (`-master.volumeSizeLimitMB`, default 30720), while `-volume.max=0` derives the total volume limit from remaining free disk space divided by that size limit. Set the volume growth count to 1 and use a smaller volume size limit so multiple buckets (`staging`, `lakehouse`, `platform`) do not exhaust volume slots ([SeaweedFS guidance](https://github.com/seaweedfs/seaweedfs/wiki/Optimization-for-Many-Small-Buckets)).
 
 ### 8.4 PySpark Launcher Arguments
 
-The earlier build associated a malformed launch and zero-core request with `PYSPARK_SUBMIT_ARGS`. The current Spark image leaves it unset. This variable belongs to PySpark's launcher; its presence is not evidence that every direct `spark-submit` invocation appends it. Inspect the actual launch arguments when diagnosing a resource request.
+Leave `PYSPARK_SUBMIT_ARGS` unset in the Spark container image unless explicitly needed; PySpark's launcher uses it, and an unintended value can override submission resource flags.
 
-### 8.5 An Off-by-One Bind Mount Looks Like a Working Mount
+### 8.5 Relative Bind Mounts in Docker Compose
 
-Relative bind paths resolve against the base Compose file directory, `infra/`. A repository sibling is therefore `../pipelines`, not `../../pipelines`. Short bind syntax can create a missing host directory and mount an empty path. Inspect the resolved configuration and source path when expected code or settings are absent. The current Flink submit mount has this path defect, recorded in [Status](Status.md#known-defects).
+Relative bind paths resolve against the base Compose file directory (`infra/`). A repository sibling is therefore `../data`, not `../../data`. Short bind syntax creates a missing host directory and mounts an empty path if the relative depth is off by one.
 
 ### 8.6 `spark-class` Does Not Read `spark-defaults.conf`
 
-The cluster configuration uses `start-master.sh`, `start-slave.sh`, and `start-thriftserver.sh`. These scripts start different kinds of processes. Master and worker daemons use daemon settings and command arguments; a Spark application uses submission settings. Do not assume that every start script wraps `spark-submit` or that application defaults configure the master daemon. `make spark-conf` prints the configuration resolved by a submitted job.
+The cluster configuration uses `start-master.sh`, `start-slave.sh`, and `start-thriftserver.sh`. Master and worker daemons use daemon settings and command arguments, whereas a Spark application reads `spark-defaults.conf` during `spark-submit`.
 
-### 8.7 S3 Has No Directories, and Spark Checks for One
+### 8.7 S3 Prefix Markers for Spark Event Logs
 
-S3 stores object keys rather than directories. Filesystem clients infer directories from prefixes and marker objects. Bootstrap creates `_keep` objects under the configured output prefixes because the earlier Spark event-log initialization required a directory-like prefix.
-
-### 8.8 An Unfiltered Union Doubles an Evolved File
-
-Parsing every source row under two schemas and unioning both results duplicates the input. Filter each branch by its declared field count before the union, then account for matched and unmatched source rows. The existing pure `variants.validate_split` helper checks arithmetic, but it does not prove that the Spark parser measured unmatched rows correctly. The current parser counts them after replacing the original frame, so unknown shapes can disappear without a warning.
-
-### 8.9 A Business Key Narrower Than the Record Deletes Real Rows
-
-A deduplication key must distinguish repeated delivery from separate business events. Watch actions at different times and trade status changes are separate records even when other fields agree. The existing job uses whole-record keys for most tables. Daily `Trade.txt` still needs review against the specification: `T_ID` identifies the trade, and each CDC record represents a change. A generated column name or a sample field position does not define benchmark identity.
-
-### 8.10 Partition Replacement and Reruns
-
-Dynamic partition overwrite replaces the partitions touched by the write. Files outside those partitions can remain, including files left by an earlier layout. The existing silver job deletes its whole output location before overwrite. That removes stray files but also removes valid earlier batches. This is a known data-loss defect, not a general rerun strategy. An append also needs duplicate and retry rules; sharing a location does not make append safe by itself.
-
-### 8.11 Shutdown Deadlines and Run Reports
-
-The earlier run blocked during Spark shutdown while closing the event log against SeaweedFS. `stop_session` now waits up to 90 seconds on a separate thread. The caller writes the report after that wait, including `stopped_cleanly`. If cleanup does not finish, the code signals the parent JVM and exits directly.
-
-The report's `ok` field records whether processing raised an exception. It is separate from clean shutdown and does not prove business correctness. If the report remains only in the container's default `/tmp` path, removing the container removes that file; retain stdout or configure a writable persistent report path.
+S3 stores object keys rather than directories. Bootstrap creates `_keep` marker objects under configured output prefixes because Spark's event-log writer checks for a directory-like prefix at startup.

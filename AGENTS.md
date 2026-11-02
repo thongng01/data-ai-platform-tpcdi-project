@@ -4,16 +4,16 @@ Build the data, ML, and agent platform with the owner, and explain the engineeri
 
 ## Working Agreement
 - **Owner drafts**: Refine in place. Keep structure, density, and tone; fix facts; add sections only when asked.
-- **Decisions**: Work through design and architecture choices with the [design method](docs/Design-Method.md), and show the reasoning at each step. Record the outcome as a [decision record](docs/Documentation-Guide.md#decision-records). A choice is Decided only when the owner made it; agent recommendations stay Proposed.
-- **Status record**: One short record: position, open decisions, next step, what exists, and known defects. Update it at the end of each task.
-- **Resuming**: Start from the status record. Open older records only when it points to them.
-- **Restructuring**: Moving, renaming, splitting, and merging documents is normal. Update incoming links in the same change, then run the documentation checks.
-- **Finding things**: The [documentation guide](docs/Documentation-Guide.md) maps each document to its purpose; the README shows the repository layout.
-- **Supporting files**: Temporary work in `misc/tmp/`, reusable tools in `misc/tools/`. Follow the [misc guide](misc/README.md).
+- **Decisions**: Work through design and architecture choices with the [design method](workflow/Design-Method.md) in conversation, and record the distilled result in the owning document ([decision rules](workflow/Documentation-Guide.md#4-recording-design-decisions)). Only choices accepted by the owner enter the system design as settled decisions; open items stay in [Status](workflow/Status.md).
+- **Status record**: Keep working state in [Status](workflow/Status.md): position, accepted and open decisions, next step, what exists, and known defects. Update it at the end of each task. Never put `(open)` markers or `Status.md` links in `README.md` or `docs/`.
+- **Resuming**: Start from [Status](workflow/Status.md). Open older records in `local/archive/` only when it points to them.
+- **Restructuring**: Moving, renaming, splitting, and merging documents is normal. Update incoming links in the same change, then run `.venv/bin/python workflow/tools/check_docs.py`.
+- **Finding things**: The [workflow overview](workflow/README.md) and [documentation guide](workflow/Documentation-Guide.md) map each directory and document to its purpose; the [root README](README.md) shows the repository layout.
+- **Supporting files**: Temporary work in `local/tmp/`, local archives and references in `local/`, and reusable tools in `workflow/tools/`. Follow the [workflow guide](workflow/README.md).
 
 ## Documents
-- **Writing**: Follow the documentation guide's style section.
-- **Diagrams**: ERDs are Mermaid `.mmd` files with a kind tag per table and no styling directives; other diagrams are editable draw.io files. Both render with the shared tooling. Read the [diagram guide](docs/Diagram-Guide.md) and the [tool instructions](misc/tools/diagrams/README.md) first.
+- **Writing**: Follow the [documentation guide](workflow/Documentation-Guide.md).
+- **Diagrams**: ERDs are Mermaid `.mmd` files with a kind tag per table and no styling directives; other diagrams are editable draw.io files. Both render with the shared tooling. Read the [diagram guide](workflow/Diagram-Guide.md) and the [tool instructions](workflow/tools/diagrams/README.md) first.
 
 ## Visual Artifacts
 

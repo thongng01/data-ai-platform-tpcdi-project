@@ -9,7 +9,7 @@
 #   compose.orchestration.yaml airflow
 #   compose.governance.yaml    datahub + opensearch
 #
-# Start everything with `make up` from the repo root, or read docs/IaC.md.
+# Start from the repo root with `docker compose --project-directory infra up -d`; see docs/IaC.md.
 
 name: ${COMPOSE_PROJECT_NAME}
 
@@ -205,7 +205,7 @@ services:
 
   # ------------------------------------------------------------- bootstrap --
   # One-shot. Creates the S3 buckets and the Postgres databases, then exits.
-  # Run it with `make bootstrap`. It is safe to run repeatedly.
+  # Run with `docker compose --project-directory infra --profile init run --rm bootstrap`.
   bootstrap:
     image: ${BOOTSTRAP_IMAGE}
     build:
@@ -268,7 +268,7 @@ services:
       # command-line arguments, because shell quoting across PowerShell, wsl,
       # bash and `docker compose run` mangles a multi-word argument more often
       # than not. See docker/tools/tools/sql_file.py.
-      - ../misc:/opt/misc:ro
+      - ../workflow:/opt/workflow:ro
 
 networks:
   edai-net:

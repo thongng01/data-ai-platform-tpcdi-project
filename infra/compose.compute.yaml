@@ -1,7 +1,7 @@
 # Compute: the Spark cluster that runs DP1, DP2 and DP3.
 #
 # Behind the `compute` profile, because these containers are the largest in the
-# stack. Start with `make up-compute`.
+# stack. Start with `docker compose --project-directory infra --profile compute up -d`.
 #
 # Four containers:
 #   spark-master      standalone cluster manager, serves the Spark UI
@@ -27,9 +27,9 @@
 # "Initial job has not accepted any resources". There is no exception to raise
 # and no stack trace to read, because nothing has failed yet.
 #
-# So: `make up-compute` gives the cluster entirely to DP1 and DP3. `make up-dbt`
-# adds HiveServer2 for a DP2 run. Run them together only when memory allows, and
-# see the table in docs/IaC.md.
+# So: `--profile compute` gives the cluster entirely to DP1 and DP3. Adding
+# `--profile dbt` starts HiveServer2 for a DP2 run. Run them together only when
+# memory allows, and see the table in docs/IaC.md.
 #
 # The alternative, `method: session`, runs dbt's models in an in-process
 # PySpark session inside the dbt container. It needs no Thrift server at all and
@@ -102,7 +102,7 @@ services:
       - ./spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
       # Job code is mounted, not copied into the image, so editing a job needs
       # no rebuild and no container restart.
-      - ../pipelines:/opt/pipelines:ro
+      - ../data/spark:/opt/pipelines:ro
     ports:
       - "${SPARK_WORKER_UI_PORT}:8081"
     depends_on:
@@ -144,7 +144,7 @@ services:
       - "${SPARK_THRIFT_PORT}:10001"
     volumes:
       - ./spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
-      - ../pipelines:/opt/pipelines:ro
+      - ../data/spark:/opt/pipelines:ro
     depends_on:
       # `started`, not `healthy`: a worker that reaches the master before it is
       # ready retries on its own, whereas `healthy` makes every `compose up`
@@ -182,8 +182,8 @@ services:
       S3_SECRET_KEY: ${SEAWEEDFS_SECRET_KEY}
     volumes:
       - ./spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
-      - ../pipelines:/opt/pipelines:ro
-      - ../dbt:/opt/dbt:ro
+      - ../data/spark:/opt/pipelines:ro
+      - ../data/dbt:/opt/dbt:ro
       # Read-write: the generator's output is the publish step's input, and the
       # job writes its run report back here for the docs to quote.
-      - ../misc:/opt/misc
+      - ../local:/opt/local

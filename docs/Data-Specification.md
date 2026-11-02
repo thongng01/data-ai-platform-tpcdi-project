@@ -30,7 +30,7 @@ TPC-DI defines one historical load followed by two daily batches. This project k
 
 | Phase | Path | Starting State | Coverage | Work |
 | --- | --- | --- | --- | --- |
-| **Historical load (Batch 1)** | Files in `historical/` | Empty warehouse | `start_date` through `end_date` (length open) | Load reference data and full extracts, build SCD2 history, and calculate opening cash balances and holdings. |
+| **Historical load (Batch 1)** | Files in `historical/` | Empty warehouse | `start_date` through `end_date` | Load reference data and full extracts, build SCD2 history, and calculate opening cash balances and holdings. |
 | **Daily batches (Batch 2+)** | Files in `incremental/YYYYMMDD/` | Previous date complete | One `data_date` per batch, from the day after `end_date`, up to one year | Apply the day's CDC changes (`I`, `U`), new activity, the full `Prospect.csv` snapshot, and FINWIRE on release dates. |
 | **Cash stream** | Events on Kafka | Final historical cash balances | Cash movements after `end_date`, continuously | Update running balances, window aggregates, and daily balances as events arrive ([Section 2.4](#24-batch-to-stream-handoff)). |
 
@@ -39,9 +39,9 @@ Batch 1 requires at least one year of prices and four quarters of earnings to ca
 ### 2.2 Source Cadence
 Each source follows one cadence after the historical load:
 - **Daily, in each daily batch**: `Customer.txt`, `Account.txt`, `Trade.txt`, `HoldingHistory.txt`, `WatchHistory.txt`, `DailyMarket.txt`, and the full `Prospect.csv` snapshot.
-- **Quarterly, in the daily batch of the release date**: `FINWIREyyyyQq`. Q1 results release April 30, Q2 results July 31, Q3 results October 31, and Q4 results January 31 of the following year. The release date's batch applies company and security postings before that day's trades and prices. All postings in a quarter's file, including company and security changes, release together on the release date. Release time of day, extra delivery delay, and how often companies and securities change remain open.
+- **Quarterly, in the daily batch of the release date**: `FINWIREyyyyQq`. Q1 results release April 30, Q2 results July 31, Q3 results October 31, and Q4 results January 31 of the following year. The release date's batch applies company and security postings before that day's trades and prices. All postings in a quarter's file, including company and security changes, release together on the release date.
 - **Continuous, through the cash stream**: `CashTransaction` movements.
-- **Once, in the historical load**: `CustomerMgmt.xml`, `TradeHistory.txt`, `HR.csv`, and the six reference files. Later customer, account, and trade changes arrive through `Customer.txt`, `Account.txt`, and `Trade.txt`. HR and reference data stay static for the run; `DimBroker` keeps its history columns with one version per broker. Ongoing HR and reference updates are deferred.
+- **Once, in the historical load**: `CustomerMgmt.xml`, `TradeHistory.txt`, `HR.csv`, and the six reference files. Later customer, account, and trade changes arrive through `Customer.txt`, `Account.txt`, and `Trade.txt`. HR and reference data stay static for the run; `DimBroker` keeps its history columns with one version per broker.
 
 *Note: The fixed FINWIRE release schedule simulates an earnings feed, not statutory filing deadlines. Earnings announcements can precede formal filings ([SEC guidance](https://www.investor.gov/sites/default/files/readan8k.pdf)).*
 
@@ -51,16 +51,14 @@ Each source follows one cadence after the historical load:
 - **`data_date`**: The business date that a daily extract represents, encoded in its folder and file name. Extraction and arrival dates do not change it.
 - **Historical range**: Two run parameters of the historical load, inclusive `start_date` and `end_date`. The provider sends no range, and the load does not check record dates against it. The end date dates the historical `Prospect.csv` snapshot. FINWIRE and reference files can begin before `start_date`.
 - **Cash event date**: The UTC date of `CT_DTS`. The delivery time is a separate value that measures lateness.
-- **`BatchID`**: Identifies a load, not a folder. Its assignment is deferred with catch-up and rerun rules.
+- **`BatchID`**: Identifies a load run rather than a source folder.
 
 ### 2.4 Batch-to-Stream Handoff
 - **Split**: Cash movements dated on or before `end_date` load in the historical load. Later movements arrive only as stream events; daily batches carry no cash files.
-- **Start state**: The stream starts from the final historical balances, keyed by natural `AccountID`, and never reprocesses historical movements ([handoff constraints](Project-Design.md#32-history-scd2--batch-to-stream-consistency)).
+- **Start state**: The stream starts from the final historical balances, keyed by natural `AccountID`, and never reprocesses historical movements ([handoff rules](Data-Platform.md#4-stream-processing-kafka-and-flink)).
 - **Daily balances**: After the historical load, `FactCashBalances` rows come from the stream, dated by cash event date.
 - **Duplicates**: Repeated deliveries of one cash movement share an Event ID and count once.
-- **Late events**: A late event changes its day's balance and every later balance. The lateness limit and correction rule remain open.
-- **Open, account keys for early events**: A cash event can refer to an account whose daily batch has not loaded yet, because the stream does not wait for daily files. How stream outputs resolve account dimension keys remains open.
-- **Open, simulated clock**: How the delivery step paces daily files and cash events on one simulated calendar remains open.
+- **Late events**: A late event changes its day's balance and every later balance.
 
 ## 3. Physical Source Files & Ingestion Rules
 The project uses all 18 TPC-DI business and reference source families. It does not generate or ingest `BatchDate.txt`; the historical range is a run parameter of the historical load (Section 2.3). Metadata used only for formal benchmark audit validation is also excluded.
@@ -89,11 +87,10 @@ The tables and schema headings use the standard source names. The naming rules b
 - **Historical files**: Use `historical/` with standard names such as `CustomerMgmt.xml`, `Trade.txt`, and `Prospect.csv`. Add no date suffix. Keep the existing year and quarter in `FINWIREyyyyQq`.
 - **Daily files**: Use `incremental/YYYYMMDD/<Source>_YYYYMMDD.<extension>`, for example `incremental/20170708/Customer_20170708.txt` and `incremental/20170708/Prospect_20170708.csv`. The folder and file name carry the same `data_date`, written as plain `YYYYMMDD`. Delivery delays and retries do not change it.
 - **Quarterly files**: Name `FINWIREyyyyQq` by the year and quarter of `PTS`, not the financial reporting period. For example, Q1 2026 results published April 30 belong in `FINWIRE2026Q2`; their `Year` and `Quarter` fields remain `2026` and `1`. Keep the existing name format without a daily date suffix. Publish only records released by that delivery, never future postings. Each file arrives in the daily folder of its release date, for example `incremental/20260430/FINWIRE2026Q2`. That date's batch applies it before that day's trades and prices.
-- **Generation and delivery**: Generate source data locally first. A separate delivery step sends batch files to Staging and cash events after Batch 1 to Kafka. Delivery timing remains open.
-- **Delivery completeness**: The pipeline keeps a predefined list of expected files for each delivery: the historical set, the daily set for every date, and `FINWIREyyyyQq` on release dates. The provider sends no control or manifest file. A delivery is complete when every expected file is present. A file with zero records means no activity; a missing file means the delivery is incomplete. Late-file handling remains open.
-- **Catch-up and reruns**: Multiple-date loads, out-of-order arrival, repeated and corrected deliveries, and `BatchID` assignment are deferred to pipeline design.
-- **S3 placement**: The paths above are relative to the `staging` bucket ([bucket rationale](Project-Design.md#25-object-storage-layout-rationale)). S3 groups object keys by prefix, not by directories or tags. The platform holds one dataset at a time, so keys have no dataset level.
-- **Generator summary**: Keep one reference summary on local disk beside the generated dataset; it is never uploaded. It records generation settings, output counts, and the data characteristics and problems we choose to simulate. Ingestion does not read it ([generator rules](Project-Design.md#33-generator)).
+- **Generation and delivery**: Generate source data locally first. A separate delivery step sends batch files to Staging and cash events after Batch 1 to Kafka.
+- **Delivery completeness**: The pipeline keeps a predefined list of expected files for each delivery: the historical set, the daily set for every date, and `FINWIREyyyyQq` on release dates. The provider sends no control or manifest file. A delivery is complete when every expected file is present. A file with zero records means no activity; a missing file means the delivery is incomplete.
+- **S3 placement**: The paths above are relative to the `staging` bucket ([bucket rationale](Data-Platform.md#62-object-storage-layout-and-dataset-scope)). S3 groups object keys by prefix, not by directories or tags. The platform holds one dataset at a time, so keys have no dataset level.
+- **Generator summary**: Keep one reference summary on local disk beside the generated dataset; it is never uploaded. It records generation settings, output counts, and the data characteristics and problems we simulate. Ingestion does not read it ([generator rules](Data-Platform.md#2-data-generation-and-problem-injection)).
 
 ## 4. Data Zones (Medallion Architecture)
 Data moves through four distinct zones:
@@ -103,16 +100,13 @@ Data moves through four distinct zones:
 | 1 | **Staging** | Immutable raw batch files as delivered. The cash stream enters through Kafka instead. | One file | SeaweedFS `staging` bucket |
 | 2 | **Bronze** | Source records and received events as delivered, including duplicates and parse failures. Preserves provenance. | One source record or one delivery | SeaweedFS `lakehouse` bucket, `bronze/` tables |
 | 3 | **Silver** | Cleaned, typed, deduplicated, and conformed records. Ready for joins. | One validated business record | SeaweedFS `lakehouse` bucket, `silver/` tables |
-| 4 | **Gold** | The warehouse (Section 6), cash stream outputs, and ML tables (Section 7). | Per business entity or metric | PostgreSQL (proposed) |
-
-The lakehouse table format remains open.
+| 4 | **Gold** | The warehouse (Section 6), cash stream outputs, and ML tables (Section 7). | Per business entity or metric | PostgreSQL and `lakehouse` tables |
 
 ### Retention and History
-The versioning baseline uses existing mechanisms ([rationale](Project-Design.md#26-data-versioning-rationale)):
+The versioning baseline uses existing mechanisms ([rationale](Data-Platform.md#63-data-versioning-baseline)):
 - **Raw retention**: Staging keeps every delivered file unchanged for the active dataset. Replaying it rebuilds Bronze, Silver, and Gold.
 - **Provenance and rejects**: Bronze preserves provenance and parse failures. Data alerts go to `DImessages`.
 - **Business history**: SCD2 dimensions record what was true on each date (Section 6).
-- **Deferred**: Corrected deliveries, table snapshots, and dead-letter handling.
 
 ### Silver Layer Design
 The TPC-DI specification does not define a silver layer. The Silver layer is the project's own model, with the following traits:
@@ -139,7 +133,7 @@ The TPC-DI specification does not define a silver layer. The Silver layer is the
 | `Prospect.csv` + `DimCustomer` | Insert or update prospects, calculate tags, and match active customers. | `Prospect` |
 
 ## 6. Gold Warehouse
-The Gold layer uses the TPC-DI warehouse model with ongoing FINWIRE releases. Dimensions describe business entities; facts record activity. Financial publication and availability fields remain open.
+The Gold layer uses the TPC-DI warehouse model with ongoing FINWIRE releases. Dimensions describe business entities; facts record activity.
 
 **SCD2 Dimension Rules**:
 - **Keys**: A natural key (`CustomerID`) identifies the entity across time. A surrogate key (`SK_CustomerID`) identifies one specific version.
@@ -166,7 +160,7 @@ The Gold layer uses the TPC-DI warehouse model with ongoing FINWIRE releases. Di
 | `DImessages` | Load Log | Status messages and data alerts | One message | The load process | Each batch | Each batch |
 
 ### Gold Layer Entity Relationships
-The ERD shows all 19 tables, their key fields, and the main entity relationships. Financial publication and availability fields remain open and are not shown. The `Prospect` relationship is a match by name and address, not a key.
+The ERD shows all 19 tables, their key fields, and the main entity relationships. The `Prospect` relationship is a match by name and address, not a key.
 
 ![Gold layer ERD with all 19 tables, their keys, and their relationships.](diagrams/data-specification/gold-erd.png)
 
@@ -180,7 +174,7 @@ Cash movements after the historical load arrive as Kafka events and follow the c
 
 | Cash Event Field | Type | Meaning |
 | --- | --- | --- |
-| Event ID | Project-defined (format open) | Identifies the cash movement. A repeated delivery keeps the same ID. |
+| Event ID | Project-defined identifier | Identifies the cash movement. A repeated delivery keeps the same ID. |
 | `CT_CA_ID` | `NUM(11)` | Account ID |
 | `CT_DTS` | `DATETIME` | Event time |
 | `CT_AMT` | `SNUM(10,2)` | Signed amount (+ adds cash, - removes cash) |
@@ -193,23 +187,23 @@ Cash movements after the historical load arrive as Kafka events and follow the c
 | Cash events | Silver | One cash movement | Validated events with duplicates removed |
 | `FactCashBalances` | Gold | One account per day | TPC-DI daily balance: previous balance plus the day's net movement |
 | Running balance | Gold | One account | Current cash after each event |
-| Window aggregates | Gold | One account per window | Inflow, outflow, net movement, and count. Window sizes are open. |
+| Window aggregates | Gold | One account per window | Inflow, outflow, net movement, and count |
 
 ### 7.2 ML Forecasting & Alerts
-The model forecasts each account's future net cash movement. A policy adds the forecast to current cash and flags accounts that fall below a minimum set by customer tier:
+The model forecasts each account's future net cash movement ([ML Platform](ML-Platform.md)). A policy adds the forecast to current cash and flags accounts that fall below a minimum set by customer tier:
 
 ```text
 projected_cash = current_cash + forecast_net_movement
 alert = projected_cash < configured_minimum[customer_tier]
 ```
 
-| Data | Grain | Contents | Open |
-| --- | --- | --- | --- |
-| **Offline features** | One account per feature time | Feature history for training and backfills | Feature list and windows |
-| **Online features** | One account | Latest feature values for scoring | Storage details |
-| **Label** | One account per prediction time | Sum of unique `CT_AMT` values after the prediction time, up to the forecast cutoff | Forecast horizon |
-| **Tier minimums** | One tier (1, 2, 3) | Minimum cash per tier. TPC-DI supplies the tier; the project supplies the amount. | Amounts |
-| **Forecast and alert** | One account per as-of time | Account ID, as-of time, forecast cutoff, current cash, forecast movement, projected cash, tier, minimum, shortfall, model version, policy version | Storage schema |
+| Data | Grain | Contents |
+| --- | --- | --- |
+| **Offline features** | One account per feature time | Feature history for training and backfills (`event_timestamp` and `created`) |
+| **Online features** | One account | Latest feature values for low-latency scoring |
+| **Label** | One account per prediction time | Sum of unique `CT_AMT` values after the prediction time, up to the forecast cutoff |
+| **Tier minimums** | One tier (1, 2, 3) | Minimum cash per tier. TPC-DI supplies the tier; the project supplies the threshold amount. |
+| **Forecast and alert** | One account per as-of time | Account ID, as-of time, forecast cutoff, current cash, forecast movement, projected cash, tier, minimum, shortfall, model version, policy version |
 
 Candidate features include previous daily balance, earlier daily inflow and outflow totals, recent movement counts and amounts from Flink, and optional trade-type totals. Every feature value has an event time and an availability time; training uses only values available before the prediction time. A prediction whose forecast window has not ended has no label yet; it is not a zero movement.
 
@@ -221,7 +215,7 @@ Candidate features include previous daily balance, earlier daily inflow and outf
 - **SCD2 Collapse**: Several changes to one entity on one day become one version. The latest value wins, by timestamp and then file order.
 - **Propagation**: A new customer version gives the customer's accounts new versions. A new company version does the same for its securities.
 - **Financial periods**: Populate `Financial.FI_YEAR`, `FI_QTR`, and `FI_QTR_START_DATE` from the `FIN` record, never from the file name. Resolve `SK_CompanyID` against the company version valid at `PTS` ([PDF clause 4.5.14](TPC-DI/TPC-DI_v1.1.0.pdf)). Company and security versions use their own posting dates, not the financial quarter's start or end.
-- **Financial availability**: Preserve source publication time and platform availability separately. P/E calculations and ML features must not use a report before the relevant as-of time permits it. A report released April 30 cannot supply earnings to an April 15 as-of calculation. Follow natural company identity across SCD2 versions when combining quarterly earnings; reports need not share one `SK_CompanyID`. The physical fields, replay clock, and missing-earnings policy remain open.
+- **Financial availability**: Preserve source publication time and platform availability separately. P/E calculations and ML features must not use a report before the relevant as-of time permits it. A report released April 30 cannot supply earnings to an April 15 as-of calculation. Follow natural company identity across SCD2 versions when combining quarterly earnings; reports need not share one `SK_CompanyID`.
 - **Source dependencies**: Make new company and security identities available before normal trade and market activity refers to them. Delayed deliveries and changes effective before arrival need an explicit correction rule; do not substitute current dimension values.
 
 ### Historical Actions (XML)
@@ -463,8 +457,6 @@ Pipe-delimited, historical load only; historical rows omit `CDC_FLAG` and `CDC_D
 
 | Field | Type | Restrictions | Description |
 | --- | --- | --- | --- |
-| `CDC_FLAG` | `CDC_FLAG_T` | ‘I’ | Denotes insert |
-| `CDC_DSN` | `CDC_DSN_T` | Not NULL | Database Sequence Number |
 | `CT_CA_ID` | `IDENT_T` | Not Null | Customer account identifier |
 | `CT_DTS` | `DATETIME` | Not Null | Timestamp of when the trade took place |
 | `CT_AMT` | `VALUE_T` | Not Null | Amount of the cash transaction. |
@@ -772,7 +764,7 @@ TMB|Market Buy|0|1
 
 ### 9.3 Warehouse (Gold) Schemas
 
-Fields in table order, with the types, restrictions, and descriptions of PDF clause 3.2. Financial publication and availability fields remain open.
+Fields in table order, with the types, restrictions, and descriptions of PDF clause 3.2.
 
 <details>
 <summary>SCD2 Dimension Pattern & Common History Fields</summary>
@@ -959,7 +951,7 @@ SCD2 dimension. One row per security version.
 
 #### Financial
 
-Current state, not SCD2. One row per company per reporting quarter; retain earlier quarters when a new report arrives. The report's period comes from its fields, not the FINWIRE file quarter. Resolve the company version at `PTS`. Publication and availability metadata must remain accessible to Gold consumers; their physical fields remain open.
+Current state, not SCD2. One row per company per reporting quarter; retain earlier quarters when a new report arrives. The report's period comes from its fields, not the FINWIRE file quarter. Resolve the company version at `PTS`.
 
 | Field | Type | Restrictions | Description |
 | --- | --- | --- | --- |
@@ -1199,23 +1191,3 @@ When implementing parsers or SCD2 logic, verify these edge cases in the official
 | Trade ID size | Source `T_ID` is `NUM(15)`; the warehouse prints `TradeID` as `NUM(11)`. Store 15 digits. | 2.2.2.17, 3.2.7.1 |
 | Dependency table errors | Table 4.3 names fields that do not exist, such as `FactCashBalances.SK_TimeID`. Follow clause 3.2. | Table 4.3 |
 | Data errors | Invalid values, such as a bad customer tier, write an alert to `DImessages`; the record still loads. | 4.4.3 |
-
-## 11. Open Decisions
-| Decision | Section |
-| --- | --- |
-| Historical load length | 2.1 |
-| FINWIRE release time of day, extra delivery delay, frequency of company and security changes, and late updates | 2.2, 8 |
-| Financial publication and availability fields, replay clock, and missing-earnings policy | 6, 8, 9.3 |
-| Delivery timing (simulated clock for daily files and cash events) and late-file handling | 2.4, 3 |
-| Account key resolution for cash events that precede their daily batch | 2.4 |
-| Multiple-date loads, out-of-order arrival, repeat and corrected deliveries, and `BatchID` assignment (deferred) | 2.3, 3 |
-| Bronze provenance columns | 4 |
-| Silver table schemas | 4 |
-| Gold storage (PostgreSQL proposed) and lakehouse table format | 4 |
-| Cash event ID format | 7.1 |
-| Stream window sizes | 7.1 |
-| Lateness limit and correction rule | 2.4 |
-| Feature list, windows, and online storage | 7.2 |
-| Forecast horizon | 7.2 |
-| Tier minimum amounts | 7.2 |
-| Forecast and alert storage schema | 7.2 |

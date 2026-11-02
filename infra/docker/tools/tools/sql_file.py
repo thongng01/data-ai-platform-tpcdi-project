@@ -9,7 +9,7 @@ most common way to waste time when poking at a running system.
     SQL
     docker compose --profile tools run --rm tools python -m tools.sql_file /q.sql
 
-/q.sql is bind-mounted from misc/ into the container, so write the file inside
+/q.sql is bind-mounted from workflow/ into the container, so write the file inside
 the repository, not /tmp.
 """
 

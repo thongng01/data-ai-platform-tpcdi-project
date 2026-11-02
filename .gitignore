@@ -1,14 +1,9 @@
-# Temporary files stay local. Reusable helpers in misc/tools/ belong in Git.
-/misc/tmp/
+# Local workspace: scratch files, archives, coursework rubric, reference checkouts, and sample data.
+/local/
 
-# Keep local archives, reference checkouts, and generated data out of Git.
-/misc/archive/
-/misc/tpcdi/
-/misc/generator-feasibility/
-/misc/sample_run/
-
-# Exclude draw.io application binaries if copied into the workspace.
-/misc/tools/diagrams/drawio/
+# Exclude draw.io binaries and npm packages inside the diagram tool.
+/workflow/tools/diagrams/drawio/
+/workflow/tools/diagrams/node_modules/
 
 # Python environments. Machine-specific, regenerated from pyproject.toml.
 .venv/
@@ -24,9 +19,6 @@ __pycache__/
 *.sqlite
 *.sqlite3
 
-# Personal scratch notes. Move anything worth keeping into docs/.
-.scratch/
-
 # Local overrides and secrets. None committed; this is here so a stray .env
 # cannot land by accident.
 .env
@@ -40,13 +32,9 @@ __pycache__/
 # it and edit locally if you need to; do not put a real credential in it.
 !infra/.env
 
-# Course reference material stays local.
-docs/course/
-
 # Editor and OS noise.
 .DS_Store
 Thumbs.db
 *.swp
 .idea/
 .vscode/
-/misc/tools/diagrams/node_modules/
