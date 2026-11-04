@@ -36,6 +36,11 @@ List the attributes that decide the design before listing solutions.
 | **Scale and shape** | How large is the data, how skewed, and how many distinct values does a key have? | At least 100 GB, a skewed key, and measured high-cardinality columns |
 | **Failure** | What can be partial, duplicated, late, or retried? | S3 writes each object completely, but a delivery appears one file at a time. |
 | **Evidence** | How will we show that the result is correct? | The generator summary records measured values, not only settings. |
+| **Change and correction** | Can this be rerun safely? What must rerun when an input changes? How do we show what changed? | A corrected customer file triggers a rerun of its date and every later date; Bronze keeps both deliveries. |
+| **Lifecycle** | How long is this kept, and what removes it? How are new versions of code and models released? | The raw and clean cash topics keep the whole dataset; the features and rescore topics keep 7 days. |
+| **Security and privacy** | Who may read or change this? Does it hold personal data? What could an attacker send into it, such as SQL or prompt injection? | Customer names, addresses, tax IDs, emails, and phone numbers are personal data. |
+| **Operations** | How do we know it works? How do we recover it after a failure? | `ops.load_status` and its completeness view show which sources each date is missing. |
+| **Engineering quality** | How is it tested? Can someone else reproduce it? What does it cost to run? | The same configuration and seed reproduce the same source files byte for byte; each training run saves its dataset with the model in MLflow. |
 
 Classify each constraint before treating it as fixed:
 - **Fundamental**: Fixed by a specification or a system property. S3 cannot write several objects as one operation.
@@ -85,7 +90,7 @@ Add complexity only for one of these reasons:
 | It is cheap now and costly later | Bucket boundaries chosen before data exists |
 | Realism changes how the system must behave | Delayed FINWIRE availability creates point-in-time rules for P/E values and features. |
 
-- **Signs of too much**: A part that nobody reads or checks, such as file hashes for 100 GB of data; a boundary without a difference in requirements, such as a bucket per zone; generality for a scale nobody needs.
+- **Signs of too much**: A part that nobody reads or checks, such as computing our own hashes over 100 GB of files when no step compares them; a boundary without a difference in requirements, such as a bucket per zone; generality for a scale nobody needs.
 - **Signs of too little**: One field with two meanings, such as one batch date for both the extraction day and the data day; no way to detect an incomplete delivery; an unstated assumption, such as treating the latest record date as the historical cutoff.
 
 ## 8. Rules From This Project

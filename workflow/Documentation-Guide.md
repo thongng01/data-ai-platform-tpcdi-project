@@ -33,14 +33,15 @@ The [root README](../README.md) introduces the whole system. Five engineering do
 | --- | --- |
 | [Workflow Overview](README.md) | Architecture and rationale of the `docs/`, `workflow/`, and `local/` repository system. |
 | [Status](Status.md) | Working state: current position, accepted decisions, open decisions, next steps, what exists, and known defects. |
-| [Polars generator evidence](records/Polars-POC.md) | Working benchmark record for the Polars generator POC (50 tests, 1.01 GB validated output at 125.16 MiB peak RSS). |
+| [Polars POC record](records/Polars-POC.md) | Working benchmark record for the Polars generator proof of concept (50 tests, 1.01 GB validated output at 125.16 MiB peak resident memory). |
+| [Data Generation Draft](records/Data-Generation-Draft.md) | Working record of the generation model (business behavior, attrition signal, source recording, delivery) before the spec pass moves it into `docs/`. |
+| [Platform Design Draft](records/Platform-Design-Draft.md) | Working record of the Layer 1 platform design and the Layer 2 problem (decided, proposed, and parked items, with reasons and rejected alternatives) before the spec pass moves it into `docs/`. |
 | [Design method](Design-Method.md) | How we frame a design problem, map its attributes, research references, compare options, balance simplicity against need, and record the choice. |
 | [Diagram guide](Diagram-Guide.md) | How to create, revise, and export draw.io diagrams and Mermaid ERDs. |
 | [Diagram examples](Diagram-Examples.md) | Worked examples applying the diagram guide: a source flow, a deployment, and an ERD. |
 | [Diagram tools](tools/diagrams/README.md) | CLI instructions for `diagram.py` and `erd.py`. |
 | [TPC-DI specification](../docs/TPC-DI/TPC-DI_v1.1.0.pdf) | The benchmark's official definitions. `Data-Specification.md` summarizes the parts this project uses. |
-
-*Note: Local coursework files (`local/course/rubric.xlsx`, `local/course/coursework_proposal.md`, and `local/course/domain/`) stay in the gitignored `local/` workspace.*
+| [Coursework brief](../docs/course/coursework_proposal.md) | The course objective and three-layer scope. `docs/course/rubric.xlsx` is the grading rubric that the row and cell references in this guide point to, `docs/course/domain/` holds the course's sample e-commerce designs, and `docs/course/dump_xlsx.py` dumps the rubric to text. |
 
 ---
 
@@ -127,5 +128,5 @@ We separate **how we analyze a problem** from **how we write it in the document*
 
 ### Evidence and Working Records
 - **Rubric evidence**: Place configurations, input scales, before-and-after metrics, and annotated UI screenshots directly inside the owning layer document (`Data-Platform.md`, `ML-Platform.md`, `Agent-Platform.md`, or `IaC.md`) beside the claim they prove.
-- **Working records (`workflow/records/`)**: Store intermediate development benchmarks and POC measurements (such as `Polars-POC.md`) in `workflow/records/`, linked from `Status.md`. When the production component is built and measured, copy the final evidence into the owning layer document and archive or remove the working record.
+- **Working records (`workflow/records/`)**: Store intermediate development benchmarks, POC measurements (such as `Polars-POC.md`), and design drafts (such as `Platform-Design-Draft.md`) in `workflow/records/`, linked from `Status.md`. When the production component is built and measured, copy the final evidence into the owning layer document and archive or remove the working record. When the spec pass (Status, Next Step 1) moves a design draft into `docs/`, delete the draft.
 - **Status (`workflow/Status.md`)**: Keep only current position, accepted and open decisions, next steps, what exists, and known defects. Move older session logs to `local/archive/`.

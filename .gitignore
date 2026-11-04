@@ -1,4 +1,4 @@
-# Local workspace: scratch files, archives, coursework rubric, reference checkouts, and sample data.
+# Local workspace: scratch files, archives, reference checkouts, and sample data.
 /local/
 
 # Exclude draw.io binaries and npm packages inside the diagram tool.

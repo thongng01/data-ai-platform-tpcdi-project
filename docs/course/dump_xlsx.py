@@ -1,7 +1,7 @@
 """Dump the cells of an xlsx workbook to text, one file per sheet.
 
 Usage:
-    .venv/bin/python workflow/tools/dump_xlsx.py <workbook.xlsx> <out_dir>
+    .venv/bin/python docs/course/dump_xlsx.py <workbook.xlsx> <out_dir>
 
 Used to read the course rubric without opening Excel.
 """

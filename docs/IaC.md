@@ -19,9 +19,11 @@ Run commands directly from the repository root in WSL, where the project filesys
 | `docker compose --project-directory infra stop` | Stops running containers and retains data. |
 | `docker compose --project-directory infra down --remove-orphans` | Removes containers and retains named volumes (add `--volumes` to remove data volumes). |
 
-## 2. Environment
+## 2. Development Environment
 
-The commands assume Linux tools and Docker inside WSL. Host resources, installed versions, and free disk space can change.
+**Runs on:** Ubuntu 24.04 on WSL 2 (Windows 11), Intel Core i7-12700H (20 threads), 24 GiB RAM.
+
+Measurements in these documents come from this machine unless a section states otherwise. Installed versions can change.
 
 Container image settings are in `infra/.env`. Compose reads that file to substitute variables; a container receives only the values its service passes through. The file contains committed local development defaults. SeaweedFS uses the mutable `latest` tag, so a later pull can change behavior without a configuration edit.
 

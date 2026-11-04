@@ -1,6 +1,6 @@
 # Polars Generator POC Evidence
 
-The owner authorized an autonomous fresh Polars POC on 2026-10-29, with code quality and declarative configuration as priorities. The [generator guide](../../data/generator/README.md) explains its rules, implementation, and commands. The production generator engine remains open in [Status](../Status.md#open-decisions-step-2-backlog).
+The owner authorized an autonomous fresh Polars proof of concept (POC) on 2026-10-29, with code quality and declarative configuration as priorities. The [generator guide](../../data/generator/README.md) explains its rules, implementation, and commands. On 2026-11-04 the owner decided to extend this POC into the production generator ([Status](../Status.md#accepted-decisions-proposals--deferred-scope), "Generation model").
 
 ## Scope and Acceptance
 
@@ -44,4 +44,4 @@ The POC demonstrates a complete connected source-format experiment with bounded 
 
 Validation took about four times as long as generation and export on the largest run. A 100 GB run therefore needs a separate runtime and disk plan, especially for full relationship validation. No 100 GB run was attempted. No forecast model, predictive behavior assessment, fault injection, or downstream pipeline integration was performed.
 
-Before promoting this code, decide which simplified rules survive, add the required business behavior and fault controls, and retain the memory and repeatability gates. Production engine selection remains open. The existing generator and pipeline implementations were not replaced.
+The production generator extends this code. It must decide which simplified rules survive, add the business behavior, attrition signal, TPC-DI data errors, and schema versions of the generation model, and keep the memory and repeatability gates. Transport problems, such as duplicates and late delivery, belong to the separate publisher.

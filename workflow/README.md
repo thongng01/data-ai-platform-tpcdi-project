@@ -15,9 +15,9 @@ Repositories that combine multi-layer engineering, iterative design, and coding 
 
 | Space | Git Status | Audience | Contents |
 | --- | --- | --- | --- |
-| **`docs/`** | Tracked | Engineers, reviewers, and users of the system ([Root README](../README.md)) | **100% product documentation**: [Data Specification](../docs/Data-Specification.md), [Data Platform](../docs/Data-Platform.md), [ML Platform](../docs/ML-Platform.md), [Agent Platform](../docs/Agent-Platform.md), [Infrastructure](../docs/IaC.md), and their diagrams. |
+| **`docs/`** | Tracked | Engineers, reviewers, and users of the system ([Root README](../README.md)) | **Product documentation and its references**: [Data Specification](../docs/Data-Specification.md), [Data Platform](../docs/Data-Platform.md), [ML Platform](../docs/ML-Platform.md), [Agent Platform](../docs/Agent-Platform.md), [Infrastructure](../docs/IaC.md), and their diagrams, plus the [TPC-DI specification](../docs/TPC-DI/TPC-DI_v1.1.0.pdf) (`docs/TPC-DI/`) and the [coursework brief](../docs/course/coursework_proposal.md), rubric, and sample domain designs (`docs/course/`). |
 | **`workflow/`** | Tracked | Coding agents and developers ([AGENTS.md](../AGENTS.md)) | **Reusable workflow, working state, and tools**: [Status](Status.md), [Documentation Guide](Documentation-Guide.md), [Design Method](Design-Method.md), [Diagram Guide](Diagram-Guide.md), [Diagram Examples](Diagram-Examples.md), working [records](records/Polars-POC.md), and [tools](tools/). |
-| **`local/`** | Ignored (`.gitignore`) | Local machine only | **Throwaway and external local files**: `tmp/`, `archive/`, `course/`, `tpcdi/`, `generator-feasibility/`, and `sample_run/`. Never appears on GitHub or in `README.md`. |
+| **`local/`** | Ignored (`.gitignore`) | Local machine only | **Throwaway and external local files**: `tmp/`, `archive/`, `tpcdi/`, `generator-feasibility/`, and `sample_run/`. Never appears on GitHub or in `README.md`. |
 
 ### Key Documentation Rules
 - **Separate OLTP workflow state from permanent system definitions**: Working state (open decisions, proposals, known prototype defects, and next steps) changes every session and lives exclusively in [Status](Status.md). Public system documents in `docs/` describe the system in the present tense with zero `(open)` markers or `Status.md` links.
@@ -72,7 +72,7 @@ The codebase is organized by **platform pillar** (`data/`, `ml/`, `agents/`, `in
 | [Design-Method.md](Design-Method.md) | Six-step engineering decision method (frame, map, research, generate options, evaluate, record). |
 | [Diagram-Guide.md](Diagram-Guide.md) | Visual language and workflow for editable draw.io diagrams and Mermaid ERDs. |
 | [Diagram-Examples.md](Diagram-Examples.md) | Worked visual examples rendered from `workflow/diagrams/style-examples/`. |
-| [records/](records/Polars-POC.md) | Intermediate benchmark and POC records during development. Merged into `docs/` once production code is built. |
+| [records/](records/Polars-POC.md) | Working records: benchmark and POC evidence, and design drafts. Evidence moves into `docs/` when the component is built, and the record is then archived or removed; a design draft is deleted after the spec pass moves it into `docs/`. |
 | `tools/check_docs.py` | Checks all tracked and new Markdown files for broken links, heading anchors, line endings, and banned words. |
 | [tools/diagrams/](tools/diagrams/README.md) | Shared draw.io and Mermaid ERD validation and PNG export tool (`diagram.py`, `erd.py`, `theme.json`). |
 
@@ -82,7 +82,6 @@ The codebase is organized by **platform pillar** (`data/`, `ml/`, `agents/`, `in
 | --- | --- |
 | `local/tmp/` | One-off scripts, logs, diagram export previews, and intermediate outputs. |
 | `local/archive/` | Historical session logs, handoffs, earlier v0 prototype code (`prototype-v0/`), and reference notes. |
-| `local/course/` | Local coursework rubric (`rubric.xlsx`), proposal, and domain examples. |
 | `local/tpcdi/` | Upstream TPC-DI checkout and SF3 reference dataset. |
 | `local/generator-feasibility/` | Pinned Databricks TPC-DI generator reference checkout. |
 | `local/sample_run/` | Local generated dataset. |
@@ -104,7 +103,7 @@ This section records the engineering criteria, decisions, and rejected alternati
 
 | Decision | Selected Choice | Main Reason |
 | --- | --- | --- |
-| **Workspace separation** | Three top-level spaces: `docs/` (product docs), `workflow/` (process, status, guides, tools), and `local/` (gitignored scratch, archives, reference data) | Eliminates the `misc/` junk drawer, keeps `docs/` 100% about the brokerage platform, and makes `workflow/` + `AGENTS.md` portable to future repositories. |
+| **Workspace separation** | Three top-level spaces: `docs/` (product docs), `workflow/` (process, status, guides, tools), and `local/` (gitignored scratch, archives, reference data) | Eliminates the `misc/` junk drawer, keeps `docs/` limited to the brokerage platform and its reference sources, and makes `workflow/` + `AGENTS.md` portable to future repositories. |
 | **Workflow state vs. design rationale** | Put ephemeral state (`open`, `proposed`, `deferred`, defects, next step) only in `workflow/Status.md`; keep permanent **Design Decisions & Rationale** inline inside each `docs/` file | Prevents `README.md` and `docs/` from reading like an unfinished todo list, while avoiding a separate 2,000-line `Project-Design.md` catch-all file. |
 | **Public documentation structure** | `README.md` + 5 cohesive engineering docs in `docs/` (`Data-Specification`, `Data-Platform`, `ML-Platform`, `Agent-Platform`, `IaC`) | Maps 1-to-1 to `README.md`'s five sections and frames the project as one unified engineering system rather than 26 fragmented rubric-row files. |
 | **Codebase root layout (Variant A2)** | Four platform pillars: `data/`, `ml/`, `agents/`, `infra/` | Matches the platform layers and `docs/` 1-to-1 while keeping each tool (`data/dbt`, `ml/feature_repo`, `agents/mcp`) in a self-contained subfolder. |

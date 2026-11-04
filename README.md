@@ -301,6 +301,8 @@ See [Infrastructure and Operations](docs/IaC.md) for container profiles, ports, 
 
 Run project commands from the repository directory in Ubuntu WSL. Read [Infrastructure](docs/IaC.md) for service setup and operating details.
 
+**Runs on:** Ubuntu 24.04 on WSL 2 (Windows 11), Intel Core i7-12700H (20 threads), 24 GiB RAM ([development environment](docs/IaC.md#2-development-environment)).
+
 1. Start the core services (PostgreSQL, SeaweedFS, Hive Metastore, and Trino).
 
    ```bash
