@@ -319,25 +319,25 @@ Before the first start, [create the private configuration files](docs/IaC.md#1-h
 1. Start the core services.
 
    ```bash
-   docker compose --project-directory infra up -d postgres seaweedfs hive-metastore trino
+   (cd infra && docker compose up -d postgres seaweedfs hive-metastore trino)
    ```
 
 2. Create the storage buckets and databases.
 
    ```bash
-   docker compose --project-directory infra --profile init run --rm bootstrap
+   (cd infra && docker compose --profile init run --rm bootstrap)
    ```
 
 3. Check that the core services work together.
 
    ```bash
-   docker compose --project-directory infra --profile tools run --rm tools
+   (cd infra && docker compose --profile tools run --rm tools)
    ```
 
 4. Start the Spark cluster.
 
    ```bash
-   docker compose --project-directory infra --profile compute up -d spark-master spark-worker
+   (cd infra && docker compose --profile compute up -d spark-master spark-worker)
    ```
 
 5. Generate and validate source data. If `.venv` does not exist, create it with `uv venv --python 3.14 .venv`.
