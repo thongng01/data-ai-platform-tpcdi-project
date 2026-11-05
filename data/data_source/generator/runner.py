@@ -226,6 +226,7 @@ def worker(config: Config, output: Path):
         started = time.monotonic()
         result = function(*args)
         timings[name] = time.monotonic() - started
+        print(f"Completed {name} in {timings[name]:.6f} seconds.", flush=True)
         return result
 
     phase("reference", generate_reference, generation)

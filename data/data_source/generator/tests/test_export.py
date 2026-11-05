@@ -228,3 +228,29 @@ def test_compare_rehashes_actual_files(tmp_path):
     (tmp_path / "second/offline/initial/CashTransaction.txt").write_text("corrupted\n")
     with pytest.raises(ValueError, match="no longer match"):
         compare(tmp_path / "first", tmp_path / "second")
+
+
+def test_tpcdi_format_fixtures_keep_the_original_business_fields():
+    from pathlib import Path
+    from data.data_source.generator.formats import load_sources
+
+    root = Path(__file__).parent / "fixtures"
+    manifest = json.loads((root / "manifest.json").read_text())
+    sources = load_sources()
+    for relative, metadata in manifest["files"].items():
+        raw = (root / "tpcdi_sf3" / relative).read_bytes()
+        assert hashlib.sha256(raw).hexdigest().startswith(metadata["sha256"])
+        lines = raw.decode("ascii").splitlines()
+        assert len(lines) == metadata["lines"]
+        source_name = Path(relative).stem
+        if source_name == "BatchDate":
+            continue
+        source = sources[source_name]
+        for line in lines:
+            fields = line.split(metadata["delimiter"])
+            assert len(fields) == metadata["fields"]
+            if relative.startswith("Batch2/"):
+                fields = fields[2:]
+            if source_name == "CashTransaction":
+                fields = ["1", *fields]
+            source.check(fields)
