@@ -48,8 +48,9 @@ def test_defaults_and_frozen_config():
     config = Config()
     assert (config.start, config.cutover, config.daily_start_date, config.end) == (
         date(2014, 1, 1), date(2018, 12, 31), date(2019, 1, 1), date(2025, 12, 31))
-    assert config.cutover_customers == 3300
-    assert config.brokers == 6
+    assert config.customers_per_unit == 3601
+    assert config.cutover_customers == 3601
+    assert config.brokers == 7
     with pytest.raises(FrozenInstanceError):
         config.seed = 2
     assert Config(**config.as_dict()) == config

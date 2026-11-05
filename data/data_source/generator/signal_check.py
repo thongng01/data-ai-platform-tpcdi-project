@@ -101,13 +101,22 @@ def _matrix(frame: pl.DataFrame) -> np.ndarray:
 
 
 def _fit_logistic(x: np.ndarray, y: np.ndarray, penalty: float) -> np.ndarray:
-    """Fit a deterministic small linear model without another runtime dependency."""
+    """Fit logistic weights with L2 regularization; the first input column must be ones."""
     weights = np.zeros(x.shape[1])
+    # Use the same fixed 400-update budget for each regularization candidate.
     for _ in range(400):
+        # The weighted sum is the log odds. Clipping it to [-30, 30] keeps the
+        # exponential bounded; the sigmoid then maps it to a closure probability.
         logits = np.clip(x @ weights, -30, 30)
         probability = 1 / (1 + np.exp(-logits))
+        # Average the feature-weighted prediction errors for the logistic-loss
+        # gradient. The transpose sums each feature's contribution across rows.
         gradient = x.T @ (probability - y) / len(y)
+        # L2 adds penalty times each feature weight to discourage large weights.
+        # Leave the first weight, the intercept, unpenalized so the base log odds
+        # can fit the data without a penalty toward zero.
         gradient[1:] += penalty * weights[1:]
+        # A fixed learning rate of 0.15 sets the step along the negative gradient.
         weights -= .15 * gradient
     return weights
 
@@ -132,8 +141,12 @@ def evaluate(frame: pl.DataFrame) -> dict:
         return {"status": "insufficient_data", "splits": sizes,
                 "reason": "Every chronological split needs closures and nonclosures."}
     matrices = {name: _matrix(part) for name, part in splits.items()}
+    # Learn centering and scaling only from training rows. The 0.01 floor keeps
+    # constant features from dividing by zero or magnifying tiny differences.
     mean = matrices["train"].mean(axis=0)
     scale = np.maximum(matrices["train"].std(axis=0), .01)
+    # Prepend ones for the intercept: its weight adds the same log odds to every
+    # row. The fitting function leaves this first weight out of the L2 penalty.
     matrices = {name: np.column_stack([np.ones(len(matrix)), (matrix - mean) / scale]) for name, matrix in matrices.items()}
     labels = {name: part["label"].to_numpy().astype(float) for name, part in splits.items()}
     candidates = []

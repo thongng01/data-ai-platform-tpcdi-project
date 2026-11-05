@@ -74,7 +74,7 @@ class Config:
     daily_start: str = "2019-01-01"
     daily_end: str = "2025-12-31"
     scale_factor: float = 1.0
-    customers_per_unit: int = 3300
+    customers_per_unit: int = 3601
     seed: int = 20261029
     account_shares: tuple[float, ...] = (.5, .33, .17)
     profile_shares: tuple[float, ...] = (.3, .45, .15, .09, .01)
@@ -113,9 +113,9 @@ class Config:
     attrition_liquidation_min_steps: int = 1
     attrition_liquidation_max_steps: int = 4
     annual_lookalike: float = .02
-    # Provisional conversion adjustment: a small-market pilot executed 100 of
-    # 212 opportunities before removal of its former hazard protection. Full-
-    # market measurements report the realized rate rather than assume this fit.
+    # Account for candidates that cannot execute both a sale and a withdrawal.
+    # This multiplier adjusts opportunity frequency, not the target annual rate,
+    # and gives no protection from either closure hazard.
     lookalike_opportunity_multiplier: float = 2.12
     lookalike_sale_min: float = .2
     lookalike_sale_max: float = .5
