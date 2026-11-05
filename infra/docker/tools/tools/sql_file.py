@@ -1,16 +1,15 @@
 """Run the SQL in a file against Trino and print the rows.
 
-The statement travels as a file path rather than as a command-line argument,
-because a multi-word SQL string picked apart by shell quoting is the single
-most common way to waste time when poking at a running system.
+A file keeps SQL quotes out of the shell command. The file must be visible
+inside the tools container. From `infra/`, mount an existing scratch file
+from the repository's `local/tmp/` directory read-only:
 
-    cat > /tmp/q.sql <<'SQL'
-    SHOW TABLES FROM hive.silver
-    SQL
-    docker compose --profile tools run --rm tools python -m tools.sql_file /q.sql
+    docker compose --profile tools run --rm \
+        -v "$(pwd)/../local/tmp/q.sql:/q.sql:ro" \
+        tools python -m tools.sql_file /q.sql
 
-/q.sql is bind-mounted from workflow/ into the container, so write the file inside
-the repository, not /tmp.
+The file contains one statement. This tool does not split a SQL script into
+separate statements.
 """
 
 import sys
@@ -22,7 +21,7 @@ from .smoke import TRINO_HOST, TRINO_PORT, TRINO_USER
 
 
 def run(statement, catalog="hive", schema="default"):
-    """Execute one statement and return (columns, rows).
+    """Execute one statement and return its column names and rows.
 
     Args:
         statement: The SQL text.
@@ -30,7 +29,7 @@ def run(statement, catalog="hive", schema="default"):
         schema: Trino schema to run against.
 
     Returns:
-        A tuple of column names and a list of row tuples.
+        A pair containing the column-name list and the cursor's result rows.
     """
     conn = trino.dbapi.connect(
         host=TRINO_HOST,
@@ -42,7 +41,11 @@ def run(statement, catalog="hive", schema="default"):
     )
     try:
         cursor = conn.cursor()
+        # Trino's statement API does not need a trailing SQL terminator. Remove
+        # final semicolons without changing any semicolons inside the statement.
         cursor.execute(statement.rstrip().rstrip(";"))
+        # DB-API descriptions hold one metadata tuple per result column.
+        # Statements without result columns can leave the description unset.
         columns = [d[0] for d in cursor.description] if cursor.description else []
         return columns, cursor.fetchall()
     finally:
@@ -64,6 +67,7 @@ def main(argv):
     if columns:
         print(" | ".join(columns))
     for row in rows:
+        # Display SQL NULL as an empty field, but keep zero and False visible.
         print(" | ".join("" if v is None else str(v) for v in row))
     print(f"({len(rows)} rows)")
     return 0

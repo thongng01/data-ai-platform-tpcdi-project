@@ -1,11 +1,9 @@
-# One-shot image that prepares shared state before any service starts.
+# Build the one-shot runner that creates buckets and application databases.
+# PostgreSQL and SeaweedFS must be ready before the runner connects to them.
 #
-# It creates the S3 buckets and the Postgres databases. It is idempotent, so
-# running it twice is the same as running it once.
-#
-# Multi-stage on purpose: the builder resolves and installs the dependencies,
-# the runtime stage keeps only the installed site-packages and drops the
-# compiler toolchain and the pip cache. See docs/IaC.md for the size comparison.
+# Both stages use the same Python base so the copied virtual environment can
+# find the same interpreter and system libraries. The runtime copies installed
+# dependencies, not the builder temporary files.
 
 FROM python:3.11-slim AS builder
 
@@ -27,8 +25,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH"
 
-# curl is used by compose healthchecks only in services that have it; bootstrap
-# polls with python instead, so nothing extra is installed here.
+# The runner polls service APIs through Python clients and does not need curl.
 COPY --from=builder /opt/venv /opt/venv
 
 WORKDIR /app

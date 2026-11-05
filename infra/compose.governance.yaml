@@ -1,30 +1,26 @@
-# Governance: DataHub and its search backend.
+# Configure DataHub, its search backend, and an ingestion runner.
 #
-# Behind the `governance` profile. Start with `docker compose --project-directory infra --profile governance up -d`.
-#
-# Memory is the constraint here. DataHub plus OpenSearch needs about 4 GB, and
-# the whole platform shares 15 GB, so this profile is meant to run on its own:
-# stop the compute profile first if the machine starts swapping. See
-# docs/IaC.md for the measured figures.
-#
-# DataHub's own state lives in the `datahub` database on the shared Postgres
-# instance, and its metadata change log runs through the Kafka broker from the
-# streaming profile. If that broker is not up, GMS still serves reads.
+# Run from infra/ with the governance and stream profiles when DataHub needs
+# Kafka. The governance profile alone does not select the Kafka service.
+# PostgreSQL holds catalog state; OpenSearch holds searchable indexes.
+# Container memory limits add together, so budget this group with the other
+# enabled profiles. See docs/IaC.md for limits, not measured memory use.
 
 services:
 
   opensearch:
     image: ${OPENSEARCH_IMAGE}
-    container_name: edai-opensearch
     profiles: ["governance"]
     restart: unless-stopped
-    networks: ["${EDAI_NETWORK}"]
+    networks: [platform]
     environment:
       discovery.type: single-node
-      # Security plugin off. This is a lab; enabling it means generating
-      # certificates and an admin password for a service nothing authenticates to.
+      # DataHub connects without TLS or authentication. Do not expose this
+      # search endpoint outside the private development network.
       DISABLE_SECURITY_PLUGIN: "true"
       DISABLE_INSTALL_DEMO_CONFIG: "true"
+      # Locking memory avoids swapping the JVM heap. memlock below permits it;
+      # the container limit must also leave room for non-heap memory.
       bootstrap.memory_lock: "true"
       OPENSEARCH_JAVA_OPTS: "-Xms768m -Xmx1024m"
     ulimits:
@@ -45,9 +41,8 @@ services:
 
   datahub-upgrade:
     image: ${DATAHUB_UPGRADE_IMAGE}
-    container_name: edai-datahub-upgrade
     profiles: ["governance"]
-    networks: ["${EDAI_NETWORK}"]
+    networks: [platform]
     depends_on:
       postgres:
         condition: service_healthy
@@ -64,6 +59,8 @@ services:
       EBEAN_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
       DATAHUB_SERVER_TYPE: quickstart
       KAFKA_BOOTSTRAP_SERVER: PLAINTEXT://kafka:29092
+    # Apply DataHub database upgrades before GMS starts. This changes persistent
+    # application state, unlike rendering the Compose configuration.
     command: ["DOB upgrade"]
     restart: "no"
     deploy:
@@ -73,10 +70,9 @@ services:
 
   datahub-gms:
     image: ${DATAHUB_GMS_IMAGE}
-    container_name: edai-datahub-gms
     profiles: ["governance"]
     restart: unless-stopped
-    networks: ["${EDAI_NETWORK}"]
+    networks: [platform]
     ports:
       - "${DATAHUB_GMS_PORT}:8080"
     depends_on:
@@ -111,10 +107,9 @@ services:
 
   datahub-frontend:
     image: ${DATAHUB_FRONTEND_IMAGE}
-    container_name: edai-datahub-frontend
     profiles: ["governance"]
     restart: unless-stopped
-    networks: ["${EDAI_NETWORK}"]
+    networks: [platform]
     ports:
       - "${DATAHUB_FRONTEND_PORT}:9002"
     environment:
@@ -135,21 +130,16 @@ services:
         limits:
           memory: 1G
 
-# Runs a DataHub ingestion recipe. Recipes live in ../data/datahub/recipes.
-  #   docker compose --profile governance run --rm datahub-ingest \
-  #     /opt/governance/recipes/dp1_lineage.yml
-  #
-  # No depends_on, and only the `governance` profile. See the note on spark-jobs
-  # in compose.compute.yaml: a service in two profiles keeps its dependencies
-  # filtered, which turns `--profile tools` into an invalid project.
+  # Run a recipe from ../data/datahub/recipes after GMS is ready. There is no
+  # depends_on here, so invoking this runner does not start or check GMS.
+  # Override command with: datahub ingest -c /opt/governance/recipes/<file>.yml
   datahub-ingest:
     image: ${DATAHUB_INGEST_IMAGE}
     build:
       context: .
       dockerfile: docker/datahub-ingest/Dockerfile
-    container_name: edai-datahub-ingest
     profiles: ["governance"]
-    networks: ["${EDAI_NETWORK}"]
+    networks: [platform]
     environment:
       DATAHUB_GMS_HOST: datahub-gms
       DATAHUB_GMS_PORT: "8080"

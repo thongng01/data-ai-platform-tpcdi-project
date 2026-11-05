@@ -4,7 +4,7 @@ This document defines the infrastructure, resource naming, storage boundary, and
 
 ## 1. How to Run It
 
-Run project commands from the repository root in Windows Subsystem for Linux (WSL), where the project filesystem and Docker socket are available. Passing `--project-directory infra` tells Docker Compose to read `infra/.env` and resolve relative paths against `infra/`.
+Run project commands in Windows Subsystem for Linux (WSL), where the project filesystem and Docker socket are available. Run Docker Compose from `infra/` so it reads the private `.env` and resolves the `COMPOSE_FILE` entries from that directory. From the repository root, use `(cd infra && docker compose <arguments>)`; the subshell leaves your working directory unchanged.
 
 Before the first start, copy the placeholder templates to private configuration files. This command preserves existing local files.
 
@@ -19,18 +19,20 @@ for file in infra/.env infra/seaweedfs/s3.json infra/spark/spark-defaults.conf \
 done
 ```
 
-Replace every `CHANGE_ME_*` value in the local copies. Use the same PostgreSQL password in `infra/.env`, the PostgreSQL catalog, and Airflow connections. Use the same S3 access key and secret key in `infra/.env`, SeaweedFS, Spark, the Hive catalog, and both Airflow files. These mounted files do not substitute values from `infra/.env`.
+Replace every `CHANGE_ME_*` value in the local copies. Use the same PostgreSQL role and password in `infra/.env`, the PostgreSQL catalog, and Airflow connections. Use the same S3 access key and secret key in `infra/.env`, SeaweedFS, Spark, the Hive catalog, and both Airflow files. These mounted files do not substitute values from `infra/.env`.
+
+The SeaweedFS JSON file groups each named identity with its credential pairs and allowed actions. Keep the populated file private because it contains secret keys. An identity name labels permissions; it does not change a bucket name or move stored objects.
 
 Set `AIRFLOW_FERNET_KEY`, `AIRFLOW_WEBSERVER_SECRET_KEY`, and `DATAHUB_SECRET` in `infra/.env`. Generate each value separately. Use `python3 -c "import secrets; print(secrets.token_hex(32))"` for passwords and signing secrets. Use `python3 -c "import base64, secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"` for the Fernet key. Commit only the `.example` templates, never the populated files.
 
-Changing a configuration file does not rotate an existing database password or re-encrypt stored Airflow connections. For an existing deployment, update the service credentials and its clients together; use Airflow's Fernet key rotation procedure for encrypted data. Do not expose this development stack directly to the internet.
+Changing a configuration file does not rename an existing PostgreSQL role, rotate a database password, or re-encrypt stored Airflow connections. For an existing deployment, update the service credentials and its clients together; use Airflow's Fernet key rotation procedure for encrypted data. Keep Kafka's KRaft cluster ID consistent with its stored broker metadata. Do not expose this development stack directly to the internet.
 
 | Command | Effect and Prerequisites |
 |---|---|
-| `docker compose --project-directory infra config --quiet` | Validates the merged Compose configuration without printing credentials. |
+| `(cd infra && docker compose config --quiet)` | Validates the merged Compose configuration without printing credentials. |
 | `curl -fsS http://localhost:8082/json/` | Reads the Spark master's workers and applications when that service is running. |
-| `docker compose --project-directory infra stop` | Stops running containers and retains data. |
-| `docker compose --project-directory infra down --remove-orphans` | Removes containers and retains named volumes. Adding `--volumes` removes those volumes and their data. |
+| `(cd infra && docker compose stop)` | Stops running containers and retains data. |
+| `(cd infra && docker compose down --remove-orphans)` | Removes containers and retains named volumes. Adding `--volumes` removes those volumes and their data. |
 
 ## 2. Development Environment
 
@@ -54,7 +56,9 @@ The five Compose files group local Layer 1 services by role. Profiles select whi
 
 dbt-postgres and GX Core run from the Airflow image; they are not separate services. DataHub also uses Kafka.
 
-The project identity is `brokerage`. Use that identity for resources that need a project scope, such as local image repositories. Service keys use bare role names, such as `postgres`, `trino`, and `kafka`. Compose generates container, network, and volume names from its project and role keys; the target does not set `container_name`. Internal clients use service names rather than generated container names. Compose scope prevents container-name collisions between deployments without changing service DNS. `brokerage` describes the domain; a longer `brokerage-platform` prefix adds little, and a fictional firm name is not needed. Buckets keep their role names: `upstream`, `staging`, `lakehouse`, and `platform`. Kafka topics use `brokerage.*`. TPC-DI remains the source specification's proper name, and actual source filenames and field names do not change.
+The project identity is `brokerage`. Use that identity for resources that need a project scope, such as local image repositories. Service keys use bare role names, such as `postgres`, `trino`, and `kafka`. Compose generates container, network, and volume names from its project and role keys; services do not set `container_name`. Internal clients use service names rather than generated container names. Compose scope prevents container-name collisions between deployments without changing service DNS. `brokerage` describes the domain; a longer `brokerage-platform` prefix adds little, and a fictional firm name is not needed. Buckets keep their role names: `upstream`, `staging`, `lakehouse`, and `platform`. Kafka topics use `brokerage.*`. TPC-DI remains the source specification's proper name, and actual source filenames and field names do not change.
+
+`COMPOSE_PROJECT_NAME` selects the resource scope. Changing it selects a different set of named volumes; it does not transfer existing data. Plan the volume mapping before changing scope on a populated deployment. An existing private `.env` keeps its configured project name and image tags when the example template changes. Internal clients use service DNS names, so generated container names are not part of their connection contract.
 
 Services must wait until their dependencies are ready. Governance also needs Kafka; selecting only the `governance` profile does not start Kafka. Image builds use multiple stages where this keeps build tools out of runtime images. Image size comparisons supply the course evidence.
 

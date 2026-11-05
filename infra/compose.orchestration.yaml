@@ -1,27 +1,24 @@
-# Orchestration: Airflow, running the three data pipelines.
+# Configure Airflow metadata initialization, scheduling, and web access.
 #
-# Behind the `airflow` profile. Start with `docker compose --project-directory infra --profile airflow up -d`.
-#
-# Airflow keeps its own metadata in the `airflow` database on the shared
-# Postgres instance. Connections and Variables are seeded by airflow-init, so no
-# DAG hardcodes a hostname, a bucket or a password.
-#
-# The image is built locally rather than pulled: it needs PySpark (for
-# spark-submit), dbt-spark, Soda Core and the DataHub SDK, and each of those
-# wants a different Python than Airflow ships with.
+# Run from infra/ with `docker compose --profile airflow up -d`. Airflow keeps
+# metadata in its own PostgreSQL database. Private connection and variable files
+# are mounted read-only for setup; the image must supply the needed providers.
 
 x-airflow: &airflow
   image: ${AIRFLOW_IMAGE}
   build:
     context: .
     dockerfile: docker/airflow/Dockerfile
-  networks: ["${EDAI_NETWORK}"]
+  networks: [platform]
   environment:
     AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    # LocalExecutor starts task processes in the scheduler container. Eight is
+    # a concurrency ceiling, not a reservation of eight CPU cores.
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__CORE__PARALLELISM: "8"
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB_AIRFLOW}
+    # Keep this development web endpoint private because it exposes config.
     AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
     AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET_KEY:?Set AIRFLOW_WEBSERVER_SECRET_KEY in infra/.env}
     AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
@@ -30,9 +27,8 @@ x-airflow: &airflow
     AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL: "30"
     AIRFLOW__OPERATOR__DEFAULT_RETRY_NUMBER: "2"
     AIRFLOW__OPERATOR__DEFAULT_RETRY_DELAY: "60"
-    # The platform's services, by compose service name. A DAG reads these from
-    # Airflow Variables rather than from here; this block only covers the
-    # Airflow container itself.
+    # These values reach the Airflow process. Connection and variable files are
+    # separate setup inputs; those files do not expand values from .env.
     PGHOST: postgres
     PGUSER: ${POSTGRES_USER}
     PGPASSWORD: ${POSTGRES_PASSWORD}
@@ -51,7 +47,6 @@ services:
 
   airflow-init:
     <<: *airflow
-    container_name: edai-airflow-init
     profiles: ["airflow"]
     restart: "no"
     volumes: *airflow_volumes
@@ -61,11 +56,13 @@ services:
       - |
         set -euo pipefail
         airflow db migrate
+        # These fallbacks ignore all errors, not only an existing user. Check
+        # initialization logs because failed imports can still exit successfully.
         airflow users create \
           --username "${AIRFLOW_USER}" --password "${AIRFLOW_PASSWORD}" \
           --firstname Coursework --lastname Admin \
-          --role Admin --email admin@edai.local || true
-        airflow connections import /opt/airflow/connections.yaml --conn-description "edai seed" || true
+          --role Admin --email admin@brokerage.local || true
+        airflow connections import /opt/airflow/connections.yaml --conn-description "brokerage seed" || true
         airflow variables import /opt/airflow/variables.yaml || true
     depends_on:
       postgres:
@@ -77,7 +74,6 @@ services:
 
   airflow-scheduler:
     <<: *airflow
-    container_name: edai-airflow-scheduler
     profiles: ["airflow"]
     volumes: *airflow_volumes
     command: ["scheduler"]
@@ -91,7 +87,6 @@ services:
 
   airflow-webserver:
     <<: *airflow
-    container_name: edai-airflow-webserver
     profiles: ["airflow"]
     volumes: *airflow_volumes
     command: ["webserver", "--port", "8080"]
@@ -111,11 +106,10 @@ services:
         limits:
           memory: 1G
 
-  # LocalExecutor runs DAG tasks as processes in this container. Enough for a
-  # lab; a real deployment would use the Kubernetes or Celery executor.
+  # A separate worker needs a compatible executor and worker command. With
+  # LocalExecutor above, tasks run in airflow-scheduler, not this service.
   airflow-worker:
     <<: *airflow
-    container_name: edai-airflow-worker
     profiles: ["airflow"]
     volumes: *airflow_volumes
     command: ["worker", "--concurrency", "2"]
