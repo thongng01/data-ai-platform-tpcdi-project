@@ -5,7 +5,8 @@ Build the data, ML, and agent platform with the owner, and explain the engineeri
 ## Working Agreement
 - **Owner drafts**: Refine in place. Keep structure, density, and tone; fix facts; add sections only when asked.
 - **Decisions**: Work through design and architecture choices with the [design method](workflow/Design-Method.md) in conversation, and record the distilled result in the owning document ([decision rules](workflow/Documentation-Guide.md#4-recording-design-decisions)). Only choices accepted by the owner enter the system design as settled decisions; open items stay in [Status](workflow/Status.md).
-- **Status record**: Keep working state in [Status](workflow/Status.md): position, accepted and open decisions, next step, what exists, and known defects. Update it at the end of each task. Never put `(open)` markers or `Status.md` links in `README.md` or `docs/`.
+- **Status record**: Keep working state in [Status](workflow/Status.md): position, accepted and open decisions, next step, what exists, build progress, and known defects. Update it at the end of each task.
+- **Public docs**: `README.md` and `docs/` state the designed system in the present tense, as if it were built. Build progress, comparisons with the code that exists today ("current POC", "not yet", "target, not current"), `(open)` markers, and `Status.md` links go only in Status.
 - **Resuming**: Start from [Status](workflow/Status.md). Open older records in `local/archive/` only when it points to them.
 - **Restructuring**: Moving, renaming, splitting, and merging documents is normal. Update incoming links in the same change, then run `.venv/bin/python workflow/tools/check_docs.py`.
 - **Finding things**: The [workflow overview](workflow/README.md) and [documentation guide](workflow/Documentation-Guide.md) map each directory and document to its purpose; the [root README](README.md) shows the repository layout.

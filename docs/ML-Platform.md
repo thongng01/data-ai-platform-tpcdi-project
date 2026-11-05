@@ -1,6 +1,6 @@
 # Layer 2: Machine Learning Platform
 
-The machine learning (ML) platform predicts whether a brokerage account will close within 30 days. A separate tier-based policy creates a broker outreach task from that probability. This target design uses Feast for offline and online features, Kubeflow Pipelines for training, MLflow for tracking and data versioning, KServe for inference, and a document retrieval pipeline for Layer 3 agents.
+The machine learning (ML) platform predicts whether a brokerage account will close within 30 days. A separate tier-based policy creates a broker outreach task from that probability. The platform uses Feast for offline and online features, Kubeflow Pipelines for training, MLflow for tracking and data versioning, KServe for inference, and a document retrieval pipeline for Layer 3 agents.
 
 ---
 

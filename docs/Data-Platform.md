@@ -2,8 +2,6 @@
 
 The data platform pulls TPC-DI brokerage files from a source department, consumes a cash transaction stream, and builds validated tables for analytics and machine learning. Spark processes Bronze and Silver Delta tables, dbt-postgres builds the warehouse in PostgreSQL, Flink processes the cash transaction stream, Airflow schedules the pipelines DP1 to DP3 with GX Core checks, and DataHub records lineage and quality results. The [data specification](Data-Specification.md) defines the source formats and integration rules.
 
-This document specifies the target system. The current generator proof of concept (POC) has bounded Polars calculations and source validation; it does not yet implement the full business simulation or publisher. The [Getting Started commands](../README.md#getting-started) use that existing POC.
-
 ---
 
 ## 1. Platform Architecture and Medallion Zones
@@ -185,7 +183,7 @@ If the publisher resends a withdrawal, both messages carry the same `CT_ID`. Bro
 
 #### Expected Results at Cutover
 
-These are factor 100 expectations, not results from the current POC. Counts and activity volume scale with the firm; skew shares do not.
+These are factor 100 expectations, not measured results. Counts and activity volume scale with the firm; skew shares do not.
 
 | Characteristic | Expected value | Basis and measurement |
 | --- | --- | --- |
@@ -258,7 +256,7 @@ Evidence comes from measured runs, not the configured rates alone. The publisher
 
 ### Generator Engineering Rules
 
-- **Bounded memory**: The day-by-day Polars simulation carries account state and processes bounded groups. The configuration loader, source definitions, sorting, validation, runner, and tests extend the current POC. Account, holding, and unfinished-trade state must have an explicit memory budget.
+- **Bounded memory**: The day-by-day Polars simulation carries account state and processes bounded groups. Account, holding, and unfinished-trade state must have an explicit memory budget.
 - **Repeatability**: IDs and random draws use stable entity keys and named seeds, not chunk size or worker count. The same semantic settings, seeds, and generator version produce the same source bytes.
 - **Ordered exports**: Sort records in bounded runs and merge them without collecting the entire dataset into one frame. Preserve event and CDC order across groups.
 - **Separate reports**: The local generator summary records settings, per-file bytes and rows, hidden state, data errors, and measured characteristics. Ingestion never reads it. The publisher writes a separate delivery report.
@@ -267,7 +265,7 @@ Evidence comes from measured runs, not the configured rates alone. The publisher
 <details>
 <summary>Reference Generator Corrections</summary>
 
-Code adapted from the Databricks reference applies these corrections. They are requirements for the target generator, not claims that the full simulation already exists.
+Code adapted from the Databricks reference applies these corrections.
 
 | Reference problem | Effect | Correction |
 | --- | --- | --- |
@@ -460,7 +458,7 @@ A late March 5 cash transaction still reaches Silver. Correcting the March 5 cas
 
 Use a clean replay before a seeded realistic replay. Measure publisher delays and duplicates, then compare Flink outputs with an independent batch calculation of unique cash transactions, window sums, and balances. Compare final state for equality, not the maximum emitted balance, because negative amounts can reduce balances. Event-time disorder must not replace newer state with an older snapshot.
 
-Tests must check checkpoint recovery across Bronze, Silver, Kafka transactions, and PostgreSQL upserts. The target connector set starts with Spark 3.5 and Delta 3.3, Flink 2.2 with the Delta 4.4 connector, Kafka connector 5.0, and JDBC connector 4.1. Before pipeline work, a compatibility test makes Flink write Delta on SeaweedFS and makes Spark and Trino read it. Spark 4 with Delta 4 is the fallback if that test rejects the starting set. Version selection is not evidence that this combination already works.
+Tests must check checkpoint recovery across Bronze, Silver, Kafka transactions, and PostgreSQL upserts. The connector set starts with Spark 3.5 and Delta 3.3, Flink 2.2 with the Delta 4.4 connector, Kafka connector 5.0, and JDBC connector 4.1. Before pipeline work, a compatibility test makes Flink write Delta on SeaweedFS and makes Spark and Trino read it. Spark 4 with Delta 4 is the fallback if that test rejects the starting set.
 
 ---
 

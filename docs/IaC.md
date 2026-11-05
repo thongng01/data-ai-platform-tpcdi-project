@@ -1,15 +1,14 @@
 # Infrastructure and Operations
 
-This reference defines the target infrastructure, resource naming, storage boundary, and operating constraints. The checked-in Compose files predate parts of this design; the commands below inspect that configuration or run the existing generator proof of concept (POC). They do not deploy the target stack. [Data Platform](Data-Platform.md) owns the pipeline design.
+This document defines the infrastructure, resource naming, storage boundary, and operating constraints. [Data Platform](Data-Platform.md) owns the pipeline design.
 
 ## 1. How to Run It
 
-Run project commands from the repository root in Windows Subsystem for Linux (WSL), where the project filesystem and Docker socket are available. Passing `--project-directory infra` tells Docker Compose to read `infra/.env` and resolve relative paths against `infra/`. The target build starts with the version compatibility test, then updates Compose, then builds the generator and publisher from a small workload. Build the clean publisher profile before the realistic profile.
+Run project commands from the repository root in Windows Subsystem for Linux (WSL), where the project filesystem and Docker socket are available. Passing `--project-directory infra` tells Docker Compose to read `infra/.env` and resolve relative paths against `infra/`.
 
 | Command | Effect and Prerequisites |
 |---|---|
-| `docker compose --project-directory infra config` | Prints the checked-in Compose configuration across active profiles, not the target design in this document. |
-| `.venv/bin/python -m data.generator run --config data/generator/configs/small.yaml --output local/sample_run` | Runs the existing generator POC and its validation in `local/sample_run`. It does not implement the target day-by-day simulation or publisher. |
+| `docker compose --project-directory infra config` | Prints the merged Compose configuration for the active profiles. |
 | `curl -fsS http://localhost:8082/json/` | Reads the Spark master's workers and applications when that service is running. |
 | `docker compose --project-directory infra stop` | Stops running containers and retains data. |
 | `docker compose --project-directory infra down --remove-orphans` | Removes containers and retains named volumes. Adding `--volumes` removes those volumes and their data. |
@@ -26,7 +25,7 @@ Container image settings are in `infra/.env`. Compose reads that file to substit
 
 The five Compose files group local Layer 1 services by role. Profiles select which groups run together because not all services fit within the WSL memory cap.
 
-| File | Target Services | Profiles |
+| File | Services | Profiles |
 |---|---|---|
 | `compose.yaml` | PostgreSQL, SeaweedFS, Hive Metastore, Trino, bootstrap, and tools | Core services; `init` and `tools` runners |
 | `compose.compute.yaml` | Spark master, worker, and submit runner | `compute`; no Spark Thrift service or `dbt` profile |
@@ -67,7 +66,7 @@ Start with Spark 3.5 and Delta 3.3, plus Flink 2.2 and the Delta 4.4 Flink conne
 
 The Spark image includes Delta, the PostgreSQL JDBC driver, S3 access dependencies, and DataHub's Spark agent. The standalone master schedules work on the worker. The master UI shows applications and resource allocation; stage and task evidence comes from each application's UI.
 
-Gold uses dbt-postgres rather than dbt-spark, so the target has no HiveServer2 Thrift service. dbt runs SQL against PostgreSQL after Spark moves the required Silver rows into its load schema.
+Gold uses dbt-postgres rather than dbt-spark, so the platform has no HiveServer2 Thrift service. dbt runs SQL against PostgreSQL after Spark moves the required Silver rows into its load schema.
 
 ### 4.3 Streaming
 
@@ -100,7 +99,7 @@ The security baseline uses Vault for secrets, separate database users per servic
 
 ## 5. Ports
 
-These are the checked-in local defaults in `infra/.env` for roles retained in the target. They are not a published API contract or proof that a service is running. Other stacks on the host can use the same ports.
+These are the local defaults in `infra/.env`. They are not a published API contract. Other stacks on the host can use the same ports.
 
 | Host port | Service endpoint |
 |---|---|
@@ -122,9 +121,9 @@ These are the checked-in local defaults in `infra/.env` for roles retained in th
 
 ## 6. Memory Budget
 
-The current Compose limits provide the planning baseline below. They are ceilings, not measured use or a guarantee that workloads fit together. JVM heap is only part of process memory. Target changes remove Spark Thrift and the conflicting Airflow worker; these rows do not assign budgets to new services.
+The Compose memory limits below are ceilings, not measured use or a guarantee that workloads fit together. JVM heap is only part of process memory.
 
-| Service | Current limit | Related setting |
+| Service | Limit | Related setting |
 |---|---|---|
 | PostgreSQL | 1536M | Shared buffers are 512 MB |
 | SeaweedFS | 1536M | One process provides four roles |
@@ -140,7 +139,7 @@ The current Compose limits provide the planning baseline below. They are ceiling
 | DataHub upgrade, frontend | 1G each | Upgrade is a one-shot process |
 | DataHub GMS | 1536M | Kafka and OpenSearch add separate costs |
 
-The current long-running Layer 1 definitions total about 26 GiB before target removals and exclude the conflicting Airflow worker. Run services in groups and leave space for Linux, Docker, drivers, and one-shot tasks. Current Spark defaults give each task only about 180 MiB of execution memory; larger experiments need a larger worker budget, about 10 to 12 cores and 8 to 10 GiB, rather than all service groups running together.
+The long-running Layer 1 services total about 26 GiB. Run services in groups and leave space for Linux, Docker, drivers, and one-shot tasks. The Spark defaults give each task only about 180 MiB of execution memory; larger experiments need a larger worker budget, about 10 to 12 cores and 8 to 10 GiB, rather than all service groups running together.
 
 At scale factor 100, the estimated peak disk demand is about 400 to 500 GB if every copy is present: generated files, upstream and staging files, raw and clean topics, Bronze and Silver, Gold, and Spark spill. Removing generated files after publication removes one copy. These are capacity estimates, not measured platform storage use. [Data Platform](Data-Platform.md) defines the 100 GB offline generation requirement and how workloads scale by environment.
 

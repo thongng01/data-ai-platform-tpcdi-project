@@ -1,6 +1,6 @@
 # Project Data Specification
 
-This document defines the target data contracts for the retail brokerage platform. The project uses the business domain and source formats of the Transaction Processing Performance Council's data integration benchmark (TPC-DI), moves data through medallion zones, streams cash transactions, and predicts account closure within 30 days so brokers can act before customers leave.
+This document defines the data contracts for the retail brokerage platform. The project uses the business domain and source formats of the Transaction Processing Performance Council's data integration benchmark (TPC-DI), moves data through medallion zones, streams cash transactions, and predicts account closure within 30 days so brokers can act before customers leave.
 
 For all details about the TPC-DI benchmark, refer to the [TPC-DI v1.1.0 Specification PDF](TPC-DI/TPC-DI_v1.1.0.pdf). Our design also draws on [Shannon Barrow's Databricks TPC-DI implementation](https://github.com/shannon-barrow/databricks-tpc-di) and the [associated Medium article](https://medium.com/dbsql-sme-engineering/benchmarking-etl-with-the-tpc-di-part-1-b581d46c44f1).
 

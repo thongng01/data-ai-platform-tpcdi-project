@@ -12,11 +12,9 @@ This project is a data and AI system for a retail brokerage, based on the TPC-DI
 - **Layer 2 ([Machine Learning Platform](docs/ML-Platform.md))**: Predicts whether an account closes within 30 days and applies a tier-based broker outreach policy, using Feast, Kubeflow Pipelines, MLflow, and KServe, with document retrieval for supporting brokerage information.
 - **Layer 3 ([Agent Platform](docs/Agent-Platform.md))**: Connects language models to project data, retrieved documents, and model predictions through gateways, Model Context Protocol (MCP) tools, and agent coordination.
 
-The sections below specify the target system. The current generator proof of concept (POC) covers the source families with simplified histories; the full business simulation and platform pipelines remain to be built. Getting Started uses the existing POC commands, not a future interface.
-
 ## Repository Structure
 
-The target layout groups code into four platform pillars. The source department has separate generator and publisher components. The current POC remains in `data/generator/` until implementation moves it.
+The code is grouped into four platform pillars. The source department has separate generator and publisher components.
 
 ```text
 .
@@ -59,7 +57,7 @@ The project uses the TPC-DI retail brokerage domain and all 18 business and refe
 
 ### Physical Source Files and Ingestion Rules
 
-The target source contract excludes `BatchDate.txt` and benchmark-only audit files and tables. Initial files use standard names under `initial/`, such as `initial/Trade.txt`. Daily files use `daily/YYYYMMDD/<Source>_YYYYMMDD.ext`, such as `daily/20190102/Customer_20190102.txt`. FINWIRE files keep their `FINWIREyyyyQq` names and arrive in the daily folder of their release date.
+The source contract excludes `BatchDate.txt` and benchmark-only audit files and tables. Initial files use standard names under `initial/`, such as `initial/Trade.txt`. Daily files use `daily/YYYYMMDD/<Source>_YYYYMMDD.ext`, such as `daily/20190102/Customer_20190102.txt`. FINWIRE files keep their `FINWIREyyyyQq` names and arrive in the daily folder of their release date.
 
 A pipeline-side expected-file list defines completeness. An empty expected file means no activity; a missing expected file means the delivery is incomplete. Daily OLTP rows carry change data capture (CDC) fields: `CDC_FLAG` (`I` for insert, `U` for update) and `CDC_DSN` for change order. Initial files omit these CDC fields.
 
@@ -298,7 +296,7 @@ Docker packages services and jobs. Compose groups services so Layer 1 can run wi
 - **Orchestration**: Airflow 3 with GX Core.
 - **Governance**: DataHub and supporting services.
 
-Target resource names use project identity `brokerage` and scoped role names. Compose generates container, network, and volume names; service keys stay bare role names. Bucket role names remain unchanged, topics use `brokerage.*`, and TPC-DI source names remain intact.
+Resource names use project identity `brokerage` and scoped role names. Compose generates container, network, and volume names; service keys stay bare role names. Buckets use role names, topics use `brokerage.*`, and TPC-DI source names stay as the source contract defines them.
 
 ### Deployment and Service Operation
 
@@ -312,39 +310,30 @@ Target resource names use project identity `brokerage` and scoped role names. Co
 
 ## Getting Started
 
-Run commands from the repository directory in Ubuntu WSL. These commands use the existing Compose files and generator POC; they do not implement the target publisher, pipeline jobs, or renamed resource identities. The [infrastructure guide](docs/IaC.md) separates current configuration from target deployment.
+Run commands from the repository directory in Ubuntu WSL. The [infrastructure guide](docs/IaC.md) describes every service and profile.
 
 **Runs on:** Ubuntu 24.04 on WSL 2 (Windows 11), Intel Core i7-12700H (20 threads), 24 GiB RAM ([development environment](docs/IaC.md#2-development-environment)).
 
-1. Start the current core services.
+1. Start the core services.
 
    ```bash
    docker compose --project-directory infra up -d postgres seaweedfs hive-metastore trino
    ```
 
-2. Initialize the current storage buckets and databases.
+2. Create the storage buckets and databases.
 
    ```bash
    docker compose --project-directory infra --profile init run --rm bootstrap
    ```
 
-3. Run the current core service integration check.
+3. Check that the core services work together.
 
    ```bash
    docker compose --project-directory infra --profile tools run --rm tools
    ```
 
-4. Start the current Spark cluster.
+4. Start the Spark cluster.
 
    ```bash
    docker compose --project-directory infra --profile compute up -d spark-master spark-worker
    ```
-
-5. Generate and validate a small POC dataset. Choose an unused output path because the runner refuses to overwrite an existing run.
-
-   ```bash
-   .venv/bin/python -m data.generator run --config data/generator/configs/small.yaml --output local/sample_run
-   .venv/bin/python -m data.generator validate local/sample_run
-   ```
-
-   The POC writes its existing `Batch1` and later batch layout. Its current configuration and output do not yet implement the four-date target contract or the `initial/` and `daily/` delivery paths.

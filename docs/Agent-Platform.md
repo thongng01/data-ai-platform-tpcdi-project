@@ -1,6 +1,6 @@
 # Layer 3: Agent Platform
 
-The agent platform connects large language models (LLMs) to brokerage data, 30-day account closure predictions, and retrieved documents through gateways, Model Context Protocol (MCP) tools, and agent coordination. This document defines the target platform and its course-required scope.
+The agent platform connects large language models (LLMs) to brokerage data, 30-day account closure predictions, and retrieved documents through gateways, Model Context Protocol (MCP) tools, and agent coordination. This document defines the agent platform and its course-required scope.
 
 ---
 
