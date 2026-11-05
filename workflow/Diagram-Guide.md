@@ -68,16 +68,16 @@ The [diagram examples](Diagram-Examples.md) show a source flow, a deployment wit
 
 ## ERDs
 
-An ERD is a Mermaid file (`.mmd`) beside its PNG, for example [gold-erd.mmd](../docs/diagrams/data-specification/gold-erd.mmd). Every diagram of tables, fields, and their relationships is an ERD. The file holds entities, fields, relationships, and one kind tag per table, without styling directives. Every relationship uses a solid line (`--`); a match that is not a key says so in its label. The shared tool supplies the theme colors, the fonts, and the ELK layout. ELK places the entities and routes the lines, so the file has no positions. To change the arrangement, change the order of the declarations or split the ERD into smaller views.
+An ERD is a Mermaid file (`.mmd`) beside its PNG, for example [gold-erd.mmd](../docs/diagrams/data-specification/gold-erd.mmd). Every diagram of tables, fields, and their relationships is an ERD. For a single-zone ERD, state the namespace in the title or caption and use unqualified table names, such as `dim_account`. For an ERD that spans namespaces, qualify table names, such as `silver.stg_account` and `gold.dim_account`. Add a catalog only when it is needed to distinguish systems. The file holds entities, fields, relationships, and one kind tag per table, without styling directives. Every relationship uses a solid line (`--`); a match that is not a key says so in its label. The shared tool supplies the theme colors, the fonts, and the ELK layout. ELK places the entities and routes the lines, so the file has no positions. To change the arrangement, change the order of the declarations or split the ERD into smaller views.
 
-Tag each table with its kind on its definition line, for example `DimCustomer:::entity {`. The kind is the table's role in the data, not its layer, so one business object keeps its color in bronze, silver, and gold. Choose the kind deliberately: layer prefixes such as `raw_` and `stg_` do not identify it.
+Tag each table with its kind on its definition line, for example `dim_customer:::entity {`. The kind is the table's role in the data, not its layer, so one business object keeps its color in bronze, silver, and gold. Choose the kind deliberately: layer prefixes such as `raw_` and `stg_` do not identify it.
 
 | Kind | Header | Meaning | Examples |
 | --- | --- | --- | --- |
-| `entity` | Solid blue `#244F72` | A business object that persists over time | Gold `Dim*` tables except `DimDate` and `DimTime`; silver customer and account tables |
-| `event` | Solid orange `#B65300` | Something that happened, or a measurement at a point in time | Gold `Fact*` tables; trade, cash transaction, and daily market tables |
-| `state` | Solid green `#397A32` | A current snapshot overwritten in place, or derived values | `Prospect`, `Financial`, `feat_` tables |
-| `reference` | Pale gray `#EDF0F4` | Codes, calendars, and load logs | `DimDate`, code lookups, `DImessages` |
+| `entity` | Solid blue `#244F72` | A business object that persists over time | Gold `dim_*` tables except `dim_date` and `dim_time`; silver customer and account tables |
+| `event` | Solid orange `#B65300` | Something that happened, or a measurement at a point in time | Gold `fact_*` tables; trade, cash transaction, and daily market tables |
+| `state` | Solid green `#397A32` | A current snapshot overwritten in place, or derived values | `prospect`, `financial`, `feat_*` tables |
+| `reference` | Pale gray `#EDF0F4` | Codes and calendars | `dim_date`, `dim_time`, code lookups |
 
 Solid headers use white 20-pixel bold names; each passes the 4.5:1 contrast rule. Reference tables keep a pale header with dark text, so the lookups recede. Rows alternate between white and the kind's pale fill. These colors mark table kinds only inside ERDs; in other diagrams the same colors keep their [color roles](#color-roles). State the kind colors in one line under each ERD.
 

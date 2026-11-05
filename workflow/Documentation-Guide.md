@@ -22,8 +22,8 @@ The [root README](../README.md) introduces the whole system. Five engineering do
 | --- | --- | --- |
 | *(Whole-system entry point)* | [Root README](../README.md) | System overview, domain summary, numbered 3-layer architecture and deployment diagrams, repository structure, quick start, and links to the five detail documents. |
 | `Business Domain and Data` | [Data Specification](../docs/Data-Specification.md) | TPC-DI business domains, load cycle and delivery rules, Medallion schema design (`raw_`, `stg_`, `dim_`, `fact_`, `feat_`), Bronze, Silver, and Gold ERDs, core integration rules, and collapsed field schemas. |
-| `Layer 1: Data Platform` | [Data Platform](../docs/Data-Platform.md) | Generator and measured 100 GB data characteristics, Spark and dbt batch pipelines (`DP1-DP3`), Flink cash streaming, storage optimization, Airflow and Soda validation, DataHub governance, Layer 1 novel ideas, and Layer 1 design rationale. |
-| `Layer 2: Machine Learning Platform` | [ML Platform](../docs/ML-Platform.md) | Cash-flow forecast and tier-based minimum-cash policy, Feast offline and online feature store, Kubeflow training pipeline, MLflow tracking, KServe serving and alert API, RAG data pipeline, and Layer 2 design rationale. |
+| `Layer 1: Data Platform` | [Data Platform](../docs/Data-Platform.md) | Generator design and measured source-data characteristics, Spark and dbt-postgres batch pipelines (`DP1-DP3`), Flink cash streaming, storage optimization, Airflow and GX Core validation, DataHub governance, Layer 1 novel ideas, and Layer 1 design rationale. |
+| `Layer 2: Machine Learning Platform` | [ML Platform](../docs/ML-Platform.md) | Account attrition prediction and tier-based outreach policy, Feast offline and online feature store, Kubeflow training pipeline, MLflow tracking, KServe inference and outreach scoring, RAG data pipeline, and Layer 2 design rationale. |
 | `Layer 3: Agent Platform` | [Agent Platform](../docs/Agent-Platform.md) | Brokerage agent workflow, LLM inference serving and benchmarks, gateway routing and security policies, MCP tools, coordinator and specialist agents, registry, fleet scaling, A/B testing, Layer 3 novel ideas, and Layer 3 design rationale. |
 | `Infrastructure and Operations` | [Infrastructure and Operations](../docs/IaC.md) | Docker Compose profiles and image optimization, cloud IaC (Terraform and Ansible), CI/CD pipelines and prompt management, ingress routing, TLS, centralized secrets, observability, and verification and load testing. |
 
@@ -34,8 +34,6 @@ The [root README](../README.md) introduces the whole system. Five engineering do
 | [Workflow Overview](README.md) | Architecture and rationale of the `docs/`, `workflow/`, and `local/` repository system. |
 | [Status](Status.md) | Working state: current position, accepted decisions, open decisions, next steps, what exists, and known defects. |
 | [Polars POC record](records/Polars-POC.md) | Working benchmark record for the Polars generator proof of concept (50 tests, 1.01 GB validated output at 125.16 MiB peak resident memory). |
-| [Data Generation Draft](records/Data-Generation-Draft.md) | Working record of the generation model (business behavior, attrition signal, source recording, delivery) before the spec pass moves it into `docs/`. |
-| [Platform Design Draft](records/Platform-Design-Draft.md) | Working record of the Layer 1 platform design and the Layer 2 problem (decided, proposed, and parked items, with reasons and rejected alternatives) before the spec pass moves it into `docs/`. |
 | [Design method](Design-Method.md) | How we frame a design problem, map its attributes, research references, compare options, balance simplicity against need, and record the choice. |
 | [Diagram guide](Diagram-Guide.md) | How to create, revise, and export draw.io diagrams and Mermaid ERDs. |
 | [Diagram examples](Diagram-Examples.md) | Worked examples applying the diagram guide: a source flow, a deployment, and an ERD. |
@@ -49,7 +47,7 @@ The [root README](../README.md) introduces the whole system. Five engineering do
 
 ### 3.1 `README.md`
 Follows the coursework README rules (`rubric.xlsx` cells `A34`, `A91`, `A98`):
-- **Overview**: One short section introducing the retail brokerage platform and how Layers 1, 2, and 3 connect around batch integration, real-time cash streaming, cash-flow forecasting, and agent workflows.
+- **Overview**: One short section introducing the retail brokerage platform and how Layers 1, 2, and 3 connect around batch integration, real-time cash streaming, account attrition prediction, and agent workflows. A role-based overview image explains the main handoffs; it does not replace the deployable-unit system view below.
 - **Business Domain and Source Data**: Compact summary table mapping source domains, origin systems, cadences, and injected data problems, linking to `docs/Data-Specification.md`.
 - **System Architecture and Layer Flows**:
   - High-level architecture diagram where every box is a deployable unit and arrows show numbered data flows (`1..n` per flow, colored by flow type, with dashed arrows limited to secondary control flows).
@@ -60,33 +58,33 @@ Follows the coursework README rules (`rubric.xlsx` cells `A34`, `A91`, `A98`):
 ### 3.2 `docs/Data-Specification.md`
 Covers the cross-layer data contract and schema design (`rubric.xlsx` rows `34-38`):
 1. **Business Domains and Origin Systems**: The 9 TPC-DI domains and their logical origin systems.
-2. **Load Cycle and Source Delivery**: Historical load (`historical/`, `start_date` and `end_date` run parameters), daily batches (`incremental/YYYYMMDD/<Source>_YYYYMMDD.<ext>`, UTC `data_date`), continuous Kafka cash stream after `end_date`, and the 18 source file families.
-3. **Medallion Zones and Naming Conventions**: Zone definitions (`staging` raw files, `bronze.raw_*` 1:1 records with provenance, `silver.stg_*` cleaned and conformed records, `gold.dim_*`, `fact_*`, and `feat_*` warehouse, stream, and feature tables) plus a complete table inventory (grain, keys, partitioning, writer).
+2. **Load Cycle and Source Delivery**: Initial load (`initial/`, `initial_start` and `initial_end` run parameters), daily deliveries (`daily/YYYYMMDD/<Source>_YYYYMMDD.<ext>`, `daily_start` and `daily_end`, UTC `data_date`), continuous Kafka cash stream from `daily_start`, and the 18 source file families.
+3. **Medallion Zones and Naming Conventions**: Zone definitions (`upstream` source files, `staging` retained file versions, `bronze.raw_*` 1:1 records with provenance, `silver.stg_*` cleaned and conformed records, `gold.dim_*`, `fact_*`, and `feat_*` warehouse, stream, and feature tables) plus a complete table inventory (grain, keys, partitioning, writer).
 4. **Zone Entity Relationship Diagrams**: ERDs for **Bronze**, **Silver**, and **Gold** (including SCD2 validity columns on dimensions and `event_timestamp` + `created` on `feat_*` tables).
 5. **Core Integration Rules**: Source-to-Gold lineage, SCD2 versioning and propagation, XML omitted versus empty elements, trade lifecycle updates, and batch-to-stream cash balance handoff.
 6. **Physical Structures and Schema Reference**: General parsing rules, collapsed `<details>` field dictionaries for all source files and Gold tables, and PDF edge cases.
 
 ### 3.3 `docs/Data-Platform.md` (Layer 1)
 Covers Layer 1 architecture, pipelines, optimizations, and evidence (`rubric.xlsx` rows `5-33`, `39-40`):
-1. **Platform Architecture and Medallion Zones**: Storage zones, buckets (`staging`, `lakehouse`, `platform`), and retention baseline.
-2. **Data Generation and Problem Injection**: Generator design, bounded-memory execution, separate delivery step, and measured data characteristics (>= 100 GB offline volume, high-cardinality ratios, skew distribution, schema evolution before and after, ~2% offline duplicates, and streaming late-arrival and ~1.5% duplicate distributions).
-3. **Batch Processing and Storage Optimization (Spark and dbt)**: `DP1` (Staging to Bronze), `DP2` (Bronze to Silver and Gold), and `DP3` (Gold to Offline Features), baseline-versus-treated Spark optimization comparisons with Spark UI screenshots for **skew**, **schema evolution**, and **deduplication**, plus Lakehouse (compaction, partitioning, sorting) and Warehouse (indexing) storage optimizations.
-4. **Stream Processing (Kafka and Flink)**: Cash event contract, bootstrap from Batch 1 Gold balances, and baseline-versus-treated Flink comparisons with Flink UI screenshots for **late arrivals**, **deduplication**, and **event-time window processing** (with window code and explanation).
-5. **Orchestration, Quality, and Governance (Airflow, Soda, and DataHub)**: Shared Airflow Connections and Variables, `DP1` to `DP3` DAGs with Ingest and Validate stages, DataHub cataloged tables across zones, pipeline-to-table lineage, published validation assertions, and Layer 1 novel ideas.
+1. **Platform Architecture and Medallion Zones**: Storage zones, buckets (`upstream`, `staging`, `lakehouse`, `platform`), and retention baseline.
+2. **Data Generation and Problem Injection**: Four generation layers (business behavior, attrition signal, source recording, delivery), bounded-memory execution, a separate source publisher, scale-factor calibration, and measured data characteristics. The full generated dataset must reach at least 100 GB of offline files; streamed cash is counted separately. Distinguish estimates, configured problem rates, and measured results.
+3. **Batch Processing and Storage Optimization (Spark and dbt-postgres)**: `DP1` (upstream to staging to Bronze), `DP2` (Bronze to Silver and Gold), and `DP3` (Gold to Offline Features), baseline-versus-treated Spark optimization comparisons with Spark UI screenshots for **skew**, **schema evolution**, and **deduplication**, plus Lakehouse (compaction, partitioning, sorting) and Warehouse (indexing) storage optimizations.
+4. **Stream Processing (Kafka and Flink)**: Cash event contract, bootstrap from the initial load's Gold balances, and baseline-versus-treated Flink comparisons with Flink UI screenshots for **late arrivals**, **deduplication**, and **event-time window processing** (with window code and explanation).
+5. **Orchestration, Quality, and Governance (Airflow, GX Core, and DataHub)**: Shared Airflow Connections and Variables, `DP1` to `DP3` DAGs with Ingest and Validate stages, DataHub cataloged tables across zones, pipeline-to-table lineage, published validation assertions, and Layer 1 novel ideas.
 6. **Layer 1 Design Decisions and Rationale**: Distilled criteria, candidate comparisons, and choices for delivery rules, bucket layout, versioning baseline, and streaming source selection.
 
 ### 3.4 `docs/ML-Platform.md` (Layer 2)
 Covers Layer 2 feature engineering, training, serving, and RAG (`rubric.xlsx` rows `44-50`):
-1. **Prediction Task and Minimum-Cash Policy**: Forecasting future net account cash movement (`projected_cash = current_cash + forecast_net_movement`), comparing against tier-based minimums (`DimCustomer.Tier`), label derivation, time-based split, and synthetic account behavior rules.
+1. **Prediction Task and Outreach Policy**: Account closure within 30 days, tier-based broker outreach thresholds, labels from account closures, and synthetic leaving behavior. Keep the prediction separate from the policy and measure how early a useful warning arrives.
 2. **Feature Store and Data Contracts (Feast)**: Offline feature tables (`feat_*`) and streaming features, Airflow incremental materialization pipeline (offline to online store), and streaming feature push jobs (to offline and online stores).
 3. **Training and Experiment Tracking (Kubeflow Pipelines and MLflow)**: Multi-step Kubeflow training pipeline (offline retrieval, split, baseline versus main model training, evaluation) and MLflow tracking (parameters, metrics, data versions, and `latest` or `production` model tags).
-4. **Model Serving and Alert Scoring (KServe)**: KServe service using the `model-inside-image` pattern, plus the scoring and alert service.
-5. **Document Retrieval Pipeline (RAG)**: Brokerage knowledge base sources, Airflow pipeline (text ingestion, chunking, embedding generation, storage in Feast), and DataHub lineage and validation.
+4. **Model Serving and Scoring (KServe)**: The inference service and accepted daily, withdrawal-triggered, and agent-request scoring paths.
+5. **Document Retrieval Pipeline (RAG)**: Airflow text ingestion, chunking, embedding generation, storage in Feast, and DataHub lineage and validation. Add document sources only after the owner accepts them.
 6. **Layer 2 Design Decisions and Rationale**: Distilled criteria, candidate comparisons, and choices for the ML target, policy separation, point-in-time cutoffs, and serving topology.
 
 ### 3.5 `docs/Agent-Platform.md` (Layer 3)
 Covers Layer 3 LLM serving, gateways, MCP tools, and agents (`rubric.xlsx` rows `53-63`, `88-89`, `92-93`):
-1. **Agent Use Case and MCP Tool Plan**: User workflow, MCP tools (structured account and trade data, ML cash-shortfall inference, and RAG document retrieval), and an end-to-end interaction trace.
+1. **Agent Use Case and MCP Tool Plan**: User workflow, MCP tools (structured account and trade data, ML account-attrition inference, and RAG document retrieval), and an end-to-end interaction trace.
 2. **LLM Inference Platform**: Model server deployment, custom model configuration, global model config, and inference benchmark and optimization results.
 3. **Gateways and Access Policies**: Unified gateway for LLM, MCP, and A2A traffic, authentication, rate limiting, PII safety filtering, and per-agent tool permissions.
 4. **Agent Coordination, Registry, and Fleet Scaling**: Coordinator agent and two specialist agents, agent registry publication, multi-replica autoscaling, and warm-up fleet architecture.
@@ -128,5 +126,5 @@ We separate **how we analyze a problem** from **how we write it in the document*
 
 ### Evidence and Working Records
 - **Rubric evidence**: Place configurations, input scales, before-and-after metrics, and annotated UI screenshots directly inside the owning layer document (`Data-Platform.md`, `ML-Platform.md`, `Agent-Platform.md`, or `IaC.md`) beside the claim they prove.
-- **Working records (`workflow/records/`)**: Store intermediate development benchmarks, POC measurements (such as `Polars-POC.md`), and design drafts (such as `Platform-Design-Draft.md`) in `workflow/records/`, linked from `Status.md`. When the production component is built and measured, copy the final evidence into the owning layer document and archive or remove the working record. When the spec pass (Status, Next Step 1) moves a design draft into `docs/`, delete the draft.
+- **Working records (`workflow/records/`)**: Store intermediate development benchmarks, POC measurements (such as `Polars-POC.md`), and temporary design drafts here, linked from `Status.md`. When a component is built and measured, copy the final evidence into the owning layer document and archive or remove the working record. Delete a design draft only after its accepted decisions and rationale are in the owning documents and its unresolved items remain in Status.
 - **Status (`workflow/Status.md`)**: Keep only current position, accepted and open decisions, next steps, what exists, and known defects. Move older session logs to `local/archive/`.

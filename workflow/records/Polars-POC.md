@@ -1,6 +1,6 @@
 # Polars Generator POC Evidence
 
-The owner authorized an autonomous fresh Polars proof of concept (POC) on 2026-10-29, with code quality and declarative configuration as priorities. The [generator guide](../../data/generator/README.md) explains its rules, implementation, and commands. On 2026-11-04 the owner decided to extend this POC into the production generator ([Status](../Status.md#accepted-decisions-proposals--deferred-scope), "Generation model").
+The owner authorized an autonomous fresh Polars proof of concept (POC) on 2026-10-29, with code quality and declarative configuration as priorities. The [generator guide](../../data/generator/README.md) explains its rules, implementation, and commands. On 2026-11-04 the owner decided to extend this POC into the production generator ([Data Platform](../../docs/Data-Platform.md#2-data-generation-and-problem-injection)).
 
 ## Scope and Acceptance
 

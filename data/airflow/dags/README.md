@@ -4,8 +4,8 @@ This directory is reserved for pipeline DAGs. The accepted pipeline boundaries a
 
 | Pipeline | Responsibility |
 |---|---|
-| DP1 | Ingest source data into bronze and validate it. Bronze preserves logical source records or received events, including duplicates and provenance. |
-| DP2 | Clean and integrate bronze records into silver and build gold outputs, with validation. |
+| DP1 | Pull source file versions from upstream into staging, parse them into Bronze, and validate. Bronze preserves delivered text, duplicates, and provenance. Flink Job 1 ingests the cash stream separately. |
+| DP2 | Clean and integrate Bronze into Silver, copy the needed rows into PostgreSQL, and run dbt-postgres to build Gold, with validation. |
 | DP3 | Compute offline features and validate them. |
 
 These boundaries come from the [Data Platform design](../../../docs/Data-Platform.md#5-orchestration-quality-and-governance).

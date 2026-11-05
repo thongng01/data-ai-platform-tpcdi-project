@@ -1,24 +1,26 @@
 # Layer 3: Agent Platform
 
-The agent platform connects language models to brokerage data, live cash-shortfall predictions, and retrieved policy documents through governed gateways, MCP tools, and multi-agent coordination.
+The agent platform connects language models to brokerage data, 30-day account closure predictions, and retrieved documents through gateways, Model Context Protocol (MCP) tools, and agent coordination. This document defines the target platform and its course-required scope.
 
 ---
 
 ## 1. Agent Use Case and MCP Tool Plan
 
-Brokerage operations and support staff query the agent platform to investigate account cash-shortfall alerts, review customer trading and balance history, and verify brokerage policies and fee rules. Answering these requests requires combining structured account data, live ML forecasts, and policy documents in one workflow.
+Brokers use the agent platform to investigate account attrition risk before they contact a customer. The agent combines structured account data, a 30-day closure probability, and retrieved brokerage documents. A tier-based outreach policy converts the probability into an outreach task.
 
 | MCP Server | Backing Service | Input | Output |
 | --- | --- | --- | --- |
-| **Account & Trade Data Tool** | Layer 1 and Layer 2 Web API & Feast online store | `account_id` or `customer_id` | Account profile, customer tier, current cash balance, recent trades, and streaming cash velocity features |
-| **Cash Forecast & Alert Tool** | Layer 2 Scoring & Alert API (KServe + Policy service) | `account_id` | `forecast_net_movement`, `projected_cash`, tier minimum, projected shortfall, and model and policy versions |
-| **Policy & Document Search Tool (RAG)** | Layer 2 Feast vector store | Natural-language query and optional filters | Top-k relevant chunks from brokerage tier policies, fee schedules, and trading rules |
+| **Account and Trade Data Tool** | Layer 1 live tables and account history; Feast features | `account_id` or `customer_id` | Account profile, customer tier, current cash balance, recent trades, and cash activity features |
+| **Account Attrition Tool** | Layer 2 inference service and outreach policy | `account_id` | Probability of closure within 30 days and the tier-based outreach result |
+| **Document Search Tool (RAG)** | Layer 2 Feast retrieval store | Natural-language query and filters | Relevant document chunks with source references |
+
+For an account inquiry, the agent retrieves the account's history and live cash data, requests an attrition prediction, and retrieves documents that support its answer. The broker uses the result to plan outreach. [ML Platform](ML-Platform.md) owns the prediction task, feature producers, and outreach policy.
 
 ---
 
 ## 2. LLM Inference Platform
 
-- **Model serving**: Hosts the custom chat LLM and embedding model behind an inference pool and router, exposing an OpenAI-compatible inference API.
+- **Model serving**: Uses llm-d for the course-required LLM inference pool and router, with custom model configuration and an OpenAI-compatible inference API. Layer 2 supplies the document embedding pipeline.
 - **Global model configuration**: Agents consume a shared declarative model configuration that routes all completions through the agent gateway rather than calling model endpoints directly.
 - **Benchmarking and optimization**: Measures token throughput, time-to-first-token (TTFT), and end-to-end latency across concurrency levels and serving configurations.
 
@@ -35,7 +37,7 @@ All traffic between users, agents, MCP servers, and LLM endpoints passes through
 
 ## 4. Agent Coordination, Registry, and Fleet Scaling
 
-- **Coordinator and specialist agents**: A Coordinator Agent receives user questions, decomposes the task, delegates structured data lookup and ML risk evaluation to two specialist agents over A2A through the gateway, and synthesizes the final response.
+- **Coordinator and specialist agents**: A coordinator agent receives user questions, splits the task, delegates structured data lookup and account attrition evaluation to two specialist agents over A2A through the gateway, and combines their results into a response.
 - **Agent registry**: Publishes the catalog of deployed agents, their A2A endpoints, and their authorized MCP servers for governance and discovery.
 - **Autoscaling**: Scales coordinator and specialist agent replicas automatically from workload metrics.
 - **Agent fleet warm-up**: Maintains warm sandboxed agent instances to minimize cold-start latency while sharing worker capacity across agents.

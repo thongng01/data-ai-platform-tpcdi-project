@@ -1,20 +1,26 @@
 erDiagram
 direction LR
 
-DimBroker ||--o{ DimAccount : manages
-DimSecurity ||--o{ FactWatches : "is watched"
-DimSecurity ||--o{ DimTrade : "is traded"
-DimTrade ||--o{ FactHoldings : "opens, changes"
-Prospect |o--o{ DimCustomer : "matched, enriches"
-DimCompany ||--o{ Financial : reports
-DimSecurity ||--o{ FactMarketHistory : "is priced"
-DimCompany ||--o{ DimSecurity : issues
-DimAccount ||--o{ FactCashBalances : "has cash"
-DimCustomer ||--o{ DimAccount : owns
-DimAccount ||--o{ DimTrade : places
-DimCustomer ||--o{ FactWatches : watches
+dim_broker ||--o{ dim_account : manages
+dim_security ||--o{ fact_watches : "is watched"
+dim_security ||--o{ dim_trade : "is traded"
+dim_trade ||--o{ fact_holdings : "opens, changes"
+prospect |o--o{ dim_customer : "matched, enriches"
+dim_company ||--o{ financial : reports
+dim_security ||--o{ fact_market_history : "is priced"
+dim_company ||--o{ dim_security : issues
+dim_account ||--o{ fact_cash_balances : "has cash"
+dim_customer ||--o{ dim_account : owns
+dim_account ||--o{ dim_trade : places
+dim_customer ||--o{ fact_watches : watches
+dim_account ||--o{ fact_cash_transactions : account
+dim_customer ||--o{ fact_cash_transactions : customer
+dim_date ||--o{ fact_cash_transactions : date
+dim_time ||--o{ fact_cash_transactions : time
+dim_trade |o--o{ fact_cash_transactions : settlement
+dim_security |o--o{ fact_cash_transactions : dividend
 
-DimCustomer:::entity {
+dim_customer:::entity {
     NUM(11) SK_CustomerID PK
     NUM(11) CustomerID "business key"
     CHAR(10) Status
@@ -23,7 +29,7 @@ DimCustomer:::entity {
     DATE EffectiveDate
     DATE EndDate
 }
-DimAccount:::entity {
+dim_account:::entity {
     NUM(11) SK_AccountID PK
     NUM(11) AccountID "business key"
     NUM(11) SK_CustomerID FK
@@ -32,13 +38,13 @@ DimAccount:::entity {
     DATE EffectiveDate
     DATE EndDate
 }
-DimBroker:::entity {
+dim_broker:::entity {
     NUM(11) SK_BrokerID PK
     NUM(11) BrokerID "business key"
     DATE EffectiveDate
     DATE EndDate
 }
-DimCompany:::entity {
+dim_company:::entity {
     NUM(11) SK_CompanyID PK
     NUM(11) CompanyID "business key, CIK"
     CHAR(60) Name
@@ -46,7 +52,7 @@ DimCompany:::entity {
     DATE EffectiveDate
     DATE EndDate
 }
-DimSecurity:::entity {
+dim_security:::entity {
     NUM(11) SK_SecurityID PK
     CHAR(15) Symbol "business key"
     NUM(11) SK_CompanyID FK
@@ -54,14 +60,14 @@ DimSecurity:::entity {
     DATE EffectiveDate
     DATE EndDate
 }
-Financial:::state {
+financial:::state {
     NUM(11) SK_CompanyID FK
     NUM(4) FI_YEAR
     NUM(1) FI_QTR
     SNUM FI_BASIC_EPS
 }
-DimTrade:::entity {
-    NUM(11) TradeID PK
+dim_trade:::entity {
+    NUM(15) TradeID PK
     NUM(11) SK_AccountID FK
     NUM(11) SK_CustomerID FK
     NUM(11) SK_BrokerID FK
@@ -74,9 +80,9 @@ DimTrade:::entity {
     CHAR(10) Status
     CHAR(12) Type
 }
-FactHoldings:::event {
-    NUM(11) TradeID FK
-    NUM(11) CurrentTradeID FK
+fact_holdings:::event {
+    NUM(15) TradeID FK
+    NUM(15) CurrentTradeID FK
     NUM(11) SK_AccountID FK
     NUM(11) SK_CustomerID FK
     NUM(11) SK_SecurityID FK
@@ -85,13 +91,13 @@ FactHoldings:::event {
     NUM(11) SK_TimeID FK
     SNUM(6) CurrentHolding
 }
-FactCashBalances:::event {
+fact_cash_balances:::event {
     NUM(11) SK_AccountID FK
     NUM(11) SK_CustomerID FK
     NUM(11) SK_DateID FK
     SNUM Cash
 }
-FactMarketHistory:::event {
+fact_market_history:::event {
     NUM(11) SK_SecurityID FK
     NUM(11) SK_CompanyID FK
     NUM(11) SK_DateID FK
@@ -100,46 +106,43 @@ FactMarketHistory:::event {
     NUM ClosePrice
     NUM(12) Volume
 }
-FactWatches:::event {
+fact_watches:::event {
     NUM(11) SK_CustomerID FK
     NUM(11) SK_SecurityID FK
     NUM(11) SK_DateID_DatePlaced FK
     NUM(11) SK_DateID_DateRemoved FK
 }
-Prospect:::state {
+prospect:::state {
     CHAR(30) AgencyID PK
     NUM(11) SK_RecordDateID FK
     NUM(11) SK_UpdateDateID FK
     BOOLEAN IsCustomer
 }
-DimDate:::reference {
+dim_date:::reference {
     NUM(11) SK_DateID PK
     DATE DateValue
 }
-DimTime:::reference {
+dim_time:::reference {
     NUM(11) SK_TimeID PK
     TIME TimeValue
 }
-Industry:::reference {
+industry:::reference {
     CHAR(2) IN_ID PK
     CHAR(50) IN_NAME
 }
-StatusType:::reference {
+status_type:::reference {
     CHAR(4) ST_ID PK
     CHAR(10) ST_NAME
 }
-TaxRate:::reference {
+tax_rate:::reference {
     CHAR(4) TX_ID PK
     CHAR(50) TX_NAME
     NUM TX_RATE
 }
-TradeType:::reference {
+trade_type:::reference {
     CHAR(3) TT_ID PK
     CHAR(12) TT_NAME
 }
-DImessages:::reference {
-    DATETIME MessageDateAndTime
-    NUM(5) BatchID
-    CHAR(12) MessageType
-    CHAR(50) MessageText
+fact_cash_transactions:::event {
+    ID CT_ID PK "global source sequence"
 }

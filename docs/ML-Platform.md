@@ -1,112 +1,128 @@
 # Layer 2: Machine Learning Platform
 
-The machine learning platform forecasts future net cash movement for each brokerage account, applies a tier-based minimum-cash alert policy, manages offline and online features in Feast, runs reproducible training pipelines in Kubeflow Pipelines with MLflow tracking, serves models through KServe, and ingests brokerage documents into a Feast vector store for retrieval.
+The machine learning platform predicts whether a brokerage account will close within 30 days. A separate tier-based policy creates a broker outreach task from that probability. This target design uses Feast for offline and online features, Kubeflow Pipelines for training, MLflow for tracking and data versioning, KServe for inference, and a document retrieval pipeline for Layer 3 agents.
 
 ---
 
-## 1. Prediction Task and Minimum-Cash Policy
+## 1. Prediction Task and Outreach Policy
 
-The model predicts total signed net cash movement (`forecast_net_movement`) for an account over a future horizon. The policy adds that forecast to the account's current cash balance and flags an alert when projected cash falls below the minimum configured for the account owner's customer tier:
+The model predicts account closure within 30 days of the prediction time. The account's broker receives an outreach task when the probability reaches the threshold for the customer's tier. Tier 1, the wealthiest group, has a lower threshold than tier 3. The policy is separate from the model, so changing a threshold needs no retraining.
 
 ```text
-projected_cash = current_cash + forecast_net_movement
-minimum_cash   = configured_minimum[customer_tier]
-alert          = projected_cash < minimum_cash
+closure_probability = model(account_features)
+threshold           = configured_threshold[customer_tier]
+outreach_required   = closure_probability >= threshold
 ```
-
-For example, an account with `current_cash = 10,000` and `forecast_net_movement = -3,000` has `projected_cash = 7,000`. If the owner's customer tier requires `minimum_cash = 8,000`, the policy raises an alert with a projected shortfall of `1,000`.
 
 | Data | Source | Role |
 | --- | --- | --- |
-| **Current cash** | Batch 1 opening balance plus accepted cash movements from Flink | Observed starting cash balance at prediction time |
-| **Forecast net movement** | Layer 2 regression model served on KServe | Predicted sum of signed `CT_AMT` movements over the forecast horizon |
-| **Account owner & tier** | `DimAccount.SK_CustomerID` -> `DimCustomer.Tier` (Tiers `1`, `2`, `3`) | Selects the applicable cash threshold using the customer version valid at prediction time |
-| **Configured minimum** | Policy configuration keyed by `customer_tier` | Sets the minimum required balance per tier without hardcoding thresholds into training labels |
-| **Forecast and alert record** | Scoring and alert service | Stores account ID, as-of timestamp, forecast cutoff, current cash, forecast movement, projected cash, tier, minimum, shortfall, model version, and policy version |
+| **Account closure** | `Account.txt` and `gold.dim_account` | Observed outcome for the 30-day label |
+| **Account owner and tier** | `gold.dim_account` and `gold.dim_customer` | Select the customer's tier at prediction time and the account's broker |
+| **Closure probability** | Layer 2 model | Estimates whether an open account will close within 30 days |
+| **Tier threshold** | Outreach policy | Converts a probability into an action without changing the label |
+| **Current cash and activity** | Gold and Flink cash features | Provide observed behavior, not a minimum-cash requirement |
 
 ### Synthetic Account Behavior in the Generator
-Because standard TPC-DI random cash movements have no intentional predictive signal, the generator models account activity profiles that link historical trading and cash patterns and recent cash velocity to future net cash movement while keeping `Trade`, `CashTransaction`, and `HoldingHistory` consistent. Latent generator parameters and future outcomes are excluded from feature tables, and delivery faults (lateness and duplicates) are injected separately.
+
+The generator separates business behavior, the hidden attrition signal, source recording, and delivery. About 3% of accounts close each year. Closure risk depends on behavior profile, tenure, tier, and recent losses. About 80% of closures follow a hidden leaving period of 1 to 8 weeks: deposits and buys stop, trading slows, holdings are sold in steps, and cash leaves. About 2% of accounts per year show similar outflows but stay. Some closures have no warning.
+
+Hidden profiles, leaving periods, and look-alikes appear only in the generator summary, never in model features. The generator keeps trades, holdings, and cash consistent. Cash withdrawals cannot exceed available cash; margin accounts may borrow within their limit. The publisher adds delivery problems separately. [Data Platform](Data-Platform.md) defines the generation and delivery model.
 
 ---
 
 ## 2. Feature Store and Data Contracts (Feast)
 
-Offline and online stores share feature definitions while serving different access patterns:
+Each feature has one definition and one producer. This keeps training and serving values consistent while batch and stream producers run on different schedules.
 
-| Data Asset | Grain | Contents |
+| Data Asset | Producer | Contents and Path |
 | --- | --- | --- |
-| **Offline features (`gold.feat_*`)** | One account per feature timestamp | Historical batch features (prior daily balances, rolling inflow and outflow totals, trade-type summaries) and archived streaming window features, each carrying `event_timestamp` and `created` columns |
-| **Online features (Feast online store)** | One account | Latest eligible batch and streaming feature values for low-latency scoring |
-| **Training label** | One account per prediction time | Sum of unique business `CT_AMT` values after the prediction timestamp up to the forecast cutoff |
+| **Offline features (`gold.feat_*`)** | DP3 from Gold | Tenure, tier, trading activity, holdings and value, canceled watches, and recent account updates; Airflow materializes these features into the online store |
+| **Cash features** | Flink Job 2 | Withdrawals, deposits, and sale settlements over 1, 7, and 30 days; external net flow; days since the last deposit; current cash |
+| **Cash feature delivery** | Feast push job | Reads `brokerage.account_cash.features` and pushes rows into the offline and online stores |
+| **Online features** | Feast | Latest feature values for daily scoring, triggered rescoring, and agent requests |
+| **Training label** | Account closure history | Whether an account open at prediction time closes within the next 30 days |
+
+During daily delivery, cash reaches the platform only through Kafka. Flink Job 2 therefore produces the cash features; DP3 does not calculate a second version from daily files. Daily scoring uses these features after DP3. The live account view and large-withdrawal trigger also need fresh stream results.
 
 ### Point-in-Time Correctness and Materialization
-- **No future leakage**: Training datasets are assembled with Feast point-in-time joins (`event_timestamp <= prediction_time` and `created <= prediction_time`), ensuring late-arriving records and unclosed future windows never leak into historical features. An incomplete future horizon has no label yet rather than a zero-movement label.
-- **Batch materialization**: An Airflow DAG incrementally materializes the latest offline `feat_*` rows into the Feast online store after each daily batch.
-- **Streaming push**: Streaming feature jobs push Flink's windowed account cash aggregates (inflow, outflow, net movement, and transaction count) into both the Feast online store and the offline store.
+
+- **Time cutoff**: Feast's default point-in-time join filters on `event_timestamp` and returns the newest `created` value. It does not automatically enforce `created <= prediction_time`. The `filter_by_created_timestamp=True` option adds that filter only for offline stores that support it.
+- **Label availability**: A prediction time without a complete 30-day outcome window has no label yet, not a negative label. Hidden generator state and future outcomes are not input features.
+- **Batch materialization**: An Airflow pipeline incrementally materializes offline features into the online store after daily processing.
+- **Streaming push**: A separate push job consumes cash feature rows and writes both stores, so a slow Feast call does not block Flink.
+- **Corrections**: A rerun replaces the affected feature rows. MLflow versions each training run's full dataset with its model because mutable feature tables alone cannot reproduce an earlier training run.
 
 ---
 
 ## 3. Training and Experiment Tracking (Kubeflow Pipelines and MLflow)
 
 ### Kubeflow Training Pipeline
+
 The training workflow runs as a multi-step Kubeflow Pipeline:
-1. **Data retrieval**: Builds the training dataset by joining historical account labels against Feast offline feature views as of each prediction cutoff.
-2. **Time-based split**: Splits examples chronologically into training, validation, and held-out test periods to prevent temporal leakage across accounts.
-3. **Model training**: Trains a heuristic or linear baseline alongside the primary gradient-boosted regression model under two feature sets (batch features only vs. batch + streaming Flink features).
-4. **Evaluation and gate**: Evaluates regression error (MAE and RMSE on net cash movement) alongside policy-level alert recall, precision, and warning lead time on the held-out test period.
+1. **Data retrieval**: Joins account closure labels with Feast offline feature views at each prediction time.
+2. **Time-based split**: Separates training, validation, and test periods in time and keeps future outcomes out of input features.
+3. **Model training**: Trains the attrition model and compares it with a simple rule. A comparison with and without cash features can measure the value of those inputs.
+4. **Evaluation**: Compares predictions and broker outreach results on held-out outcomes.
+
+Before platform pipelines are built, a small generator sample checks whether the synthetic signal supports the task. A quick model must beat the rule "no deposit and net outflow over 30 days," while the rule's precision stays below about 30%. This is a generator signal check, not a selected production model or deployment threshold.
 
 ### MLflow Tracking and Registry
-Each training run logs hyperparameters, feature view versions, dataset hashes, evaluation metrics, and model artifacts to MLflow. Models that pass the evaluation gate are registered in the MLflow Model Registry and tagged (`latest` or `production`) for automated deployment.
+
+Each training run records its parameters, metrics, model artifacts, and full training dataset version in MLflow. The registry supports the course-required `latest` or `production` model tags. Dataset versions stay linked to models even when corrections replace the source feature rows.
 
 ---
 
-## 4. Model Serving and Alert Scoring (KServe)
+## 4. Model Serving and Outreach Scoring (KServe)
 
-Model inference is decoupled from Flink's real-time cash ingestion so model latency never blocks incoming Kafka cash events:
+KServe supplies the course-required inference service using the `model-inside-image` pattern. Model inference stays outside Flink's cash ingestion path. Flink publishes feature rows and rescoring requests to separate topics, so a slow feature store or scoring worker cannot stop stream processing.
 
-| Step | Component | Responsibility |
+| Scoring Path | When | Scope |
 | --- | --- | --- |
-| 1 | **Flink & Feast push** | Updates running cash balances and publishes windowed streaming features to Feast. |
-| 2 | **Scoring worker** | Reads the account's latest eligible online features from Feast on a schedule or update trigger and calls KServe. |
-| 3 | **KServe InferenceService** | Serves the registered `production` model using the `model-inside-image` pattern and returns `forecast_net_movement`. |
-| 4 | **Policy & alert service** | Resolves the account owner's current `DimCustomer.Tier`, computes `projected_cash` and `shortfall`, and writes an idempotent alert record. |
-| 5 | **Scoring & Alert Web API** | Exposes current cash, latest forecasts, active shortfall alerts, and model and policy versions to applications and Layer 3 MCP tools. |
+| **Daily scoring** | After DP3 | All open accounts |
+| **Triggered rescoring** | When Flink Job 2 detects a large withdrawal | One account, through `brokerage.account.rescore` and a scoring worker |
+| **Agent request** | When a broker asks about an account | One account, through the inference service exposed to the Layer 3 tool |
+
+Every path reads features defined once in Feast. The model returns a closure probability; the outreach policy applies the tier threshold. The [Agent Platform](Agent-Platform.md) combines this result with account data and retrieved documents.
 
 ---
 
 ## 5. Document Retrieval Pipeline (RAG)
 
-An Airflow-orchestrated RAG pipeline ingests brokerage documents (account tier policies, fee schedules, trading rules, and company disclosures) for Layer 3 agents:
-1. **Ingestion and chunking**: Reads raw Markdown and text documents from storage and splits them into semantic chunks with metadata (document ID, section, effective date).
-2. **Embedding and Feast storage**: Generates dense embedding vectors for each chunk and writes the chunks and vectors into a Feast feature view backed by a vector-capable online store and Parquet offline store.
-3. **Governance**: Validates chunk counts, embedding dimensions, and null rates, and publishes pipeline lineage and validation assertions to DataHub.
+An Airflow pipeline prepares brokerage documents for retrieval-augmented generation (RAG) by Layer 3 agents:
+1. **Ingestion and chunking**: Reads documents from storage and splits them into chunks with source metadata.
+2. **Embedding and Feast storage**: Generates embedding vectors and stores chunks and vectors in Feast for retrieval.
+3. **Governance**: Validates the pipeline outputs and publishes lineage and quality results to DataHub.
 
 ---
 
 ## 6. Layer 2 Design Decisions and Rationale
 
-- **Defined business action**: The prediction must drive a concrete brokerage decision with an observable ground-truth label.
-- **Stream utilization**: Real-time Flink cash features must add measurable signal over daily batch history alone.
-- **Policy flexibility**: Changing a business threshold should not invalidate trained models or historical labels.
-- **Ingestion isolation**: Slow or unavailable ML inference must not stall stateful stream processing.
+The 30-day horizon assumes routine broker outreach with follow-up, not emergency contact. A 3-day or 7-day horizon risks too little time to act. A 14-day horizon fits a shorter response process but leaves less time for follow-up. The 30-day prediction horizon does not guarantee 30 days of warning: evaluate warning time from the first flag to closure.
+
+- **Business action**: A prediction must support broker outreach before an observed account closure.
+- **Observed label**: Account status supplies the outcome without an invented fraud label or payment obligation.
+- **Batch and stream inputs**: The task must use both offline account history and streaming cash features.
+- **Policy flexibility**: Tier thresholds must change without retraining the model.
+- **Ingestion isolation**: Slow inference must not stop the cash stream.
 
 | Decision | Selected Choice | Main Reason |
 | --- | --- | --- |
-| **Primary ML task** | Forecast future net account cash movement (regression) + tier-based minimum-cash policy | Connects the `CashTransaction` stream, `FactCashBalances`, and `DimCustomer.Tier`, and allows changing tier minimums without relabeling or retraining the model. |
-| **Evaluation design** | Compare (1) historical heuristic baseline, (2) batch-only ML model, and (3) batch + streaming ML model on held-out time periods | Directly measures whether Flink's streaming features improve forecast accuracy and shortfall detection over daily batch features. |
-| **Serving topology** | Asynchronous scoring worker calling KServe outside Flink | Keeps KServe network calls off the Flink checkpoint and watermark path. |
-| **Explicit obligation schedules** | Deferred; forecast total net cash movement against tier buffers | TPC-DI has no account payment-schedule or margin-call ledger (`Financial.FI_LIABILITY` and `FI_MARGIN` belong to issuing companies, not brokerage accounts). |
+| **Primary ML task** | Account closure within 30 days | Gives brokers time to contact accounts at risk; closures already appear in the source data |
+| **Outreach policy** | Tier-based probability thresholds, separate from the model | Supports different outreach priorities without changing labels |
+| **Evaluation** | Model against a simple rule; optional comparison with and without cash features | Tests whether the model improves on a rule and whether cash features help |
+| **Feature ownership** | DP3 for non-cash features; Flink Job 2 for cash features | Avoids two producers with different calculations for the same feature |
+| **Stream isolation** | Separate topics for feature delivery and rescoring | Keeps Feast and model latency off the Flink processing path |
+| **Training reproducibility** | Full training dataset version linked to the model in MLflow | Feature corrections replace rows and cannot preserve each past training input by themselves |
 
 <details>
 <summary>Alternative ML Tasks Considered</summary>
 
-| Candidate | Prediction Entity | Outcome | Why Not Selected as Primary |
-| --- | --- | --- | --- |
-| **Direct low-cash classifier** | Account | Binary low-cash flag | Bakes a fixed cash threshold into training labels; changing a tier minimum requires relabeling and retraining. |
-| **Unusual cash activity detection** | Account or window | Anomaly flag | Requires inventing synthetic fraud labels unrelated to TPC-DI rules. |
-| **Trading-activity prediction** | Account | Future completed trade count or binary trade flag | Viable secondary task, but depends primarily on trade history rather than the continuous cash stream. |
-| **Limit-trade completion** | Trade | Whether a limit order fills within a horizon | Depends on exchange order-book dynamics that TPC-DI does not model. |
-| **Market-volume forecast** | Security | Next-day trading volume | Uses daily market history only; account cash events carry no security symbol. |
-| **Prospect conversion** | Prospect | Whether a prospect opens an account | Prospects without accounts have no cash transactions or streaming events. |
+| Candidate | Why Not Selected |
+| --- | --- |
+| **Minimum-cash alert** | A brokerage rejects a withdrawal above available cash. The client sells first, so the forecast has no defined harm for an alert to prevent. |
+| **External net flow forecast** | Changes the target but leaves the same weak business action. |
+| **Fraudulent withdrawal** | Requires an invented label that the source data does not supply. |
+| **Margin-call warning** | Covers only margin accounts and needs margin requirements based on holdings value. |
+| **Next-week trading activity** | Has a smaller business cost than account closure. |
 
 </details>

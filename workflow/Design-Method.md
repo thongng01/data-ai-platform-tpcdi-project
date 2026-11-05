@@ -19,7 +19,7 @@ The steps repeat when needed. Research can expose a missing attribute, and evalu
 
 - **One question per decision**: Split a broad question into parts that have separate answers. "How do source files arrive?" became date meaning, time zone, calendar, completeness, buckets, dataset isolation, prefixes, and reruns.
 - **Order by dependency**: Answer first the question that constrains the others. The date meaning came before the time zone, and buckets came before prefixes.
-- **Decide now or defer**: Decide now when other work depends on the answer or when reversing it is costly. Defer when nothing depends on it yet, and record what brings it back. Catch-up loads and reruns wait for pipeline design; HR and reference updates wait until a feature needs them.
+- **Decide now or defer**: Decide now when other work depends on the answer or when reversing it is costly. Defer when nothing depends on it yet, and record what brings it back. Archive and retention policies wait for the lifecycle design; HR and reference updates wait until a feature needs them.
 - **Challenge the framing**: A question can contain a wrong assumption. "Which control file format?" assumed that the provider sends a control file. The better question was how ingestion knows that a delivery is complete. Similarly, "How do we isolate datasets?" assumed that several datasets must coexist; they do not, because every planned comparison uses one timeline.
 
 ## 3. Map the Problem
@@ -64,7 +64,7 @@ Classify each constraint before treating it as fixed:
 | Historical only, as in TPC-DI | None | Company, security, and financial data stay unchanged for a year. |
 | Fixed release date after each quarter | Low | Delayed availability from one rule |
 | Staggered delays per company | Medium | Closer to real reporting, with more rules and checks |
-| Detailed filing calendars | High | Detail that the cash forecast does not use |
+| Detailed filing calendars | High | Detail that account attrition does not use |
 
 ## 6. Evaluate and Choose
 
@@ -91,7 +91,7 @@ Add complexity only for one of these reasons:
 | Realism changes how the system must behave | Delayed FINWIRE availability creates point-in-time rules for P/E values and features. |
 
 - **Signs of too much**: A part that nobody reads or checks, such as computing our own hashes over 100 GB of files when no step compares them; a boundary without a difference in requirements, such as a bucket per zone; generality for a scale nobody needs.
-- **Signs of too little**: One field with two meanings, such as one batch date for both the extraction day and the data day; no way to detect an incomplete delivery; an unstated assumption, such as treating the latest record date as the historical cutoff.
+- **Signs of too little**: One field with two meanings, such as one date for both the extraction day and the data day; no way to detect an incomplete delivery; an unstated assumption, such as treating the latest record date as the historical cutoff.
 
 ## 8. Rules From This Project
 
@@ -101,10 +101,10 @@ Add complexity only for one of these reasons:
 | Rely only on what the source actually sends | Pipeline-side expected-file list; no provider control file |
 | Protect what cannot be rebuilt; rebuild the rest | `staging` bucket; Bronze and Silver share `lakehouse` |
 | Question where a need came from before building for it | One active dataset; no dataset level in storage |
-| Start from a baseline that existing mechanisms provide; add mechanisms when a requirement appears | Data versioning: raw retention, provenance, and SCD2 now; corrections, snapshots, and dead letters later |
+| Start from a baseline that existing mechanisms provide; add mechanisms when a requirement appears | Data versioning: retained source versions, provenance, Delta history, and SCD2; add lifecycle rules when their requirements are defined |
 | Never use data before it was available | FINWIRE availability; point-in-time ML features |
 | Identify events by stable facts, not by delivery position | Event ID across repeated deliveries |
 | Separate configured targets from measured results | Generator summary |
 | Keep reference outputs out of the ingestion path | Generator summary stays on local disk |
 | Use boundaries where requirements differ and organization where they match | Buckets versus prefixes |
-| Decide costly-to-reverse choices first | Buckets before prefixes; reruns deferred |
+| Decide costly-to-reverse choices first | Buckets before prefixes; retention periods deferred |

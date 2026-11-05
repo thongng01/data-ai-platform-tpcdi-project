@@ -1,6 +1,6 @@
-# TPC-DI Source Data Generator
+# Brokerage Source Generator POC
 
-This module generates connected TPC-DI source files in one local Python worker using bounded Polars calculations, explicit entity histories, and disk-based external sorting. The earlier `datagen` prototype is archived in `local/archive/prototype-v0/`.
+This proof of concept generates connected brokerage source files in TPC-DI formats using one local Python worker, bounded Polars calculations, explicit entity histories, and disk-based external sorting. The target generator extends it with a day-by-day simulation in `data/data_source/generator/`; a separate publisher handles delivery. This guide describes the existing POC and its executable commands, not the target contracts. The earlier `datagen` prototype is archived in `local/archive/prototype-v0/`.
 
 The source contracts come from [TPC-DI 1.1.0](../../docs/TPC-DI/TPC-DI_v1.1.0.pdf), clause 2.2, and [Data Specification](../../docs/Data-Specification.md). The [Databricks reference](https://github.com/shannon-barrow/databricks-tpc-di/tree/2ac319db6e62927c5d4f772cf5654ad8981f9ec4/src/tools/tpcdi_gen) supplies the dependency pattern, ID-derived values, shared trade calculations, and analytical scheduling approach; see [Data Platform](../../docs/Data-Platform.md#2-data-generation-and-problem-injection) for the design rules and reference corrections.
 
@@ -44,7 +44,7 @@ The runner first creates `my-run.partial`. A successful run generates and valida
 | `worker.log` | Records execution stages and any exception. |
 | `runs/` | Holds intermediate sorted records. Successful export removes these records. |
 
-Only `sources/` is the source-data staging root. Reports and intermediate records are outside it. Source byte totals exclude metadata and temporary files. Benchmark audit files are not generated.
+Only `sources/` holds generated source files. The target publisher delivers files to `upstream`, and DP1 retains pulled versions in `staging`. Reports and intermediate records stay outside `sources/`. Source byte totals exclude metadata and temporary files. Benchmark audit files are not generated.
 
 ## Definitions and implementation
 
@@ -77,9 +77,9 @@ The source families are covered at small scale, but the workload is deliberately
 - Every active customer activates and cancels one watch per day. Daily market prices cover generated execution prices. The POC treats every calendar day as an activity day; it does not model exchange holidays. Fiscal dates equal calendar dates, and holiday flags are zero.
 - Prospect snapshots contain matching identities for current and future customers. The reference vocabulary is intentionally small: one industry and two tax rates. Time covers all 86,400 seconds; Date covers the financial and activity history.
 
-The cash description contains `Trade <ID>` for POC reconciliation. This is a project lineage convention, not a TPC-DI transaction identifier. The eventual stream still needs its separate event-ID contract.
+The cash description contains `Trade <ID>` for POC reconciliation. This is a project lineage convention, not a TPC-DI transaction identifier. The target adds the accepted `CT_ID` cash identity and replaces this description with fixed `CT_NAME` forms defined in [Data Specification](../../docs/Data-Specification.md).
 
-Population and date settings replace the reference's scale-factor formulas. The POC has no asserted mapping to an official scale factor. Predictive account behavior, skew, schema evolution, injected duplicates, and late delivery remain subsequent work. Dense daily trade cycles do not establish a useful forecasting task.
+Population and date settings replace the reference's scale-factor formulas. The POC has no asserted mapping to an official scale factor. The target adds business profiles, an attrition signal, source errors, and schema evolution to the generator. The publisher adds duplicates and late delivery. Dense daily trade cycles in this POC do not establish a useful attrition signal.
 
 ## Memory and ordering
 

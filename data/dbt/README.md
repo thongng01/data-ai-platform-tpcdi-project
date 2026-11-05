@@ -1,7 +1,7 @@
-# dbt transformations
+# dbt Transformations
 
-This directory is reserved for dbt models, profiles, macros, and data tests. The [Layer 1 design](../../docs/Data-Platform.md#3-batch-processing-and-storage-optimization) assigns bronze-to-silver-and-gold processing to DP2 and offline feature computation to DP3.
+This directory holds the target dbt-postgres project for Gold warehouse models, macros, and tests. In [DP2](../../docs/Data-Platform.md#3-batch-processing-and-storage-optimization), Spark converts Bronze to Silver in Delta Lake and copies the rows Gold needs into a PostgreSQL load schema. dbt builds Gold from those local rows; it does not move data between engines.
 
-The compute configuration mounts this directory at `/opt/dbt`. Its `dbt` profile provides a Spark Thrift endpoint on port 10001. A dbt connection must select a supported adapter and method; the endpoint alone does not define a dbt project. [IaC section 8.2](../../docs/IaC.md#82-a-hiveserver2-takes-the-whole-worker) explains resource contention with the Thrift application.
+Gold uses PostgreSQL keys, indexes, and transactional writes. SCD2 models build versions from source effective dates rather than dbt snapshots, because the initial load already contains years of changes. A corrected date rebuilds the affected history and later dates in order. Daily cash facts use the same dbt logic for initial file data and streamed events retained in Silver.
 
-Incremental update support depends on the table format and adapter. SeaweedFS stores objects; it does not define SQL `MERGE` support on its own. Supporting transactional `MERGE` in the lakehouse requires Delta Lake or Iceberg, whereas mutable warehouse updates can also run in PostgreSQL.
+The target uses no Spark Thrift server or dbt-spark adapter. The current Compose mount at `/opt/dbt` remains until the infrastructure update.
