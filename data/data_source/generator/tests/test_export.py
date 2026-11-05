@@ -308,9 +308,11 @@ def _check_tpcdi_format_fixtures(root):
     assert set(manifest["files"]) == TPCDI_FIXTURE_PATHS, "TPC-DI fixture inventory must contain all 13 expected paths."
     sources = load_sources()
     for relative, metadata in manifest["files"].items():
+        assert type(metadata["lines"]) is int and metadata["lines"] > 0, "TPC-DI fixtures require a positive integer line count."
         raw = (root / "tpcdi_sf3" / relative).read_bytes()
         assert hashlib.sha256(raw).hexdigest().startswith(metadata["sha256"])
         lines = raw.decode("ascii").splitlines()
+        assert lines and all(line.strip() for line in lines), "TPC-DI fixtures require nonempty source records."
         assert len(lines) == metadata["lines"]
         source_name = Path(relative).stem
         if source_name == "BatchDate":
@@ -347,4 +349,20 @@ def test_tpcdi_fixture_inventory_rejects_empty_or_incomplete_manifest(tmp_path, 
     # No fixture files exist here. The inventory check must fail before the row
     # loop can either skip an empty manifest or try to open a partial fixture.
     with pytest.raises(AssertionError, match="fixture inventory"):
+        _check_tpcdi_format_fixtures(tmp_path)
+
+
+@pytest.mark.parametrize("metadata_lines", [0, -1, True, "1", 1.0, 1])
+def test_tpcdi_fixture_inventory_rejects_empty_payloads(tmp_path, metadata_lines):
+    """Reject all 13 empty fixture files even when their saved hashes match."""
+    files = {}
+    for relative in sorted(TPCDI_FIXTURE_PATHS):
+        path = tmp_path / "tpcdi_sf3" / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"")
+        files[relative] = {"delimiter": "|", "fields": 1, "lines": metadata_lines,
+                           "sha256": hashlib.sha256(b"").hexdigest()}
+    write_json(tmp_path / "manifest.json", {"files": files})
+    message = "nonempty source records" if type(metadata_lines) is int and metadata_lines > 0 else "positive integer line count"
+    with pytest.raises(AssertionError, match=message):
         _check_tpcdi_format_fixtures(tmp_path)
