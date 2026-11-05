@@ -48,7 +48,7 @@ Only `sources/` holds generated source files. The target publisher delivers file
 
 ## Definitions and implementation
 
-The [run configuration](configs/small.yaml) controls population sizes, history length, seed, cash and cancellation probabilities, batch size, merge fan-in, threads, and resource budgets. YAML values cannot contain executable expressions. Unknown keys, duplicate keys, invalid types, and invalid ranges fail before a worker starts.
+The [run configuration](configs/small.yaml) controls population sizes, history length, seed, cash-trade and cancellation probabilities, batch size, merge fan-in, threads, and resource budgets. YAML values cannot contain executable expressions. Unknown keys, duplicate keys, invalid types, and invalid ranges fail before a worker starts.
 
 The [source definitions](definitions/sources.yaml) specify field order, source types, nullability, delimiters, file names, and CDC support. The [FINWIRE definitions](definitions/finwire.yaml) specify field widths and padding. These files describe formats. They do not contain scheduling algorithms or arbitrary expression strings.
 
@@ -59,7 +59,7 @@ The [source definitions](definitions/sources.yaml) specify field order, source t
 | `generation.py` | Routes records to source files and calculates account availability. |
 | `customers.py` | Builds customer and account actions, CDC records, and prospect snapshots. |
 | `reference.py` | Builds reference tables, FINWIRE, and daily market records. |
-| `activity.py` | Derives trades, status changes, cash, holdings, and watches. |
+| `activity.py` | Derives trades, status changes, cash transactions, holdings, and watches. |
 | `sorting.py` | Writes sorted runs, compacts them, and merges them with bounded open-file counts. |
 | `validation.py` | Parses the exported source files and checks relationships using a temporary SQLite database. SQLite does not generate source data. |
 | `runner.py` | Supervises the worker, records evidence, and publishes a validated run directory. |
@@ -71,13 +71,13 @@ The source families are covered at small scale, but the workload is deliberately
 - Each initial customer has two accounts. Selected customers receive a third account or customer and account updates. Other selected accounts close, and selected customers become inactive. The historical XML includes all six action types. Inactivation closes that customer's remaining accounts. Incremental batches introduce new customers and accounts and update selected existing records.
 - Each eligible account starts a configured number of trade cycles per day. A cycle contains a buy and, if that buy completes, a subsequent sell. A buy completes or cancels on the next day. A sell completes one day later. Some trades therefore cross the historical-to-incremental boundary or remain unfinished at the end of the run.
 - Each cycle owns one holding lot. Its buy changes quantity from zero to the bought quantity. Its sell changes that quantity back to zero. The holding origin is the completed buy for the same account and security. The POC does not implement multiple-lot allocation, partial fills, or borrowing.
-- Cash trades produce signed cash movements at completion. Buys subtract executed value and fees. Sells add executed value minus fees. The POC uses a 25-cent charge, a 50-cent commission, and zero transaction tax. Margin trades change holdings without producing these cash movements.
+- Trades in cash accounts produce signed cash transactions at completion. Buys subtract executed value and fees. Sells add executed value minus fees. The POC uses a 25-cent charge, a 50-cent commission, and zero transaction tax. Margin trades change holdings without producing these cash transactions.
 - An unfinished or canceled trade has empty execution price, charge, commission, and tax fields. Historical snapshots contain only the state known before the batch cutoff. Incremental files contain ordered insert and update transitions.
 - Financial records cover four completed quarters. Companies and securities start before those reports. FINWIRE records use quarterly files ordered by posting timestamp. The generator uses CIK references; it does not exercise company-name references or company and security version changes.
 - Every active customer activates and cancels one watch per day. Daily market prices cover generated execution prices. The POC treats every calendar day as an activity day; it does not model exchange holidays. Fiscal dates equal calendar dates, and holiday flags are zero.
 - Prospect snapshots contain matching identities for current and future customers. The reference vocabulary is intentionally small: one industry and two tax rates. Time covers all 86,400 seconds; Date covers the financial and activity history.
 
-The cash description contains `Trade <ID>` for POC reconciliation. This is a project lineage convention, not a TPC-DI transaction identifier. The target adds the accepted `CT_ID` cash identity and replaces this description with fixed `CT_NAME` forms defined in [Data Specification](../../docs/Data-Specification.md).
+The cash transaction description (`CT_NAME`) contains `Trade <ID>` for POC reconciliation. This is a project lineage convention, not a TPC-DI transaction identifier. The target adds the accepted `CT_ID` cash transaction identity and replaces this description with fixed `CT_NAME` forms defined in [Data Specification](../../docs/Data-Specification.md).
 
 Population and date settings replace the reference's scale-factor formulas. The POC has no asserted mapping to an official scale factor. The target adds business profiles, an attrition signal, source errors, and schema evolution to the generator. The publisher adds duplicates and late delivery. Dense daily trade cycles in this POC do not establish a useful attrition signal.
 

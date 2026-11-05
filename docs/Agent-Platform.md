@@ -10,11 +10,11 @@ Brokers use the agent platform to investigate account attrition risk before they
 
 | MCP Server | Backing Service | Input | Output |
 | --- | --- | --- | --- |
-| **Account and Trade Data Tool** | Layer 1 live tables and account history; Feast features | `account_id` or `customer_id` | Account profile, customer tier, current cash balance, recent trades, and cash activity features |
+| **Account and Trade Data Tool** | Layer 1 live tables and account history; Feast features | `account_id` or `customer_id` | Account profile, customer tier, current cash balance, recent trades, and cash-flow features |
 | **Account Attrition Tool** | Layer 2 inference service and outreach policy | `account_id` | Probability of closure within 30 days and the tier-based outreach result |
 | **Document Search Tool (RAG)** | Layer 2 Feast retrieval store | Natural-language query and filters | Relevant document chunks with source references |
 
-For an account inquiry, the agent retrieves the account's history and live cash data, requests an attrition prediction, and retrieves documents that support its answer. The broker uses the result to plan outreach. [ML Platform](ML-Platform.md) owns the prediction task, feature producers, and outreach policy.
+For an account inquiry, the agent retrieves the account's history and live cash balance, requests an attrition prediction, and retrieves documents that support its answer. The broker uses the result to plan outreach. [ML Platform](ML-Platform.md) owns the prediction task, feature producers, and outreach policy.
 
 ---
 

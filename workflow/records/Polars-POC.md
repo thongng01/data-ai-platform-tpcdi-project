@@ -4,7 +4,7 @@ The owner authorized an autonomous fresh Polars proof of concept (POC) on 2026-1
 
 ## Scope and Acceptance
 
-The experiment covers the TPC-DI business and reference source families, historical and daily file patterns, and a connected customer, account, trade, cash, and holding history. The generator uses a simplified analytical schedule. It does not implement the complete Databricks scheduler or claim DIGen equivalence.
+The experiment covers the TPC-DI business and reference source families, historical and daily file patterns, and a connected customer, account, trade, cash transaction, and holding history. The generator uses a simplified analytical schedule. It does not implement the complete Databricks scheduler or claim DIGen equivalence.
 
 The checks require source-format validity, correct temporal references, exact cash reconciliation, continuous holding quantities, globally ordered exports, identical source bytes across execution batch sizes, and bounded generation and merge state. Memory and temporary disk must be measured, not inferred from the batch setting. Failure must preserve partial evidence without publishing a completed dataset.
 
@@ -36,7 +36,7 @@ Twelve format tests used the repository's committed SF3 source fixtures. The XML
 
 Each final run passed 25 source and relationship checks. The validator parses the exported files and builds a temporary SQLite database. It checks effective account lifetimes, latest trade state, legal status transitions, exact cash amounts, holding origins and quantity continuity, financial and company references, watch state, market price bounds, entity counts, and source hashes. It does not substitute generator-internal tables for the source files.
 
-An independent DuckDB 1.5.6 scan matched the largest run's cash row count and signed cent total for all three batches. The evidence is `independent_cash_check.json` in the reports folder, beside the helper `check_cash_with_duckdb.py`. The first attempt used DuckDB's `64MB` memory setting, default CSV buffers, and two threads; a CSV buffer allocation exceeded that limit. One thread and an explicit 1 MiB CSV buffer completed under the same setting. This setting controls DuckDB memory, not whole-process RSS.
+An independent DuckDB 1.5.6 scan matched the largest run's cash transaction row count and signed cent total for all three batches. The evidence is `independent_cash_check.json` in the reports folder, beside the helper `check_cash_with_duckdb.py`. The first attempt used DuckDB's `64MB` memory setting, default CSV buffers, and two threads; a CSV buffer allocation exceeded that limit. One thread and an explicit 1 MiB CSV buffer completed under the same setting. This setting controls DuckDB memory, not whole-process RSS.
 
 ## Interpretation and Remaining Work
 

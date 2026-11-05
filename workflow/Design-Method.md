@@ -30,14 +30,14 @@ List the attributes that decide the design before listing solutions.
 | --- | --- | --- |
 | **Source and delivery** | Who produces the data, in what format, and at what cadence? What does the provider not send? | Providers send data files only, so completeness uses a pipeline-side file list. |
 | **Time** | Which clocks exist: event, business date, publication, extraction, arrival, processing? Which time zone and day boundary apply? | A Q1 report has a reporting period, a publication date, and an arrival time. |
-| **Identity** | What identifies an entity, a version, an event, and a delivery? | A repeated cash event keeps its Event ID; a Kafka offset identifies only a delivery position. |
+| **Identity** | What identifies an entity, a version, an event, and a delivery? | A repeated cash transaction message keeps its `CT_ID`; a Kafka offset identifies only a delivery position. |
 | **State and order** | Does a step depend on earlier results? | SCD2 versions and cash balances require dates in order. |
 | **Storage** | Can the data be rebuilt? Who writes it, and how long is it kept? | Raw files stand for provider deliveries, which cannot be rebuilt, so they get their own bucket. |
 | **Scale and shape** | How large is the data, how skewed, and how many distinct values does a key have? | At least 100 GB, a skewed key, and measured high-cardinality columns |
 | **Failure** | What can be partial, duplicated, late, or retried? | S3 writes each object completely, but a delivery appears one file at a time. |
 | **Evidence** | How will we show that the result is correct? | The generator summary records measured values, not only settings. |
 | **Change and correction** | Can this be rerun safely? What must rerun when an input changes? How do we show what changed? | A corrected customer file triggers a rerun of its date and every later date; Bronze keeps both deliveries. |
-| **Lifecycle** | How long is this kept, and what removes it? How are new versions of code and models released? | The raw and clean cash topics keep the whole dataset; the features and rescore topics keep 7 days. |
+| **Lifecycle** | How long is this kept, and what removes it? How are new versions of code and models released? | The raw and clean cash transaction topics keep the whole dataset; the features and rescore topics keep 7 days. |
 | **Security and privacy** | Who may read or change this? Does it hold personal data? What could an attacker send into it, such as SQL or prompt injection? | Customer names, addresses, tax IDs, emails, and phone numbers are personal data. |
 | **Operations** | How do we know it works? How do we recover it after a failure? | `ops.load_status` and its completeness view show which sources each date is missing. |
 | **Engineering quality** | How is it tested? Can someone else reproduce it? What does it cost to run? | The same configuration and seed reproduce the same source files byte for byte; each training run saves its dataset with the model in MLflow. |

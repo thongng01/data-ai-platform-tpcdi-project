@@ -20,13 +20,13 @@ outreach_required   = closure_probability >= threshold
 | **Account owner and tier** | `gold.dim_account` and `gold.dim_customer` | Select the customer's tier at prediction time and the account's broker |
 | **Closure probability** | Layer 2 model | Estimates whether an open account will close within 30 days |
 | **Tier threshold** | Outreach policy | Converts a probability into an action without changing the label |
-| **Current cash and activity** | Gold and Flink cash features | Provide observed behavior, not a minimum-cash requirement |
+| **Current cash balance and activity** | Gold and Flink cash-flow features | Provide observed behavior, not a minimum-cash requirement |
 
 ### Synthetic Account Behavior in the Generator
 
 The generator separates business behavior, the hidden attrition signal, source recording, and delivery. About 3% of accounts close each year. Closure risk depends on behavior profile, tenure, tier, and recent losses. About 80% of closures follow a hidden leaving period of 1 to 8 weeks: deposits and buys stop, trading slows, holdings are sold in steps, and cash leaves. About 2% of accounts per year show similar outflows but stay. Some closures have no warning.
 
-Hidden profiles, leaving periods, and look-alikes appear only in the generator summary, never in model features. The generator keeps trades, holdings, and cash consistent. Cash withdrawals cannot exceed available cash; margin accounts may borrow within their limit. The publisher adds delivery problems separately. [Data Platform](Data-Platform.md) defines the generation and delivery model.
+Hidden profiles, leaving periods, and look-alikes appear only in the generator summary, never in model features. The generator keeps trades, holdings, and cash transactions consistent. Cash withdrawals cannot exceed available cash; margin accounts may borrow within their limit. The publisher adds delivery problems separately. [Data Platform](Data-Platform.md) defines the generation and delivery model.
 
 ---
 
@@ -36,20 +36,20 @@ Each feature has one definition and one producer. This keeps training and servin
 
 | Data Asset | Producer | Contents and Path |
 | --- | --- | --- |
-| **Offline features (`gold.feat_*`)** | DP3 from Gold | Tenure, tier, trading activity, holdings and value, canceled watches, and recent account updates; Airflow materializes these features into the online store |
-| **Cash features** | Flink Job 2 | Withdrawals, deposits, and sale settlements over 1, 7, and 30 days; external net flow; days since the last deposit; current cash |
-| **Cash feature delivery** | Feast push job | Reads `brokerage.account_cash.features` and pushes rows into the offline and online stores |
+| **Batch features (`gold.feat_*`)** | DP3 from Gold | Tenure, tier, trading activity, holdings and value, canceled watches, and recent account updates; Airflow materializes these features into the online store |
+| **Cash-flow features** | Flink Job 2 | Withdrawals, deposits, and sale settlements over 1, 7, and 30 days; external net flow; days since the last deposit; current cash balance |
+| **Cash-flow feature delivery** | Feast push job | Reads `brokerage.account_cash.features` and pushes rows into the offline and online stores |
 | **Online features** | Feast | Latest feature values for daily scoring, triggered rescoring, and agent requests |
 | **Training label** | Account closure history | Whether an account open at prediction time closes within the next 30 days |
 
-During daily delivery, cash reaches the platform only through Kafka. Flink Job 2 therefore produces the cash features; DP3 does not calculate a second version from daily files. Daily scoring uses these features after DP3. The live account view and large-withdrawal trigger also need fresh stream results.
+In the daily delivery period, cash transactions reach the platform only through Kafka. Flink Job 2 therefore produces the cash-flow features; DP3 does not calculate a second version from daily files. Daily scoring uses these features after DP3. The live account view and large-withdrawal trigger also need fresh stream results.
 
 ### Point-in-Time Correctness and Materialization
 
 - **Time cutoff**: Feast's default point-in-time join filters on `event_timestamp` and returns the newest `created` value. It does not automatically enforce `created <= prediction_time`. The `filter_by_created_timestamp=True` option adds that filter only for offline stores that support it.
 - **Label availability**: A prediction time without a complete 30-day outcome window has no label yet, not a negative label. Hidden generator state and future outcomes are not input features.
-- **Batch materialization**: An Airflow pipeline incrementally materializes offline features into the online store after daily processing.
-- **Streaming push**: A separate push job consumes cash feature rows and writes both stores, so a slow Feast call does not block Flink.
+- **Batch materialization**: An Airflow pipeline incrementally materializes the batch features into the online store after daily processing.
+- **Streaming push**: A separate push job consumes cash-flow feature rows and writes both stores, so a slow Feast call does not block Flink.
 - **Corrections**: A rerun replaces the affected feature rows. MLflow versions each training run's full dataset with its model because mutable feature tables alone cannot reproduce an earlier training run.
 
 ---
@@ -61,7 +61,7 @@ During daily delivery, cash reaches the platform only through Kafka. Flink Job 2
 The training workflow runs as a multi-step Kubeflow Pipeline:
 1. **Data retrieval**: Joins account closure labels with Feast offline feature views at each prediction time.
 2. **Time-based split**: Separates training, validation, and test periods in time and keeps future outcomes out of input features.
-3. **Model training**: Trains the attrition model and compares it with a simple rule. A comparison with and without cash features can measure the value of those inputs.
+3. **Model training**: Trains the attrition model and compares it with a simple rule. A comparison with and without cash-flow features can measure the value of those inputs.
 4. **Evaluation**: Compares predictions and broker outreach results on held-out outcomes.
 
 Before platform pipelines are built, a small generator sample checks whether the synthetic signal supports the task. A quick model must beat the rule "no deposit and net outflow over 30 days," while the rule's precision stays below about 30%. This is a generator signal check, not a selected production model or deployment threshold.
@@ -74,7 +74,7 @@ Each training run records its parameters, metrics, model artifacts, and full tra
 
 ## 4. Model Serving and Outreach Scoring (KServe)
 
-KServe supplies the course-required inference service using the `model-inside-image` pattern. Model inference stays outside Flink's cash ingestion path. Flink publishes feature rows and rescoring requests to separate topics, so a slow feature store or scoring worker cannot stop stream processing.
+KServe supplies the course-required inference service using the `model-inside-image` pattern. Model inference stays outside Flink's ingestion path for cash transactions. Flink publishes feature rows and rescoring requests to separate topics, so a slow feature store or scoring worker cannot stop stream processing.
 
 | Scoring Path | When | Scope |
 | --- | --- | --- |
@@ -101,16 +101,16 @@ The 30-day horizon assumes routine broker outreach with follow-up, not emergency
 
 - **Business action**: A prediction must support broker outreach before an observed account closure.
 - **Observed label**: Account status supplies the outcome without an invented fraud label or payment obligation.
-- **Batch and stream inputs**: The task must use both offline account history and streaming cash features.
+- **Batch and stream inputs**: The task must use both offline account history and streaming cash-flow features.
 - **Policy flexibility**: Tier thresholds must change without retraining the model.
-- **Ingestion isolation**: Slow inference must not stop the cash stream.
+- **Ingestion isolation**: Slow inference must not stop the cash transaction stream.
 
 | Decision | Selected Choice | Main Reason |
 | --- | --- | --- |
 | **Primary ML task** | Account closure within 30 days | Gives brokers time to contact accounts at risk; closures already appear in the source data |
 | **Outreach policy** | Tier-based probability thresholds, separate from the model | Supports different outreach priorities without changing labels |
-| **Evaluation** | Model against a simple rule; optional comparison with and without cash features | Tests whether the model improves on a rule and whether cash features help |
-| **Feature ownership** | DP3 for non-cash features; Flink Job 2 for cash features | Avoids two producers with different calculations for the same feature |
+| **Evaluation** | Model against a simple rule; optional comparison with and without cash-flow features | Tests whether the model improves on a rule and whether cash-flow features help |
+| **Feature ownership** | DP3 for batch features; Flink Job 2 for cash-flow features | Avoids two producers with different calculations for the same feature |
 | **Stream isolation** | Separate topics for feature delivery and rescoring | Keeps Feast and model latency off the Flink processing path |
 | **Training reproducibility** | Full training dataset version linked to the model in MLflow | Feature corrections replace rows and cannot preserve each past training input by themselves |
 

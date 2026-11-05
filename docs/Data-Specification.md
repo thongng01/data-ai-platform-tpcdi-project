@@ -16,7 +16,7 @@ The system models the data landscape of a retail brokerage. This table maps each
 | **Customers & Accounts** | CMS (history) & OLTP (daily) | Customer profiles, demographics, and brokerage accounts managed by brokers. |
 | **Brokers** | Internal HR DB | Employee records. Brokers are specifically employees with job code `314`. |
 | **Trading & Holdings** | OLTP Trading DB | Trade lifecycles (submission to completion or cancellation) and resulting security holdings. |
-| **Cash** | OLTP Trading DB | Money moving into and out of accounts, such as deposits, withdrawals, and cash from trades. |
+| **Cash Transactions** | OLTP Trading DB | Money moving into and out of accounts: deposits, withdrawals, trade settlements, and dividends. |
 | **Market** | OLTP Trading DB | Daily price and volume observations for each security. |
 | **Watch Lists** | OLTP Trading DB | Securities that customers watch, added and removed over time. |
 | **Prospects** | External Marketing Provider | Potential customers with demographic data (some overlap with existing customers). |
@@ -24,7 +24,7 @@ The system models the data landscape of a retail brokerage. This table maps each
 | **Reference Data** | Static Reference Files | Calendar, time of day, industries, statuses, tax rates, and trade types. |
 
 ## 2. Load Cycle & Processing Strategy
-TPC-DI defines one initial load followed by two daily deliveries. This project uses an initial load for 2014-01-01 through 2018-12-31, followed by daily deliveries for 2019-01-01 through 2025-12-31. FINWIRE arrives quarterly inside daily deliveries. Cash movements in the daily delivery period arrive only through Kafka.
+TPC-DI defines one initial load followed by two daily deliveries. This project uses an initial load for 2014-01-01 through 2018-12-31, followed by daily deliveries for 2019-01-01 through 2025-12-31. FINWIRE arrives quarterly inside daily deliveries. Cash transactions in the daily delivery period arrive only through Kafka.
 
 ### 2.1 Processing Phases
 
@@ -32,7 +32,7 @@ TPC-DI defines one initial load followed by two daily deliveries. This project u
 | --- | --- | --- | --- | --- |
 | **Initial load (TPC-DI Batch 1)** | Files in `initial/` | Empty warehouse | `initial_start` through `initial_end` | Load reference data and full extracts, build SCD2 history, and calculate historical cash balances and holdings. |
 | **Daily deliveries** | Files in `daily/YYYYMMDD/` | Earlier dates processed in order | One `data_date` per delivery, from `daily_start` through `daily_end` | Apply CDC changes (`I`, `U`) and new activity; apply prospect snapshots monthly and FINWIRE on release dates. |
-| **Cash stream** | Events on `brokerage.cash_transaction.raw` | Closing cash balances at `initial_end` | `daily_start` through `daily_end`, continuously | Update live balances and windows; supply Silver cash rows for the daily warehouse build ([Section 2.4](#24-batch-to-stream-handoff)). |
+| **Cash transaction stream** | Messages on `brokerage.cash_transaction.raw` | Closing cash balances at `initial_end` | `daily_start` through `daily_end`, continuously | Update live balances and windows; supply Silver cash transaction rows for the daily warehouse build ([Section 2.4](#24-batch-to-stream-handoff)). |
 
 The initial load needs price history for 52-week values and four released quarters of earnings for price-to-earnings ratios (P/E). FINWIRE reports start five quarters before the quarter that contains `initial_start`, so four quarters are available on the first date. The reference calendar has 1,826 initial-load dates and 2,557 daily delivery dates. The NYSE calendar includes its unscheduled closures on 2018-12-05 and 2025-01-09.
 
@@ -41,7 +41,7 @@ Each source follows one cadence after the initial load:
 - **Daily**: `Customer.txt`, `Account.txt`, `Trade.txt`, `HoldingHistory.txt`, `WatchHistory.txt`, and `DailyMarket.txt`.
 - **Monthly**: A full `Prospect.csv` snapshot on the first day of each month. Customer marketing fields keep their previous values until the new snapshot arrives.
 - **Quarterly, on the release date**: `FINWIREyyyyQq`. Q1 results release April 30, Q2 results July 31, Q3 results October 31, and Q4 results January 31 of the following year. The release date's delivery applies company and security postings before that day's trades and prices. File names use the posting quarter of `PTS`; each financial record keeps its reporting quarter.
-- **Continuous, through Kafka**: Cash movements. No cash file arrives in a daily delivery.
+- **Continuous, through Kafka**: Cash transactions. No `CashTransaction.txt` file arrives in a daily delivery.
 - **Once, in the initial load**: `CustomerMgmt.xml`, `TradeHistory.txt`, `HR.csv`, and the six reference files. Later customer, account, and trade changes arrive through `Customer.txt`, `Account.txt`, and `Trade.txt`. HR and reference data stay static for the run; `dim_broker` keeps its history columns with one version per broker.
 
 *Note: The fixed FINWIRE release schedule simulates an earnings feed, not statutory filing deadlines. Earnings announcements can precede formal filings ([SEC guidance](https://www.investor.gov/sites/default/files/readan8k.pdf)).*
@@ -51,15 +51,15 @@ Each source follows one cadence after the initial load:
 - **Daily delivery calendar**: Every calendar date has a daily delivery, including weekends and holidays. A source with no changes on a date still delivers its file, with zero records.
 - **`data_date`**: The business date that a daily extract represents, encoded in its folder and file name. Extraction and arrival dates do not change it.
 - **Run periods**: Four inclusive UTC dates: `initial_start`, `initial_end`, `daily_start`, and `daily_end`. The defaults are 2014-01-01, 2018-12-31, 2019-01-01, and 2025-12-31. `daily_start` must be the day after `initial_end`; the configuration loader rejects nonadjacent periods. FINWIRE and reference files can begin before `initial_start`. The initial `Prospect.csv` snapshot is dated `initial_end`.
-- **Cash event date**: The UTC date of `CT_DTS`. Delivery time is a separate value that measures lateness.
+- **Cash transaction date**: The UTC date of `CT_DTS`. Delivery time is a separate value that measures lateness.
 - **Processing order**: Process dates in order, initially with one active run per pipeline. Independent tables can run in parallel within a date. Each table waits only for its own inputs and dependencies.
 
 ### 2.4 Batch-to-Stream Handoff
-- **Split**: Cash movements through `initial_end` arrive in `CashTransaction.txt`. From `daily_start`, movements arrive only as stream events.
+- **Split**: Cash transactions through `initial_end` arrive in `CashTransaction.txt`. From `daily_start`, they arrive only as stream messages.
 - **Start state**: Flink Job 2 starts from the closing initial-load balances, keyed by natural account ID. It consumes the clean topic, not historical file rows ([handoff rules](Data-Platform.md#4-stream-processing-kafka-and-flink)).
-- **Warehouse facts**: DP2 pushes Silver cash rows into PostgreSQL. dbt builds `fact_cash_transactions` and then `fact_cash_balances`, with the same logic for initial-load and streamed dates. Flink does not write either warehouse fact.
+- **Warehouse facts**: DP2 pushes Silver cash transaction rows into PostgreSQL. dbt builds `fact_cash_transactions` and then `fact_cash_balances`, with the same logic for initial-load and streamed dates. Flink does not write either warehouse fact.
 - **Duplicates**: The source system assigns every movement a `CT_ID` from one global sequence. Repeated deliveries keep it and count once in Silver and Gold.
-- **Late events**: Flink Job 1 keeps late valid events in Silver. Daily cash builds wait until its progress marker passes the end of the date plus 10 minutes. A correction to a closed date rebuilds that date and every later processed date in order; live tables remain separate from corrected warehouse facts.
+- **Late events**: Flink Job 1 keeps late valid events in Silver. Daily builds of the cash transaction and balance facts wait until its progress marker passes the end of the date plus 10 minutes. A correction to a closed date rebuilds that date and every later processed date in order; live tables remain separate from corrected warehouse facts.
 
 ## 3. Physical Source Files & Ingestion Rules
 The project uses all 18 TPC-DI business and reference source families. It excludes `BatchDate.txt`, the `<name>_audit.csv` files, and the benchmark `Audit` table. Run dates define the delivery periods (Section 2.3). `CashTransaction.txt` gains `CT_ID`, and a later `Trade.txt` contract adds `T_CHANNEL`; Section 9.2 records these project changes.
@@ -75,7 +75,7 @@ The tables and schema headings use the standard source names. The naming rules b
 | OLTP | `Account.txt` | Pipe-delimited | One changed account | No | Yes | `I`, `U` |
 | OLTP Trading DB | `Trade.txt` | Pipe-delimited | One trade (state or change) | Yes | Yes | `I`, `U` |
 | OLTP Trading DB | `TradeHistory.txt` | Pipe-delimited | One trade status change | Yes | No | N/A (Initial load only) |
-| OLTP Trading DB | `CashTransaction.txt` | Pipe-delimited | One cash movement | Yes | Stream | N/A (events after initial load) |
+| OLTP Trading DB | `CashTransaction.txt` | Pipe-delimited | One cash transaction | Yes | Stream | N/A (events after initial load) |
 | OLTP Trading DB | `HoldingHistory.txt` | Pipe-delimited | One holding change per trade | Yes | Yes | `I` only |
 | OLTP Trading DB | `WatchHistory.txt` | Pipe-delimited | One watch placement or cancellation | Yes | Yes | `I` only |
 | OLTP Trading DB | `DailyMarket.txt` | Pipe-delimited | One security per day | Yes | Yes | `I` only |
@@ -88,7 +88,7 @@ The tables and schema headings use the standard source names. The naming rules b
 - **Initial files**: Use `initial/<Source>` with standard names such as `CustomerMgmt.xml`, `Trade.txt`, and `Prospect.csv`. Add no date suffix. Keep the existing year and quarter in `FINWIREyyyyQq`.
 - **Daily files**: Use `daily/YYYYMMDD/<Source>_YYYYMMDD.<ext>`, for example `daily/20190305/Customer_20190305.txt` and `daily/20190301/Prospect_20190301.csv`. The folder and file name carry the same `data_date`, written as plain `YYYYMMDD`. Delivery delays and retries do not change it.
 - **Quarterly files**: Name `FINWIREyyyyQq` by the year and quarter of `PTS`, not the financial reporting period. For example, Q1 2026 results published April 30 belong in `FINWIRE2026Q2`; their `Year` and `Quarter` fields remain `2026` and `1`. Keep the existing name format without a daily date suffix. Publish only records released by that delivery, never future postings. Each file arrives in the daily folder of its release date, for example `daily/20260430/FINWIRE2026Q2`. That date's delivery applies it before that day's trades and prices.
-- **Generation and delivery**: The generator writes source data locally. The publisher writes files to the source department's `upstream` bucket and cash events for the daily delivery period to Kafka. DP1 can only read `upstream`; it pulls new and changed files into `staging` before parsing them into Bronze.
+- **Generation and delivery**: The generator writes source data locally. The publisher writes files to the source department's `upstream` bucket and cash transactions for the daily delivery period to Kafka. DP1 can only read `upstream`; it pulls new and changed files into `staging` before parsing them into Bronze.
 - **Delivery completeness**: The pipeline keeps an expected-file list for each delivery: the initial set, the daily set, the monthly prospect snapshot, and FINWIRE on release dates. The provider sends no control or manifest file. A file with zero records means no activity; a missing file means the delivery is incomplete. `ops.load_status` and a completeness view show missing inputs. A late file holds back only dependent tables.
 - **S3 placement**: The paths above are relative to `upstream` ([bucket rationale](Data-Platform.md#62-object-storage-layout-and-dataset-scope)). DP1 copies each pulled file version to `initial/<version_id>/<source_filename>` or `daily/YYYYMMDD/<version_id>/<source_filename>` in `staging`. S3 groups object keys by prefix, not by directories or tags. The platform holds one active dataset at a time, so keys have no dataset level.
 - **Pulled versions**: Each pulled file has its own `version_id`. A retry reuses that ID and path. A corrected source file gets a new ID; reruns and backfills reuse the selected inputs. An ingestion record maps the source key and version information to its staging path. An object-store ETag is not a guaranteed content hash.
@@ -99,14 +99,14 @@ Data moves through four distinct zones:
 
 | # | Zone | Purpose | Grain | Storage |
 | --- | --- | --- | --- | --- |
-| 1 | **Staging** | The platform's immutable copy of every pulled file version. The cash stream enters through Kafka instead. | One pulled file version | SeaweedFS `staging` bucket |
+| 1 | **Staging** | The platform's immutable copy of every pulled file version. The cash transaction stream enters through Kafka instead. | One pulled file version | SeaweedFS `staging` bucket |
 | 2 | **Bronze** | Source records and received events as delivered text, including duplicates. Preserves provenance and parse failures. | One source record or one event delivery | Delta tables in the SeaweedFS `lakehouse` bucket, under `bronze/` |
 | 3 | **Silver** | Cleaned, typed, deduplicated, and conformed records. Ready for joins. | One business record, with quality metadata where needed | Delta tables in the SeaweedFS `lakehouse` bucket, under `silver/` |
 | 4 | **Gold** | The warehouse (Section 6), live stream outputs, and ML feature tables (Section 7). | Per business entity or metric | PostgreSQL `gold` schema |
 
 ### Versioning and History
 The versioning baseline preserves inputs and business history ([rationale](Data-Platform.md#63-data-versioning-and-safe-reruns)):
-- **Raw versions**: Staging and Bronze keep every pulled file version. Replaying the selected versions rebuilds downstream tables. Stream Bronze keeps every event delivery; Silver cash keeps one movement per `CT_ID`.
+- **Raw versions**: Staging and Bronze keep every pulled file version. Replaying the selected versions rebuilds downstream tables. Stream Bronze keeps every message; Silver keeps one cash transaction per `CT_ID`.
 - **Provenance and rejects**: Bronze preserves delivered values and provenance. Unusable records go to Bronze quarantine tables with their rule and reason. GX Core publishes quality results to DataHub; quality metadata and `ops.load_status` replace the benchmark's `DImessages` table.
 - **Business history**: SCD2 dimensions record what was true on each date (Section 6). Delta table history records changes to Bronze and Silver.
 - **Names**: Tables use `bronze.raw_*`, `silver.stg_*`, `gold.dim_*`, `gold.fact_*`, and `gold.feat_*`. Gold current-state and reference tables use snake_case names such as `prospect` and `status_type`. Platform metadata uses `_snake_case`. Original source field names stay unchanged in the source dictionaries.
@@ -129,7 +129,7 @@ The TPC-DI specification does not define a silver layer. The Silver layer is the
 | FINWIRE (`CMP`, `SEC`) | Parse fixed-width records in posting order; build histories; link securities to companies by CIK or name. | `dim_company`, `dim_security` |
 | FINWIRE (`FIN`) | Copy the report year and quarter from the record; resolve the company at `PTS`; use only reports released by the as-of date. | `financial` |
 | `Trade.txt` + `TradeHistory.txt` | Insert each trade, then update its status. Keys are set at creation and kept at close. | `dim_trade` |
-| `CashTransaction.txt` and streamed cash in Silver | Deduplicate by `CT_ID`; parse `CT_NAME`; resolve dimension keys. dbt builds the cash movement fact, then adds each day's net movement to the prior balance. | `fact_cash_transactions`, `fact_cash_balances` |
+| `CashTransaction.txt` and streamed cash transactions in Silver | Deduplicate by `CT_ID`; parse `CT_NAME`; resolve dimension keys. dbt builds the cash transaction fact, then adds each day's net amount to the prior balance. | `fact_cash_transactions`, `fact_cash_balances` |
 | `HoldingHistory.txt` + `dim_trade` | Copy `HH_AFTER_QTY`; take keys, date, time, and price from the changing trade. | `fact_holdings` |
 | `DailyMarket.txt` + `dim_security` + `financial` | Copy prices and volume; calculate 52-week high and low, P/E, and yield. | `fact_market_history` |
 | `WatchHistory.txt` | Insert a watch on `ACTV`; set its removal date on `CNCL`. | `fact_watches` |
@@ -152,8 +152,8 @@ The Gold warehouse has 19 tables: the 19 TPC-DI tables minus `DImessages`, plus 
 | `dim_company` | SCD2 Dimension | Name, industry, credit rating, CEO, address | One company version | FINWIRE `CMP` | Versions from postings | New versions from quarterly FINWIRE |
 | `dim_security` | SCD2 Dimension | Symbol, exchange, shares, dividend, issuing company | One security version | FINWIRE `SEC` | Versions from postings | New versions from quarterly FINWIRE |
 | `dim_trade` | Mutable Dimension | Type, status, quantity, prices, fees, account, security, channel | One trade | `Trade.txt`, `TradeHistory.txt` | One row per trade; no recorded channel | Insert new trades; update status on close |
-| `fact_cash_transactions` | Fact | Cash movements and related dimension keys | One movement, keyed by `CT_ID` | Silver cash from the initial file and Kafka | All historical movements | Closed-date movements, built daily by dbt |
-| `fact_cash_balances` | Fact | End-of-day account cash | One account per day with transactions | `fact_cash_transactions` | Daily balances | Daily balances, built by dbt |
+| `fact_cash_transactions` | Fact | Cash transactions and related dimension keys | One cash transaction, keyed by `CT_ID` | Silver cash transactions from the initial file and Kafka | All initial-load cash transactions | Cash transactions of closed dates, built daily by dbt |
+| `fact_cash_balances` | Fact | End-of-day account cash balance | One account per day with transactions | `fact_cash_transactions` | Daily balances | Daily balances, built by dbt |
 | `fact_holdings` | Fact | Quantity held after a trade | One holding change | `HoldingHistory.txt` | One row per change | One row per change |
 | `fact_market_history` | Fact | Prices, volume, 52-week high and low, P/E, yield | One security per day | `DailyMarket.txt` | One row per day | One row per day |
 | `fact_watches` | Fact | Period a customer watches a security | One watch | `WatchHistory.txt` | Watches from actions | Insert placements; set removal dates |
@@ -162,38 +162,38 @@ The Gold warehouse has 19 tables: the 19 TPC-DI tables minus `DImessages`, plus 
 | `dim_date`, `dim_time` | Reference | Calendar and clock attributes | One day; one second | `Date.txt`, `Time.txt` | Loaded once | No change |
 | `industry`, `status_type`, `tax_rate`, `trade_type` | Reference | Code lookups | One code | Matching `.txt` files | Loaded once | No change |
 
-`fact_cash_transactions` links each movement to account, customer, date, and time dimensions. Trade settlements also link to `dim_trade`; dividends link to `dim_security`. It is partitioned by date. `dim_trade.channel` is nullable because older source rows do not record a channel. `fact_market_history` retains P/E, 52-week values, and yield.
+`fact_cash_transactions` links each cash transaction to account, customer, date, and time dimensions. Trade settlements also link to `dim_trade`; dividends link to `dim_security`. It is partitioned by date. `dim_trade.channel` is nullable because older source rows do not record a channel. `fact_market_history` retains P/E, 52-week values, and yield.
 
 ### Gold Layer Entity Relationships
-The ERD shows all 19 warehouse tables in the `gold` schema and their main relationships. Table labels omit the namespace because the whole view belongs to one schema. Existing fields use the TPC-DI reference names. The cash fact shows its movement identity and dimension relationships, not a full physical schema; `ID` denotes a logical identifier. The `prospect` relationship is a match by name and address, not a key.
+The ERD shows all 19 warehouse tables in the `gold` schema and their main relationships. Table labels omit the namespace because the whole view belongs to one schema. Existing fields use the TPC-DI reference names. The cash transaction fact shows its identity and dimension relationships, not a full physical schema; `ID` denotes a logical identifier. The `prospect` relationship is a match by name and address, not a key.
 
 ![Gold layer ERD with all 19 tables, their keys, and their relationships.](diagrams/data-specification/gold-erd.png)
 
 *Gold warehouse (`gold` schema), reference model rather than a final physical schema. Header colors: blue for dimensions, orange for facts, green for current-state tables, gray for reference tables.*
 
-## 7. Cash Streaming & ML
-After the initial load, cash transactions arrive only through Kafka. Flink Job 1 writes Bronze and Silver and publishes clean events. Job 2 consumes the clean topic, updates live tables, produces cash features, and requests rescoring after large withdrawals. Cash features and offline features support the 30-day account attrition model.
+## 7. Cash Transaction Stream & ML
+After the initial load, cash transactions arrive only through Kafka. Flink Job 1 writes Bronze and Silver and publishes clean events. Job 2 consumes the clean topic, updates live tables, produces cash-flow features, and requests rescoring after large withdrawals. Cash-flow features and batch features support the 30-day account attrition model.
 
-### 7.1 Cash Streaming (Kafka and Flink)
-Cash movements after the initial load arrive as Kafka events and follow the cycle rules in [Section 2.4](#24-batch-to-stream-handoff). The table maps original source fields to the lowercase JSON keys in the [cash message contract](Data-Platform.md#topics-and-cash-contract). Source file types remain in Section 9.2; JSON amounts use decimal text rather than floating-point numbers.
+### 7.1 Cash Transaction Stream (Kafka and Flink)
+Cash transactions after the initial load arrive as Kafka messages and follow the cycle rules in [Section 2.4](#24-batch-to-stream-handoff). The table maps original source fields to the lowercase JSON keys in the [cash transaction message contract](Data-Platform.md#topics-and-cash-transaction-contract). Source file types remain in Section 9.2; JSON amounts use decimal text rather than floating-point numbers.
 
 | Source Field or Metadata | JSON Key or Kafka Metadata | Representation and Meaning |
 | --- | --- | --- |
-| `CT_ID` | `ct_id` | Integer global cash movement sequence, shared with the initial file. Repeated deliveries keep the same ID. |
+| `CT_ID` | `ct_id` | Integer global cash transaction sequence, shared with the initial file. Repeated deliveries keep the same ID. |
 | `CT_CA_ID` | `ct_ca_id` | Integer account ID |
 | `CT_DTS` | `ct_dts` | UTC event timestamp as ISO 8601 text |
 | `CT_AMT` | `ct_amt` | Signed decimal text; positive adds cash and negative removes cash |
-| `CT_NAME` | `ct_name` | Fixed cash description as text |
+| `CT_NAME` | `ct_name` | Fixed description as text |
 | Message contract version | `schema_version` | Integer schema version |
 | Delivery time | Kafka record timestamp, outside the JSON payload | When the event was delivered; used to measure lateness |
 
 | Output | Zone | Grain | Contents |
 | --- | --- | --- | --- |
 | Received events | Bronze | One delivery | Each event as delivered, including duplicates and Kafka partition, offset, and delivery time |
-| Cash events | Silver | One cash movement | Validated events with `CT_ID` deduplication and parsed `cash_type` and `trade_id` |
-| `fact_cash_transactions` | Gold | One cash movement | dbt's daily movement fact from Silver |
-| `fact_cash_balances` | Gold | One account per day with transactions | dbt's daily balance: previous balance plus the day's net movement |
-| Running balance | Gold | One account | Flink Job 2's current cash after each event |
+| Streamed cash transactions | Silver | One cash transaction | Validated events with `CT_ID` deduplication and parsed `cash_type` and `trade_id` |
+| `fact_cash_transactions` | Gold | One cash transaction | dbt's daily transaction fact from Silver |
+| `fact_cash_balances` | Gold | One account per day with transactions | dbt's daily balance: previous balance plus the day's net amount |
+| Running balance | Gold | One account | Flink Job 2's current cash balance after each cash transaction |
 | Window aggregates | Gold | One account per window | Hourly and daily inflow, outflow, net movement, and count |
 
 ### 7.2 Account Attrition & Broker Outreach
@@ -201,8 +201,8 @@ The model predicts whether an open account closes within 30 days ([ML Platform](
 
 | Data | Grain | Contents |
 | --- | --- | --- |
-| **Offline features** | One account per feature time | DP3 produces noncash features from Gold; Airflow materializes them to Feast's online store. |
-| **Cash features** | One account per feature time | Flink Job 2 produces cash features and sends them through the features topic to a Feast push job for the online and offline stores. |
+| **Batch features** | One account per feature time | DP3 produces them from Gold; Airflow materializes them to Feast's online store. |
+| **Cash-flow features** | One account per feature time | Flink Job 2 produces them and sends them through the features topic to a Feast push job for the online and offline stores. |
 | **Label** | One open account per prediction time | Closure within the following 30 days, observed in `Account.txt` and `dim_account`. Hidden generator traits are not model inputs. |
 | **Outreach policy** | One customer tier | A probability threshold that decides when the broker gets an outreach task. |
 | **Prediction** | One account per as-of time | Probability of closure within 30 days. Daily scoring covers all open accounts after DP3; a large withdrawal triggers rescoring for one account. |
@@ -212,7 +212,7 @@ Each feature has one definition and one producer. Features have a business time 
 ## 8. Core Integration Rules
 
 ### Temporal Rules
-- **Record Dates vs. `data_date`**: Historical rows use their own dates. Daily customer and account changes use `data_date`. Streamed cash events use the UTC date of `CT_DTS`.
+- **Record Dates vs. `data_date`**: Historical rows use their own dates. Daily customer and account changes use `data_date`. Streamed cash transactions use the UTC date of `CT_DTS`.
 - **Trade Times**: `PNDG` sets the creation time (`SBMT` for market orders `TMB` and `TMS`). `CMPT` or `CNCL` sets the close time.
 - **SCD2 Collapse**: Several changes to one entity on one day become one version. The latest value wins, by timestamp and then file order.
 - **Propagation**: A new customer version gives the customer's accounts new versions. A new company version does the same for its securities.
@@ -454,7 +454,7 @@ Pipe-delimited, initial load only, ordered by `TH_T_ID`.
 
 #### CashTransaction.txt
 
-Pipe-delimited, initial load only; rows omit `CDC_FLAG` and `CDC_DSN`. The project adds `CT_ID` as the first field. Later cash movements arrive as stream events with the same identity (Section 7.1).
+Pipe-delimited, initial load only; rows omit `CDC_FLAG` and `CDC_DSN`. The project adds `CT_ID` as the first field. Later cash transactions arrive as stream messages with the same identity (Section 7.1).
 
 ```text
 81234567|1001|2018-12-11 08:10:42|-400.00|Withdrawal
@@ -464,8 +464,8 @@ Pipe-delimited, initial load only; rows omit `CDC_FLAG` and `CDC_DSN`. The proje
 | --- | --- | --- | --- |
 | `CT_ID` | Source-assigned integer | Unique movement ID; duplicates keep it | Project addition: one global source-system sequence, also used as the stream event ID. |
 | `CT_CA_ID` | `IDENT_T` | Not Null | Customer account identifier |
-| `CT_DTS` | `DATETIME` | Not Null | Time of the cash movement |
-| `CT_AMT` | `VALUE_T` | Not Null | Signed cash movement amount |
+| `CT_DTS` | `DATETIME` | Not Null | Time of the cash transaction |
+| `CT_AMT` | `VALUE_T` | Not Null | Signed cash transaction amount |
 | `CT_NAME` | `CHAR(100)` | Not Null | Fixed forms: `Trade settlement <trade_id>`, `Deposit`, `Withdrawal`, or `Dividend <symbol>`. DP2 and Flink Job 1 use one shared parser to derive `cash_type` and `trade_id`. |
 
 #### HoldingHistory.txt
@@ -770,7 +770,7 @@ TMB|Market Buy|0|1
 
 ### 9.3 Warehouse (Gold) Schemas
 
-The following dictionaries retain the TPC-DI field order, types, restrictions, and descriptions from PDF clause 3.2. `BatchID` is benchmark reference metadata, not a specified project run-metadata contract. Target tables use the snake_case names below. `dim_trade` also has nullable `channel`; the added cash movement fact follows the logical contract in Section 6.
+The following dictionaries retain the TPC-DI field order, types, restrictions, and descriptions from PDF clause 3.2. `BatchID` is benchmark reference metadata, not a specified project run-metadata contract. Target tables use the snake_case names below. `dim_trade` also has nullable `channel`; the added cash transaction fact follows the logical contract in Section 6.
 
 <details>
 <summary>SCD2 Dimension Pattern & Common History Fields</summary>

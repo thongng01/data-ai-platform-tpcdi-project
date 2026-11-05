@@ -4,7 +4,7 @@ This directory is reserved for pipeline DAGs. The accepted pipeline boundaries a
 
 | Pipeline | Responsibility |
 |---|---|
-| DP1 | Pull source file versions from upstream into staging, parse them into Bronze, and validate. Bronze preserves delivered text, duplicates, and provenance. Flink Job 1 ingests the cash stream separately. |
+| DP1 | Pull source file versions from upstream into staging, parse them into Bronze, and validate. Bronze preserves delivered text, duplicates, and provenance. Flink Job 1 ingests the cash transaction stream separately. |
 | DP2 | Clean and integrate Bronze into Silver, copy the needed rows into PostgreSQL, and run dbt-postgres to build Gold, with validation. |
 | DP3 | Compute offline features and validate them. |
 

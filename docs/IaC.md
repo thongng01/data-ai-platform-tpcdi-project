@@ -75,9 +75,9 @@ Kafka runs as a local combined KRaft broker and controller. Container clients us
 
 | Topic | Contents | Retention |
 |---|---|---|
-| `brokerage.cash_transaction.raw` | All cash deliveries, including duplicates; source-owned | Whole active dataset |
+| `brokerage.cash_transaction.raw` | All cash transaction messages, including duplicates; source-owned | Whole active dataset |
 | `brokerage.cash_transaction.clean` | Deduplicated events with `cash_type` and `trade_id` | Whole active dataset |
-| `brokerage.account_cash.features` | Cash feature rows for the Feast push job | 7 days |
+| `brokerage.account_cash.features` | Cash-flow feature rows for the Feast push job | 7 days |
 | `brokerage.account.rescore` | Requests for the scoring worker | 7 days |
 
 Each topic has four partitions and uses account ID as its key. JSON messages use a repository schema contract, decimal text for amounts, and the delivery time as the Kafka timestamp. The platform holds one active dataset. Switching datasets or publisher profiles clears the buckets, topics, and Flink state; it is not a routine rerun.
@@ -88,7 +88,7 @@ Checkpoints run every 30 seconds, and jobs restart from the last checkpoint. Kaf
 
 ### 4.4 Orchestration
 
-Airflow 3 uses `LocalExecutor`. Its image includes GX Core, dbt-postgres, and DataHub's Airflow plugin. DP1 pulls files into staging and Bronze. DP2 builds Silver, loads PostgreSQL, and runs dbt. DP3 builds non-cash features. Each pipeline has ingest and GX validate stages that report to DataHub.
+Airflow 3 uses `LocalExecutor`. Its image includes GX Core, dbt-postgres, and DataHub's Airflow plugin. DP1 pulls files into staging and Bronze. DP2 builds Silver, loads PostgreSQL, and runs dbt. DP3 builds the batch features. Each pipeline has ingest and GX validate stages that report to DataHub.
 
 Process dates in order, with one active run per pipeline at first. Independent tables can proceed within a date when their own inputs and dependencies are complete. A late file holds only the tables that need it. `ops.load_status` and a completeness view identify missing inputs; dashboards label partial dates. A correction rebuilds the affected dates and every later processed date in order, not all Gold history.
 
