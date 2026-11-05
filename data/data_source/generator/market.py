@@ -160,13 +160,20 @@ class Market:
                 if postings[release_index][0] >= first:
                     annual[release_index] = np.where(paying, np.maximum(4, np.floor(close * yields / 4 + .5).astype(np.int64) * 4), 0)
             if trading:
+                # Box-Muller converts two repeatable uniform draws into normal
+                # noise. The lower bound prevents taking the logarithm of zero.
                 first_draw = np.maximum(_uniform(ids, config, f"market/return-a/{day}"), 1e-12)
                 second_draw = _uniform(ids, config, f"market/return-b/{day}")
                 noise = np.sqrt(-2 * np.log(first_draw)) * np.cos(2 * np.pi * second_draw)
+                # Each security's volatility-scaled noise combines with a shared
+                # market move. A shock adds -0.06 or +0.06 to that shared log return.
                 common = (float(_uniform([day.toordinal()], config, "market/common")[0]) - .5) * .015
                 if shock:
                     common += -.06 if int(values([day.toordinal()], config.seed, "market/shock-sign")[0]) % 2 else .06
                 previous = close
+                # The exponential applies the combined log return and 0.00015
+                # daily drift. Adding 0.5 before flooring rounds to integer cents.
+                # Clipping keeps the close between 1 and 90,000,000 cents.
                 close = np.clip(np.floor(previous * np.exp(noise * config.market_volatility + common + .00015) + .5), 1, 90000000).astype(np.int64)
                 spread = np.maximum(1, np.floor(close * (.002 + _uniform(ids, config, f"market/spread/{day}") * .015)).astype(np.int64))
                 high = np.minimum(99999999, np.maximum(previous, close) + spread)

@@ -1,4 +1,4 @@
-"""Source routing and bounded recording for generation stage 1."""
+"""Coordinate source routing and bounded export across generation stages 1 to 3."""
 
 import calendar
 import json
