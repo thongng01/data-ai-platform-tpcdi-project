@@ -210,6 +210,25 @@ def inventory_summary(inventory):
     return {"deliveries": totals, "families": families, "dates": dates}
 
 
+def implementation_hashes(package: Path) -> dict[str, str]:
+    """Hash executable inputs, including the static lists that set personal data."""
+    return {
+        str(path.relative_to(package)): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(package.rglob("*"))
+        if path.is_file() and path.suffix in (".py", ".yaml", ".csv", ".txt")
+        and "tests" not in path.parts and "configs" not in path.parts
+    }
+
+
+def semantic_dataset_id(config: Config, format_version: str, implementation_files: dict[str, str], calendar_fingerprint: str) -> str:
+    """Identify source semantics independently of worker, buffer, and resource settings."""
+    semantic_config = {key: value for key, value in config.as_dict().items() if key not in RUNTIME_KEYS}
+    definitions = {key: value for key, value in implementation_files.items() if key.startswith("definitions/")}
+    identity = {"config": semantic_config, "format_version": format_version, "definitions": definitions,
+                "calendar_fingerprint": calendar_fingerprint}
+    return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+
+
 def worker(config: Config, output: Path):
     """Run the generation stages, export, independent validation, and local reports."""
     import importlib.metadata
@@ -227,11 +246,7 @@ def worker(config: Config, output: Path):
     locale.setlocale(locale.LC_TIME, "C")
     output = Path(output)
     package = Path(__file__).parent
-    implementation_files = {
-        str(path.relative_to(package)): hashlib.sha256(path.read_bytes()).hexdigest()
-        for path in sorted(package.rglob("*"))
-        if path.is_file() and path.suffix in (".py", ".yaml", ".csv", ".txt") and "tests" not in path.parts and "configs" not in path.parts
-    }
+    implementation_files = implementation_hashes(package)
     generation = Generation(config, output)
     timings = {}
 
@@ -252,10 +267,6 @@ def worker(config: Config, output: Path):
     inventory = phase("export", generation.finish)
     validation = phase("validation", validate, output, config, inventory)
     write_json(output / "validation.json", validation)
-    semantic_config = {key: value for key, value in config.as_dict().items() if key not in RUNTIME_KEYS}
-    definitions = {key: value for key, value in implementation_files.items() if key.startswith("definitions/")}
-    identity = {"config": semantic_config, "format_version": FORMAT_VERSION, "definitions": definitions,
-                "calendar_fingerprint": market.fingerprint}
     versions = {name: importlib.metadata.version(name) for name in
                 ("polars", "numpy", "PyYAML", "exchange-calendars", "psutil")}
     measured = inventory_summary(inventory)
@@ -263,7 +274,7 @@ def worker(config: Config, output: Path):
     manifest = {
         "status": "validated", "implementation": FORMAT_VERSION, "config": config.as_dict(),
         "implementation_files": implementation_files,
-        "dataset_id": hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest(),
+        "dataset_id": semantic_dataset_id(config, FORMAT_VERSION, implementation_files, market.fingerprint),
         "runtime": {"python": sys.version, **versions}, "calendar": market.calendar_metadata,
         "timings_seconds": timings, "peak_rss_bytes": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024,
         "maximum_generation_frame_rows": generation.output.maximum_frame_rows,

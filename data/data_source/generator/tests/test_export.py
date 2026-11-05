@@ -3,6 +3,7 @@
 import hashlib
 import json
 from datetime import date
+import shutil
 import subprocess
 import sys
 
@@ -12,7 +13,7 @@ import pytest
 from data.data_source.generator.config import Config
 from data.data_source.generator.formats import Field, Source
 from data.data_source.generator.generation import Generation, expected_file_list, source_path
-from data.data_source.generator.runner import _temporary_disk_bytes, compare, inventory_summary, run, write_json
+from data.data_source.generator.runner import _temporary_disk_bytes, compare, implementation_hashes, inventory_summary, run, semantic_dataset_id, write_json
 from data.data_source.generator.sorting import SortedOutput
 
 
@@ -260,6 +261,33 @@ def test_compare_rehashes_actual_files(tmp_path):
     (tmp_path / "second/offline/initial/CashTransaction.txt").write_text("corrupted\n")
     with pytest.raises(ValueError, match="no longer match"):
         compare(tmp_path / "first", tmp_path / "second")
+
+
+@pytest.mark.parametrize("filename", ["given_names.csv", "surnames.csv", "locations.csv"])
+def test_csv_content_changes_definition_hash_and_dataset_identity(tmp_path, filename):
+    """Change only an isolated list copy and require a distinct semantic dataset ID."""
+    from pathlib import Path
+    from data.data_source.generator.generation import FORMAT_VERSION
+
+    package = tmp_path / "isolated-package"
+    shutil.copytree(Path(__file__).parents[1] / "definitions", package / "definitions")
+    before = implementation_hashes(package)
+    before_id = semantic_dataset_id(config(), FORMAT_VERSION, before, "fixed-calendar")
+    path = package / "definitions" / filename
+    lines = path.read_text().splitlines()
+    fields = lines[1].split(",")
+    fields[0] = "Testvalue" if fields[0] != "Testvalue" else "Changedvalue"
+    lines[1] = ",".join(fields)
+    path.write_text("\n".join(lines) + "\n")
+    after = implementation_hashes(package)
+    after_id = semantic_dataset_id(config(), FORMAT_VERSION, after, "fixed-calendar")
+    changed = {name for name in before if before[name] != after[name]}
+    assert changed == {f"definitions/{filename}"}
+    assert before_id != after_id
+    for directory, identifier in (("before", before_id), ("after", after_id)):
+        write_json(tmp_path / directory / "manifest.json", {"status": "validated", "dataset_id": identifier, "files": []})
+    with pytest.raises(ValueError, match="semantic configuration"):
+        compare(tmp_path / "before", tmp_path / "after")
 
 
 def test_tpcdi_format_fixtures_keep_the_original_business_fields():
