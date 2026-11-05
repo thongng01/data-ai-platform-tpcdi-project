@@ -1,8 +1,7 @@
-# Airflow Variables, seeded at startup.
-#
-# Imported by `airflow-init` with `airflow variables import`. Every value is
-# plain YAML, so Airflow's JSON variable import is avoided: a value with a
-# comma or a colon in it would otherwise need quoting twice.
+# Define shared Airflow variable values for pipeline clients.
+# The populated copy contains credentials and stays private. Airflow 2 imports
+# variables from JSON, so convert this YAML source before using that CLI command.
+# Mounting this file does not expand values from infra/.env.
 
 lakehouse_bucket: lakehouse
 landing_bucket: landing
@@ -21,19 +20,19 @@ silver_database: silver
 gold_database: gold
 warehouse_database: warehouse
 
-# dt is the partition column everywhere. Bronze is unpartitioned and silver
-# partitions on the event timestamp's date, never on the batch id.
+# Partition-column setting for clients that use date-partitioned files.
+# This variable does not create partitions or choose a Delta table layout.
 partition_column: dt
 
 # ------------------------------------------------------------------ batches --
-# The generator's batches. Batch1 is the historical load; Batch2 and Batch3 are
-# incremental deltas and carry the schema-evolution prefix.
+# BatchN directory names belong to the TPC-DI delivery contract. These values
+# configure clients of that layout; they do not set the generator run dates.
 generator_batches: Batch1,Batch2,Batch3
 generator_scale: "0.02"
 
 # ------------------------------------------------------------------ quality --
-# Thresholds the validate stages check against. A batch outside these fails the
-# DAG rather than publishing, which is the rubric's "all three pipelines have
-# ingest plus validation".
+# Validation clients must apply these limits explicitly. The row limit is a
+# count; the duplicate ratio is a fraction from 0 to 1. Declaring a variable does
+# not create a check or decide whether a failure stops a pipeline.
 min_silver_rows_trade: "1000"
 max_duplicate_ratio: "0.05"

@@ -1,16 +1,13 @@
-# Airflow Connections, seeded at startup.
-#
-# Imported by `airflow-init` with `airflow connections import`. Airflow encrypts
-# its database copy, but this source file stays plaintext. Keep the populated
-# local copy private and commit only this placeholder template.
-#
-# The rubric asks for every connection and variable to live in Airflow so the
-# three pipelines share them. That is what this file and variables.yaml are for:
-# no DAG hardcodes a hostname, a bucket or a password.
+# Define shared Airflow connection templates for platform service clients.
+# The private copy is input to airflow connections import. It stays plaintext
+# even when Airflow encrypts stored fields with its configured Fernet key.
+# Copy this file, set matching credentials, and keep the populated copy private.
+# Hosts and ports below address containers, not published host ports.
 
 postgres_warehouse:
   conn_type: postgres
-  description: Gold tables. Also the HMS catalog database and Airflow's own.
+  # Airflow calls the database field schema; it selects warehouse, not a SQL schema.
+  description: PostgreSQL warehouse database for Gold tables.
   host: postgres
   login: edai
   password: CHANGE_ME_POSTGRES_PASSWORD
@@ -28,11 +25,13 @@ postgres_metastore:
 
 lakehouse_s3:
   conn_type: aws
-  description: SeaweedFS over its S3 API. Landing and lakehouse buckets.
+  description: SeaweedFS S3 API for clients using the configured identity.
   host: seaweedfs
   login: CHANGE_ME_S3_ACCESS_KEY
   password: CHANGE_ME_S3_SECRET_KEY
   port: 8333
+  # Extra is a JSON string inside YAML. Path style keeps the bucket in the URL
+  # path because Compose DNS does not supply a separate hostname per bucket.
   extra: |
     {"endpoint_url": "http://seaweedfs:8333", "region_name": "us-east-1", "s3_addressing_style": "path"}
 
@@ -45,9 +44,8 @@ hive_metastore_thrift:
 spark_thrift:
   conn_type: spark
   description: |
-    HiveServer2, the only endpoint dbt-spark can use against a standalone
-    Spark cluster. Needs its own compose profile, because it takes every core
-    of the worker. See docs/IaC.md section 8.2.
+    HiveServer2 endpoint for Thrift clients. Its dbt profile starts a long-lived
+    Spark application, which can hold worker cores unless capped at submission.
   host: spark-thrift
   port: 10001
 
@@ -65,7 +63,7 @@ trino_query:
 
 kafka_broker:
   conn_type: kafka
-  description: KRaft broker, no ZooKeeper. Incremental batch replay.
+  description: Kafka broker on the internal container listener.
   host: kafka
   port: 29092
 
@@ -73,4 +71,4 @@ datahub_gms:
   conn_type: http
   description: DataHub GMS, where lineage and validation results are published.
   host: datahub-gms
-  port: 8086
+  port: 8080

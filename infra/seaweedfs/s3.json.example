@@ -1,7 +1,7 @@
 {
   "identities": [
     {
-      "name": "edai-platform",
+      "name": "platform",
       "credentials": [
         {
           "accessKey": "CHANGE_ME_S3_ACCESS_KEY",

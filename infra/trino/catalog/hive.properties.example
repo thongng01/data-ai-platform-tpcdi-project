@@ -1,15 +1,13 @@
-# Trino catalog: lakehouse Parquet in SeaweedFS, catalogued by Hive Metastore.
-#
-# Trino documents AWS S3 and MinIO as the S3-compatible stores it tests against.
-# SeaweedFS is not on that list, so the properties below are the ones that
-# separate a working S3-compatible store from a broken one, set explicitly
-# rather than left at their defaults.
+# Configure the Hive connector for Parquet tables on SeaweedFS.
+# Hive Metastore supplies table locations and schemas; the native S3 client
+# reads object data. Values are literal and must match the private service config.
 
 connector.name=hive
 hive.metastore.uri=thrift://hive-metastore:9083
 
 # ------------------------------------------------- native S3 filesystem -----
-# Rename to fs.s3.enabled in Trino 481 and later.
+# The native filesystem property name is version-specific. Validate it against
+# the Trino image before an upgrade; unknown properties can prevent startup.
 fs.native-s3.enabled=true
 s3.endpoint=http://seaweedfs:8333
 s3.region=us-east-1
@@ -17,16 +15,13 @@ s3.path-style-access=true
 s3.aws-access-key=CHANGE_ME_S3_ACCESS_KEY
 s3.aws-secret-key=CHANGE_ME_S3_SECRET_KEY
 
-# Trino refuses to start on a property it does not recognise, so this list is
-# exactly the set of knobs this image accepts. There is no Trino equivalent of
-# Spark's `aws.chunkedEncoding` or `Expect: 100-continue` switches.
-
-# SeaweedFS does not implement conditional writes (If-None-Match on PUT). Trino
-# defaults this to true and then fails every write with a 501, so it is off.
+# Disable exclusive-create requests for stores that do not support the
+# required conditional PUT operation. This removes that write-conflict guard;
+# it is not a substitute for table-format concurrency control.
 s3.exclusive-create=false
 
-# Trino reads whole Parquet footers and issues ranged GETs. A 32 MB part size
-# makes SeaweedFS allocate a file per part on every upload.
+# Multipart upload size is 8 MiB per part. This is a write setting, not a
+# Parquet read block size. Timeouts bound individual network operations.
 s3.streaming.part-size=8MB
 s3.max-connections=100
 s3.max-error-retries=5
@@ -34,22 +29,21 @@ s3.socket-connect-timeout=30s
 s3.socket-read-timeout=60s
 
 # ------------------------------------------------------------- metastore ----
-# Batches arrive as new dt= directories, so a scan must be able to touch many
-# partitions and must not fail when one is empty.
+# Bound the number of Hive partitions in one scan. Ignoring an absent
+# partition directory can omit data, so check missing inputs separately.
 hive.max-partitions-per-scan=100000
 hive.ignore-absent-partitions=true
 hive.recursive-directories=false
 
-# The pipeline registers each new batch with an explicit call rather than a
-# full directory scan. This flag is what makes register_partition available;
-# without it Trino refuses the call at planning time.
+# Permit explicit partition registration instead of requiring a directory scan.
+# Registration changes catalog metadata; it does not create data files.
 hive.allow-register-partition-procedure=true
 
-# Parquet is read by column name, which is what lets a table keep a stable
-# column list while batches add columns.
+# Match Parquet fields by name rather than ordinal position. Catalog schema
+# updates still need to expose any new columns to queries.
 hive.parquet.use-column-names=true
 
-# Trino is read-only in this project. Left off so nothing can point a dbt or
-# Spark job at Trino as a write target.
+# Block writes to non-managed Hive tables but allow their creation in the
+# catalog. These flags do not make all Trino catalogs or managed tables read-only.
 hive.non-managed-table-writes-enabled=false
 hive.non-managed-table-creates-enabled=true

@@ -1,20 +1,13 @@
-"""Create the buckets and databases the platform needs, then exit.
+"""Create shared buckets, prefix markers, and PostgreSQL databases.
 
-Run once after `docker compose --project-directory infra up -d`, via `--profile init run --rm bootstrap`. Safe to re-run: a
-bucket that already exists is skipped and a database that already exists is
-skipped.
+Existing buckets and databases stay in place on repeated runs. The landing
+bucket holds source files separately from lakehouse data. This script creates
+buckets, but it does not set access policies.
 
-Two facts drive the layout this creates.
-
-The landing bucket is separate from the lakehouse bucket because it stands in
-for another team's storage. The generator writes there, ingest reads from there,
-and nothing in the platform is allowed to write into it. Keeping it in a
-different bucket makes that a storage-level rule rather than a convention.
-
-The warehouse, metastore, Airflow and DataHub databases are separate databases
-in one Postgres instance. Separate databases, not separate containers: a
-metastore table and a gold table can then never collide on a name, which is
-the actual reason the lab's single-database shortcut is unsafe.
+The warehouse, Hive Metastore, Airflow, and DataHub use separate databases on
+one PostgreSQL server. Their tables cannot conflict because each database has
+its own catalog. Prefix markers help Spark find paths before its first write;
+a failed marker write produces a warning and does not stop bootstrap.
 """
 
 import logging
@@ -31,6 +24,8 @@ from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 
 LOG = logging.getLogger("bootstrap")
 
+# Required settings fail at import if they are missing. Do not use fallback
+# credentials: a missing deployment setting must not select another identity.
 S3_ENDPOINT = os.environ["S3_ENDPOINT"]
 S3_ACCESS_KEY = os.environ["S3_ACCESS_KEY"]
 S3_SECRET_KEY = os.environ["S3_SECRET_KEY"]
@@ -58,7 +53,8 @@ def _s3_client():
         aws_access_key_id=S3_ACCESS_KEY,
         aws_secret_access_key=S3_SECRET_KEY,
         region_name="us-east-1",
-        # SeaweedFS serves buckets at the host root, not at a subdomain.
+        # Put the bucket in the URL path. Container DNS resolves the service
+        # name, not a separate hostname for each bucket.
         config=Config(s3={"addressing_style": "path"}, signature_version="s3v4"),
     )
 
@@ -78,7 +74,9 @@ def create_buckets(client, buckets):
         try:
             client.create_bucket(Bucket=name)
             LOG.info("created bucket %s", name)
-        except ClientError as exc:  # pragma: no cover - race with a second run
+        except ClientError as exc:
+            # Another bootstrap run can create a bucket after our listing.
+            # Accept only the two already-exists responses; raise other errors.
             if exc.response["Error"]["Code"] in {"BucketAlreadyOwnedByYou", "BucketAlreadyExists"}:
                 LOG.info("bucket %s appeared concurrently", name)
             else:
@@ -86,12 +84,11 @@ def create_buckets(client, buckets):
 
 
 def seed_prefixes(client, bucket, prefixes):
-    """Drop a marker object under each prefix so the prefix exists.
+    """Write an empty marker at each prefix and warn if a write fails.
 
-    S3 has no directories. Spark asks the filesystem whether
-    `s3a://lakehouse/spark-logs` is a directory before it writes an event log,
-    gets FileNotFound, and refuses to start. A zero-byte object makes the
-    prefix listable.
+    S3 stores object keys, not directories. A key such as `spark-logs/_keep`
+    lets Hadoop's S3A filesystem find a child when it checks the event-log
+    directory. Without a child, Spark can reject the path before writing.
 
     Args:
         client: A boto3 S3 client.
@@ -103,25 +100,29 @@ def seed_prefixes(client, bucket, prefixes):
         try:
             client.put_object(Bucket=bucket, Key=key, Body=b"")
             LOG.info("seeded prefix s3://%s/%s", bucket, prefix)
-        except ClientError as exc:  # pragma: no cover - network edge case
+        except ClientError as exc:
+            # Marker failure does not stop database and bucket setup. A later
+            # Spark start can still fail if its required prefix is missing.
             LOG.warning("could not seed %s: %s", prefix, exc)
 
 
 def create_databases(names, host=PGHOST, user=PGUSER, password=PGPASSWORD):
     """Create each database if it is missing.
 
-    Postgres has no `CREATE DATABASE IF NOT EXISTS`, so the check and the
-    create are separate. `pg_database` is the system catalog that lists them.
-    A duplicate_database error is swallowed because a second bootstrap run
-    racing this one is not a failure.
+    PostgreSQL has no `CREATE DATABASE IF NOT EXISTS`, so the check and the
+    create are separate. The `pg_database` catalog lists existing databases.
+    A duplicate-database error is accepted because another bootstrap run can
+    create a database between the check and the create.
 
     Args:
         names: Iterable of database names.
-        host: Postgres host.
-        user: Superuser role name.
+        host: PostgreSQL host.
+        user: Role with permission to create databases.
         password: Password for that role.
     """
     conn = psycopg2.connect(host=host, user=user, password=password, dbname="postgres")
+    # CREATE DATABASE cannot run inside a transaction. Autocommit sends each
+    # statement on its own instead of opening an implicit transaction.
     conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
     try:
         with conn.cursor() as cur:
@@ -132,6 +133,8 @@ def create_databases(names, host=PGHOST, user=PGUSER, password=PGPASSWORD):
                     LOG.info("database %s already exists", name)
                     continue
                 try:
+                    # Database names are SQL identifiers, not value parameters.
+                    # Identifier quotes names safely, including embedded quotes.
                     cur.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
                     LOG.info("created database %s", name)
                 except psycopg2.errors.DuplicateDatabase:
@@ -141,11 +144,13 @@ def create_databases(names, host=PGHOST, user=PGUSER, password=PGPASSWORD):
 
 
 def wait_for_postgres(timeout=120):
-    """Block until Postgres accepts a connection on the default database.
+    """Retry connections to the maintenance database until timeout seconds.
 
-    Compose already gates `postgres` on a healthcheck, but the healthcheck
-    only proves the server is up. This proves the `postgres` maintenance
-    database is queryable, which is what CREATE DATABASE attaches to.
+    This uses the bootstrap role and the `postgres` database, as database
+    creation does. A successful connection confirms authentication and database
+    access, not permission to create databases. Retries pause for two seconds;
+    a connection attempt can take longer than the timeout because it has no
+    separate connection timeout.
     """
     deadline = time.time() + timeout
     last_error = None
@@ -162,7 +167,7 @@ def wait_for_postgres(timeout=120):
 
 
 def main():
-    """Run every bootstrap step and exit non-zero on the first failure."""
+    """Create shared state, stopping on errors except prefix-marker warnings."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
     wait_for_postgres()
@@ -174,7 +179,8 @@ def main():
     seed_prefixes(
         client,
         LAKEHOUSE_BUCKET,
-        # Spark writes its event log here and checks the prefix exists first.
+        # The event-log path must be visible before Spark starts. The other
+        # markers also make empty working and table prefixes listable.
         ["spark-logs", "warehouse", "tmp", "bronze", "silver", "gold"],
     )
 

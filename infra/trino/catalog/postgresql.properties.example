@@ -1,8 +1,7 @@
-# Trino catalog: the gold warehouse tables that live in Postgres.
-#
-# Gold is the queryable layer for BI and for validation checks. Trino federates
-# it with the lakehouse catalog, so one SQL statement can join a Postgres fact
-# table to a SeaweedFS Parquet table.
+# Configure Trino access to the PostgreSQL warehouse database.
+# Gold is the queryable zone for business intelligence and validation checks.
+# Trino can join its tables to the Hive catalog in one SQL query. These literal
+# credentials must match the existing PostgreSQL role; .env is not expanded here.
 
 connector.name=postgresql
 connection-url=jdbc:postgresql://postgres:5432/warehouse

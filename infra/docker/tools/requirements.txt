@@ -1,7 +1,12 @@
 # Runtime dependencies for the one-shot tooling image.
 
+# Create Parquet fixtures without starting Spark.
 pyarrow==17.0.0
+
+# Exercise the S3, Trino, and PostgreSQL APIs through their Python clients.
 boto3==1.35.90
 trino==0.336.0
 psycopg2-binary==2.9.10
+
+# Trino uses Requests for its HTTP transport.
 requests==2.32.5

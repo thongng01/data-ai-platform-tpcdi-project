@@ -22,10 +22,12 @@ RULES = [
      "Use a solid relationship line (--). Name a match that is not a key in the relationship label."),
 ]
 
-# A table's kind is its role in the data, so one business object keeps its color in every layer.
+# A table's kind is its role in the data, so one business object keeps its color in every zone.
 # Each kind uses a theme color role; reference tables keep a pale header so they recede.
 KINDS = {"entity": "scope", "event": "component", "state": "data", "reference": "note"}
 QUIET_KINDS = {"reference"}
+# These patterns recognize table names and symbolic solid relationships outside
+# field blocks. Mermaid validates field syntax and the rest of the grammar at export.
 NAME = r"[A-Za-z_][A-Za-z0-9_-]*"
 TAGGED = re.compile(rf"^({NAME})(?::::({NAME}))?$")
 BLOCK = re.compile(rf"^({NAME}(?::::{NAME})?)\s*\{{$")
@@ -33,13 +35,19 @@ RELATIONSHIP = re.compile(rf"^({NAME}(?::::{NAME})?)\s+[|}}o]{{2}}--[|{{o]{{2}}\
 
 
 def entity_kinds(text):
-    """Return each entity's kind tag, or None for an untagged entity."""
+    """Collect table kind tags from definitions and relationship endpoints.
+
+    Keep None until a later reference supplies a tag. Reject conflicting tags
+    and unrecognized lines outside field blocks.
+    """
     kinds, inside = {}, False
     for raw in text.splitlines():
         line = raw.strip()
         if not line or line.startswith("%%") or line == "erDiagram" or line.startswith("direction "):
             continue
         if inside:
+            # Field rows cannot declare tables. Leave their syntax to Mermaid and
+            # resume table matching after the block's closing brace.
             inside = line != "}"
             continue
         if block := BLOCK.match(line):
@@ -59,6 +67,10 @@ def entity_kinds(text):
 
 
 def check(text):
+    """Reject source styling, dashed relationships, and missing or unknown kinds.
+
+    These project checks do not replace Mermaid's syntax validation at export.
+    """
     for pattern, message in RULES:
         if pattern.search(text):
             raise ValueError(message)
@@ -75,12 +87,14 @@ def check(text):
 
 
 def class_definitions(theme):
+    """Build Mermaid class definitions that assign each kind its border color."""
     # Mermaid writes a classDef fill as an inline !important style on the rows, which CSS cannot
     # override, so classDef carries only the border and the stylesheet sets every fill.
     return "".join(f"classDef {kind} stroke:{theme['roles'][role]['stroke']}\n" for kind, role in KINDS.items())
 
 
 def kind_css(theme):
+    """Build kind-specific header and row colors, keeping reference headers pale."""
     rules = [".row-rect-odd path:first-child { fill: #FFFFFF !important; }"]
     for kind, role in KINDS.items():
         colors = theme["roles"][role]
@@ -93,6 +107,7 @@ def kind_css(theme):
 
 
 def config(theme):
+    """Build the shared Mermaid configuration for fonts, kind colors, and ELK layout."""
     data = theme["roles"]["data"]
     font = f"{theme['font']}, sans-serif"
     mono = f"'{theme['mono_font']}', monospace"
@@ -127,12 +142,14 @@ def config(theme):
 
 
 def svg_size(path):
+    """Read logical width and height from a rendered SVG's viewBox."""
     root = ET.fromstring(Path(path).read_bytes())
     _, _, width, height = (float(value) for value in root.get("viewBox", "").split())
     return width, height
 
 
 def size_class(size, sizes, margin):
+    """Choose the smallest fixed canvas that fits with margins, otherwise large."""
     width, height = size
     for name in ("small", "medium"):
         canvas_width, canvas_height = sizes[name]
@@ -142,7 +159,12 @@ def size_class(size, sizes, margin):
 
 
 def render(source, work, theme):
-    """Render the ERD as PNG in work and return the PNG path, size class, size, and commands."""
+    """Render captured ERD bytes in work and return PNG details and command history.
+
+    Save the original source, styled render input, configuration, and logs.
+    Measure an SVG first, then return the PNG path, size class, logical size,
+    and commands for the caller's canvas placement and manifest.
+    """
     node = shutil.which("node")
     if not node or not MMDC.exists():
         raise ValueError("Load Node.js and run npm ci in workflow/tools/diagrams before ERD export.")
@@ -154,6 +176,7 @@ def render(source, work, theme):
     (work / "puppeteer.json").write_text('{"args": ["--no-sandbox"]}\n', encoding="utf-8")
 
     def mmdc(destination, *extra):
+        """Run Mermaid CLI, append its output to the log, and verify it produced a file."""
         command = [node, str(MMDC), "--quiet", "--input", str(snapshot), "--output", str(destination),
                    "--configFile", str(work / "mermaid.json"), "--puppeteerConfigFile", str(work / "puppeteer.json"),
                    "--backgroundColor", "white", *extra]
@@ -165,7 +188,8 @@ def render(source, work, theme):
         return command
 
     sizes, margin = theme["canvas"]["sizes"], theme["canvas"]["margin"]
-    # Mermaid's SVG gives the exact logical size, which decides the size class.
+    # The SVG viewBox measures layout before PNG scaling. Use that logical size
+    # to choose the canvas so export scale does not change the size class.
     measured = work / "measure.svg"
     commands = [mmdc(measured)]
     size = svg_size(measured)
