@@ -32,6 +32,15 @@ To check repeatability, run the same business configuration into another directo
   local/runs/small local/runs/small-repeat
 ```
 
+To check the attrition signal on a small account sample from a validated run:
+
+```bash
+.venv/bin/python -m data.data_source.generator signal-check \
+  local/runs/small --sample-accounts 512
+```
+
+The check builds features from observed account status and cash transactions, not hidden plans. It labels closures in the following 30 days and uses chronological training, validation, and test periods with 30-day label gaps. A short run can return `insufficient_data` because every split needs fully observed labels and both closures and nonclosures. That result does not establish signal quality. The check writes `summary/signal_check.json` and saves observations in `summary/signal_observations.parquet` when observations exist.
+
 The benchmark command records phase timings and resource measurements. This command runs factor 1 over the full reference calendar:
 
 ```bash
@@ -57,6 +66,7 @@ Start with `runner.worker`, which calls the generation phases in order. Then rea
 | Source recording | `customers.py`, `recording.py`; `SourceRecorder` | Encode CMS actions, customer and account fields, prospect snapshots, data errors, and trade channels |
 | Bounded export | `generation.py`, `sorting.py`, `formats.py`, `definitions/`; `Generation`, `SortedOutput` | Check dated contracts, spool sorted runs, merge bounded inputs, and assign source sequences |
 | Saved-file validation | `validation.py`, `validation_faults.py`; `FaultAudit` | Parse saved bytes, verify exact data-error evidence, and replay business invariants |
+| Sampled signal check | `signal_check.py`; `check_signal` | Build source-observed features and compare a logistic model with the outflow rule using chronological splits |
 
 `Stage1IntentPlanner` supplies ordinary business behavior. `AttritionPlanner` extends that interface without changing settlement rules. `SourceRecorder` receives correct business fields and records a separate copy, so a recorded fee error cannot change the ledger.
 
@@ -69,7 +79,7 @@ Configuration holds numbers and distribution choices. Source definitions hold fi
 | `initial_start`, `initial_end`, `daily_start`, `daily_end` | Inclusive UTC dates; `daily_start` must be the day after `initial_end` |
 | `scale_factor`, `customers_per_unit`, `seed` | Firm size at the expected cutover anchor and the stable random seed |
 | Population, profile, wealth, and activity settings | Joining, closure, inactivation, update, trade, cash-flow, margin, and watch distributions |
-| `positions_per_account` | Maximum simultaneous positions per account; default 4; zero removes this limit |
+| `positions_per_account` | Repeatable security-selection slots per account; default 4; zero lets buys select from the full market |
 | `account_generations` | Reserved account generations for each joining account slot; default 8; checked capacity prevents ID reuse |
 | `attrition_enabled` | Select the attrition planner; disabling it selects ordinary stage 1 lifetime planning |
 | Attrition settings | Warning share 80%, warning length 1 to 8 weeks, 1 to 4 liquidation steps, and look-alike outflows about 2% per year |
@@ -81,6 +91,8 @@ Configuration holds numbers and distribution choices. Source definitions hold fi
 | Resource settings | Aggregate process-tree memory, disk, and elapsed-time budgets |
 
 Profile arrays use this order: dormant, long-term investor, retiree, active trader, and day trader. Account-count shares refer to one, two, and three accounts. Tier shares refer to tiers 1, 2, and 3. Tax-status shares refer to codes 0, 1, and 2.
+
+With a positive `positions_per_account` value N, each account draws N fixed security selections from stable keys. Slots can select the same security, so the account's buy universe contains up to N distinct securities. Later buys use that same universe, including after a full sale; this setting does not simply cap simultaneous positions while allowing new securities over time.
 
 NumPy arrays hold mutable customer and account state. The simulation selects daily activity over account arrays, while Polars builds export batches, hidden-state Parquet files, and validation queries. Shared memory-mapped market arrays and a bounded day cache avoid scalar reads from disk for each event. Each customer and all related accounts stay in one group, so one worker owns every change to an account.
 
@@ -111,7 +123,9 @@ The runner refuses an existing output directory or its `.partial` counterpart. I
 
 ### Attrition Signal
 
-`AttritionPlanner` applies the profile, tenure, tier, and loss multipliers from the system model to daily exit risk. `ReturnHistory` removes external deposits and withdrawals before it measures investment performance over the preceding three calendar months. Missing or nonpositive-equity history does not receive a loss multiplier.
+`AttritionPlanner` applies the profile, tenure, tier, and loss multipliers from the system model to daily exit risk. `ReturnHistory` removes external deposits and withdrawals before it measures investment performance over the preceding three calendar months. Missing lookback history and a lack of prior positive capital do not by themselves add the loss multiplier.
+
+With valid history at the lookback start, an investment loss that wipes out positive capital retains a 100% loss marker even when equity becomes zero or negative. An external withdrawal alone does not create that marker.
 
 For a customer-wide exit, the planner takes the mean risk of the customer's active accounts. This prevents account count alone from multiplying customer risk. A deterministic curve of expected account traits normalizes risk across customer groups; it does not use future realized outcomes. The population plan anchors expected cutover size. Actual customer and account counts and annual exit rates come from the realized simulation, not an exact marginal-rate guarantee.
 
@@ -185,6 +199,7 @@ Tests cover deterministic personal fields, XML omission and empty text, ledger a
 | `manifest.json` | Semantic identity, configuration, dependency and code versions, file counts, byte totals, hashes, and phase times |
 | `summary.json` | Counts and bytes by family, date, and delivery; business activity, cash transaction types, profile counts, rejected proposals, skew, and state peaks |
 | `validation.json` | Saved-file validation results |
+| `summary/signal_check.json` | Sample size, chronological split counts, model and rule metrics, or the reason for insufficient data |
 | `supervision.json` | Sampled aggregate RSS, process count, disk use, temporary disk peaks, and sampling intervals |
 
 Phase times cover references, market, population, activity, prospects, final export, and validation. Buffer flushes and intermediate merges count toward the phase that emits their records. The final export phase measures final merges and writes, not all export work.
