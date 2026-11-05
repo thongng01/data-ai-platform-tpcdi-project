@@ -69,7 +69,24 @@ class Source:
     def columns(self):
         return [field.name for field in self.fields]
 
+    def check(self, values):
+        if len(values) != len(self.fields):
+            raise ValueError(f"Incorrect field count in {self.name}.")
+        for field, value in zip(self.fields, values):
+            if self.separator in value:
+                raise ValueError(f"Delimiter in {self.name}.{field.name}.")
+            field.check(value)
 
+    def check_payload(self, payload):
+        self.check(payload.split(self.separator))
+
+
+def record_fields(source: Source, day, row):
+    """Stage 3 attaches here; M1 preserves the business fields and format."""
+    return row
+
+
+@cache
 def load_sources() -> dict[str, Source]:
     definitions = read_yaml(Path(__file__).parent / "definitions" / "sources.yaml")
     sources = {}
