@@ -302,6 +302,66 @@ def test_birth_year_keeps_prospect_ages_valid_at_calendar_limits(tmp_path, year,
             assert row["Age"] == snapshot.year - customer_birth_year(config, identity)
 
 
+def test_emitted_cms_matches_seeded_prospects_and_preserves_updated_names(tmp_path):
+    """Check real source writes, not only helpers, with a nonzero personal-data seed."""
+    from types import SimpleNamespace
+    from data.data_source.generator.activity import BusinessSimulation
+    config = Config(initial_start="2019-01-01", initial_end="2019-01-31", daily_start="2019-02-01", daily_end="2019-03-03",
+                    seed=987654321, customers_per_unit=128, companies=1, securities=1, annual_growth=0,
+                    annual_closure=0, annual_inactivation=0, annual_customer_update=0, annual_account_update=1,
+                    annual_trade_rates=(0, 0, 0, 0, 0), annual_deposit_rates=(0, 0, 0, 0, 0),
+                    annual_withdrawal_rates=(0, 0, 0, 0, 0), watch_daily_rate=0,
+                    customer_tier_error_rate=0, customer_dob_error_rate=0)
+    population = build_population(config, tmp_path)
+    text_rows, emitted = [], []
+    generation = SimpleNamespace(config=config, text=lambda path, rows: text_rows.extend(rows),
+                                 emit=lambda source, day, rows: emitted.append((source, day, rows)), cash=lambda *args: None)
+    prices = {"close": np.array([10000]), "low": np.array([9000]), "high": np.array([11000]),
+              "dividends": np.array([0]), "trading": True, "close_second": 57600, "shock": False}
+    market = SimpleNamespace(day=lambda day: prices, sessions_per_year={2019: 252})
+    BusinessSimulation(generation, market, population.customers.copy(), population.accounts.copy()).run()
+    actions = [parse_action(payload) for _, payload in text_rows]
+    customers, base_names = {}, {}
+    initial_updates = []
+    for action in actions:
+        customer = action.find("Customer")
+        if action.attrib["ActionType"] == "NEW":
+            customers[int(customer.attrib["C_ID"])] = customer
+            for account in customer.findall("Account"):
+                base_names[int(account.attrib["CA_ID"])] = account.findtext("CA_NAME")
+        elif action.attrib["ActionType"] == "UPDACCT":
+            initial_updates.extend(customer.findall("Account"))
+    prospects = ProspectCapture(config)
+    generate_prospects(prospects, population)
+    identities = np.load(population.path / "prospects.npy")
+    checked = 0
+    for row in prospects.snapshots[config.cutover]:
+        agency = int(row["AgencyID"].removeprefix("AG"))
+        identifier = int(identities[agency - 1]["customer_id"])
+        if not identifier:
+            continue
+        customer = customers[identifier]
+        for path, column in (("Name/C_L_NAME", "LastName"), ("Name/C_F_NAME", "FirstName"),
+                             ("Address/C_ADLINE1", "AddressLine1"), ("Address/C_CITY", "City"),
+                             ("Address/C_STATE_PROV", "State"), ("Address/C_ZIPCODE", "PostalCode")):
+            assert customer.findtext(path) == row[column]
+        checked += 1
+    assert checked > 0
+    assert initial_updates
+    for account in initial_updates:
+        identifier = int(account.attrib["CA_ID"])
+        recorded = account.findtext("CA_NAME")
+        assert " v" in recorded and len(recorded) <= 50
+        assert base_names[identifier].startswith(recorded.rsplit(" v", 1)[0])
+        assert not recorded.startswith("Account ")
+    daily_updates = [row for source, _, rows in emitted if source == "Account" for row in rows if row["_flag"] == "U"]
+    assert daily_updates
+    for row in daily_updates:
+        assert " v" in row["CA_NAME"] and len(row["CA_NAME"]) <= 50
+        assert base_names[row["CA_ID"]].startswith(row["CA_NAME"].rsplit(" v", 1)[0])
+        assert not row["CA_NAME"].startswith("Account ")
+
+
 def test_prospect_default_birth_year_matches_reference_calendar():
     """Check prospect default birth year matches reference calendar."""
     default = _prospect_values(1, 1, date(2019, 1, 1), 7)
