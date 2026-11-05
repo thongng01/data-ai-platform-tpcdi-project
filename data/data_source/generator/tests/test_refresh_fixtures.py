@@ -1,4 +1,4 @@
-"""Keep format fixture coverage intact when a required upstream source is absent."""
+"""Preserve format fixture coverage when upstream sources are absent or unusable."""
 
 from contextlib import nullcontext
 import io
@@ -65,6 +65,36 @@ def test_missing_required_file_preserves_every_fixture_and_manifest(tmp_path, is
     _assert_preflight_failure([str(root)], isolated_outputs)
 
 
+@pytest.mark.parametrize("relative", tuple(refresh_fixtures.SLICES))
+@pytest.mark.parametrize("payload", [b"", b"\r\n\r\n", b" \r\n\t\r\n"])
+def test_empty_or_blank_sample_preserves_every_output(tmp_path, isolated_outputs, relative, payload):
+    """An unusable sample at any source position fails before any output byte changes."""
+    root = _reference(tmp_path / "reference")
+    (root / "sf_3" / "output_data" / relative).write_bytes(payload)
+    _assert_preflight_failure([str(root)], isolated_outputs)
+
+
+def test_all_empty_regular_sources_preserve_outputs(tmp_path, isolated_outputs):
+    """A complete path inventory does not authorize a manifest of empty fixtures."""
+    root = _reference(tmp_path / "reference")
+    for relative in refresh_fixtures.SLICES:
+        (root / "sf_3" / "output_data" / relative).write_bytes(b"")
+    _assert_preflight_failure([str(root)], isolated_outputs)
+
+
+def test_blank_sources_do_not_create_an_output_tree(tmp_path, monkeypatch):
+    """A blank selected sample cannot create even a new fixture output directory."""
+    root = _reference(tmp_path / "reference")
+    relative = tuple(refresh_fixtures.SLICES)[-1]
+    (root / "sf_3" / "output_data" / relative).write_bytes(b" \r\n\t\r\n")
+    output = tmp_path / "new-output"
+    monkeypatch.setattr(refresh_fixtures, "FIXTURE_ROOT", output / "tpcdi_sf3")
+    monkeypatch.setattr(refresh_fixtures, "MANIFEST_PATH", output / "manifest.json")
+    with pytest.raises(SystemExit):
+        refresh_fixtures.main([str(root)])
+    assert not output.exists()
+
+
 def test_nonexistent_explicit_reference_preserves_outputs(tmp_path, isolated_outputs):
     """An explicit missing checkout cannot replace the manifest with an empty one."""
     _assert_preflight_failure([str(tmp_path / "absent")], isolated_outputs)
@@ -109,9 +139,14 @@ def test_complete_reference_writes_all_required_slices(tmp_path, isolated_output
     assert (isolated_outputs / "keep.bin").read_bytes() == b"unrelated output\x00\xff"
 
 
-def test_slice_reads_only_requested_lines(monkeypatch):
-    """Extract a bounded prefix instead of reading a large upstream file into memory."""
-    stream = io.BytesIO(b"first|1\r\nsecond|2\r\n" + b"unused|3\r\n" * 10000)
+@pytest.mark.parametrize("prefix,expected", [
+    (b"first|1\r\nsecond|2\r\n", b"first|1\r\nsecond|2\r\n"),
+    (b"\r\n\r\n", b""),
+    (b" \r\n\t\r\n", b" \r\n\t\r\n"),
+])
+def test_slice_reads_only_requested_lines(monkeypatch, prefix, expected):
+    """Stop at the selected prefix even when blank records precede later real data."""
+    stream = io.BytesIO(prefix + b"unused|3\r\n" * 10000)
 
     def open_prefix(path, *args, **kwargs):
         """Supply a trackable binary stream without closing it after extraction."""
@@ -123,12 +158,12 @@ def test_slice_reads_only_requested_lines(monkeypatch):
 
     monkeypatch.setattr(Path, "open", open_prefix)
     monkeypatch.setattr(Path, "read_bytes", reject_whole_file)
-    assert refresh_fixtures.slice_lines(Path("source.txt"), 2) == b"first|1\r\nsecond|2\r\n"
-    assert stream.tell() == len(b"first|1\r\nsecond|2\r\n")
+    assert refresh_fixtures.slice_lines(Path("source.txt"), 2) == expected
+    assert stream.tell() == len(prefix)
 
 
 def test_slice_keeps_nonempty_crlf_line_behavior(tmp_path):
-    """Empty records do not consume the requested count; a short file stays usable."""
+    """Empty records within a bounded prefix stay omitted; short files remain usable."""
     source = tmp_path / "source.txt"
     source.write_bytes(b"\r\nfirst|1\r\n\r\nsecond|2")
     assert refresh_fixtures.slice_lines(source, 5) == b"first|1\r\nsecond|2\r\n"
