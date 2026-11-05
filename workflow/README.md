@@ -37,7 +37,7 @@ The target codebase is organized by **platform pillar** (`data/`, `ml/`, `agents
 | **[`agents/`](../agents/README.md)** | [Agent Platform](../docs/Agent-Platform.md) | `mcp/`, `coordinator/`, `gateway/`, `prompts/`, `registry/` | **Coordinator Agent** + **Gateway** + **Agent Registry** (LLM serving, MCP tools, and multi-agent routing) |
 | **[`infra/`](../docs/IaC.md)** | [Infrastructure](../docs/IaC.md) | Compose profiles, Dockerfiles, K8s, Terraform, Ansible, Jenkins, Security, Observability | Shared service configs, cloud provisioning, CI/CD pipelines, NGINX Ingress, Vault, Prometheus, Grafana, and Jaeger |
 
-The target source department contains `data/data_source/generator/` and `data/data_source/publisher/`. The current POC stays in `data/generator/` until its code, imports, tests, and commands migrate together. Verification commands below use that existing path.
+The source department contains `data/data_source/generator/` and `data/data_source/publisher/`.
 
 ### Pragmatic Monorepo Boundaries and Evolution Rules
 1. **Thin DAGs in `data/airflow/dags/`**: Airflow schedules data pipelines across the platform (`DP1-DP3`, feature sync, and the `RAG Data Pipeline`). DAG files stay 20-line trigger and validation wrappers; domain and ML implementation code stays in `data/spark/`, `data/dbt/`, `ml/rag/`, and `ml/feature_repo/`.
@@ -144,7 +144,7 @@ Run the documentation, diagram, and generator checks from the repository root in
 
 ```bash
 .venv/bin/python workflow/tools/check_docs.py
-.venv/bin/python -m pytest data/generator/tests -q --basetemp=local/tmp/pytest-generator
+.venv/bin/python -m pytest data/data_source/generator/tests -q --basetemp=local/tmp/pytest-generator
 .venv/bin/python -m unittest discover -s workflow/tools/diagrams -p 'test_*.py' -v
 ```
 

@@ -9,7 +9,7 @@ Run it after re-cloning or updating the reference, and commit the result, so a
 change in the upstream format shows up as a diff in the fixture rather than as
 a test failure nobody can explain.
 
-    python data/generator/tools/refresh_fixtures.py  # default: local/tpcdi
+    python data/data_source/generator/tools/refresh_fixtures.py  # default: local/tpcdi
     python tools/refresh_fixtures.py /path/to/tpcdi
 """
 
@@ -24,7 +24,7 @@ GENERATOR_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_ROOT = GENERATOR_ROOT / "tests" / "fixtures" / "tpcdi_sf3"
 MANIFEST_PATH = GENERATOR_ROOT / "tests" / "fixtures" / "manifest.json"
 
-DEFAULT_REFERENCE = GENERATOR_ROOT.parents[1] / "local" / "tpcdi"
+DEFAULT_REFERENCE = GENERATOR_ROOT.parents[2] / "local" / "tpcdi"
 
 # Which files to slice, and how many lines of each to keep. Enough to pin the
 # field count, the delimiter, the line ending, and the encoded values, without

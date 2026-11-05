@@ -7,12 +7,12 @@ import numpy as np
 import polars as pl
 import pytest
 
-from data.generator.config import Config, ConfigError
-from data.generator.formats import Field, load_sources
-from data.generator.random_values import values
-from data.generator.runner import compare, run
-from data.generator.sorting import SortedOutput
-from data.generator.validation import ValidationError, _rows, validate
+from data.data_source.generator.config import Config, ConfigError
+from data.data_source.generator.formats import Field, load_sources
+from data.data_source.generator.random_values import values
+from data.data_source.generator.runner import compare, run
+from data.data_source.generator.sorting import SortedOutput
+from data.data_source.generator.validation import ValidationError, _rows, validate
 
 
 @pytest.fixture(scope="module")

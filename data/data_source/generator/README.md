@@ -1,21 +1,21 @@
 # Brokerage Source Generator POC
 
-This proof of concept (POC) generates connected brokerage source files in TPC-DI formats using one local Python worker, bounded Polars calculations, explicit entity histories, and disk-based external sorting. The target generator extends it with a day-by-day simulation in `data/data_source/generator/`; a separate publisher handles delivery. This guide describes the existing POC and its executable commands, not the target contracts. The earlier `datagen` prototype is archived in `local/archive/prototype-v0/`.
+This proof of concept (POC) generates connected brokerage source files in TPC-DI formats using one local Python worker, bounded Polars calculations, explicit entity histories, and disk-based external sorting. The generator lives in `data/data_source/generator/` and extends this model with a day-by-day simulation; a separate publisher handles delivery. This guide describes the existing POC and its executable commands, not the target contracts. The earlier `datagen` prototype is archived in `local/archive/prototype-v0/`.
 
-The source contracts come from [TPC-DI 1.1.0](../../docs/TPC-DI/TPC-DI_v1.1.0.pdf), clause 2.2, and [Data Specification](../../docs/Data-Specification.md). The [Databricks reference](https://github.com/shannon-barrow/databricks-tpc-di/tree/2ac319db6e62927c5d4f772cf5654ad8981f9ec4/src/tools/tpcdi_gen) supplies the dependency pattern, ID-derived values, shared trade calculations, and analytical scheduling approach; see [Data Platform](../../docs/Data-Platform.md#2-data-generation-and-problem-injection) for the design rules and reference corrections.
+The source contracts come from [TPC-DI 1.1.0](../../../docs/TPC-DI/TPC-DI_v1.1.0.pdf), clause 2.2, and [Data Specification](../../../docs/Data-Specification.md). The [Databricks reference](https://github.com/shannon-barrow/databricks-tpc-di/tree/2ac319db6e62927c5d4f772cf5654ad8981f9ec4/src/tools/tpcdi_gen) supplies the dependency pattern, ID-derived values, shared trade calculations, and analytical scheduling approach; see [Data Platform](../../../docs/Data-Platform.md#2-data-generation-and-problem-injection) for the design rules and reference corrections.
 
 ## Run the Generator
 
 Run these commands from the repository root in WSL. The checked environment uses Python 3.14 (Python 3.11 or later is required). The [requirements](requirements.txt) pin the packages used by this module.
 
 ```bash
-.venv/bin/python -m data.generator run \
-  --config data/generator/configs/small.yaml \
+.venv/bin/python -m data.data_source.generator run \
+  --config data/data_source/generator/configs/small.yaml \
   --output local/tmp/polars-poc/my-run
 
-.venv/bin/python -m data.generator validate local/tmp/polars-poc/my-run
+.venv/bin/python -m data.data_source.generator validate local/tmp/polars-poc/my-run
 
-.venv/bin/python -m pytest data/generator/tests -q \
+.venv/bin/python -m pytest data/data_source/generator/tests -q \
   --basetemp=local/tmp/polars-poc/pytest-local
 ```
 
@@ -24,7 +24,7 @@ The optional XML Schema test uses `lxml==6.0.2`. The recorded full test pass loa
 ```bash
 .venv/bin/python -m pip install --target local/tmp/polars-poc/qa-deps lxml==6.0.2
 PYTHONPATH=local/tmp/polars-poc/qa-deps:. .venv/bin/python -m pytest \
-  data/generator/tests -q --basetemp=local/tmp/polars-poc/pytest-with-xsd
+  data/data_source/generator/tests -q --basetemp=local/tmp/polars-poc/pytest-with-xsd
 ```
 
 Without lxml, pytest skips this one test. The test reads the specification's XML Schema Definition (XSD) and changes the typographic quotes around `maxOccurs` to XML quotes in memory. It does not change the source specification.
@@ -77,7 +77,7 @@ The source families are covered at small scale, but the workload is deliberately
 - Every active customer activates and cancels one watch per day. Daily market prices cover generated execution prices. The POC treats every calendar day as an activity day; it does not model exchange holidays. Fiscal dates equal calendar dates, and holiday flags are zero.
 - Prospect snapshots contain matching identities for current and future customers. The reference vocabulary is intentionally small: one industry and two tax rates. Time covers all 86,400 seconds; Date covers the financial and activity history.
 
-The cash transaction description (`CT_NAME`) contains `Trade <ID>` for POC reconciliation. This is a project lineage convention, not a TPC-DI transaction identifier. The target adds the accepted `CT_ID` cash transaction identity and replaces this description with fixed `CT_NAME` forms defined in [Data Specification](../../docs/Data-Specification.md).
+The cash transaction description (`CT_NAME`) contains `Trade <ID>` for POC reconciliation. This is a project lineage convention, not a TPC-DI transaction identifier. The target adds the accepted `CT_ID` cash transaction identity and replaces this description with fixed `CT_NAME` forms defined in [Data Specification](../../../docs/Data-Specification.md).
 
 Population and date settings replace the reference's scale-factor formulas. The POC has no asserted mapping to an official scale factor. The target adds behavior profiles, an attrition signal, data errors, and schema evolution to the generator. The publisher adds duplicates and late delivery. Dense daily trade cycles in this POC do not establish a useful attrition signal.
 
@@ -98,7 +98,7 @@ The supervisor samples worker RSS every 0.1 seconds and disk use every two secon
 Generate the same semantic configuration with different `customer_batch_size`, `merge_fan_in`, or `threads` values, then compare the source files:
 
 ```bash
-.venv/bin/python -m data.generator compare \
+.venv/bin/python -m data.data_source.generator compare \
   local/tmp/polars-poc/first-run local/tmp/polars-poc/second-run
 ```
 
@@ -107,12 +107,12 @@ Configuration changes to population, dates, probabilities, or seed describe a di
 The [medium](configs/medium.yaml) and [medium-wide](configs/medium-wide.yaml) configurations describe the same dataset with different customer batch sizes. The [long-history](configs/long-history.yaml) configuration doubles history at the wider batch size. The [large](configs/large.yaml) configuration then increases the population fourfold and sets a 256 MiB worker RSS budget. Run them sequentially when measuring memory:
 
 ```bash
-.venv/bin/python -m data.generator.benchmark \
+.venv/bin/python -m data.data_source.generator.benchmark \
   --output local/tmp/polars-poc/my-benchmarks \
-  --configs data/generator/configs/medium.yaml \
-  data/generator/configs/medium-wide.yaml \
-  data/generator/configs/long-history.yaml \
-  data/generator/configs/large.yaml
+  --configs data/data_source/generator/configs/medium.yaml \
+  data/data_source/generator/configs/medium-wide.yaml \
+  data/data_source/generator/configs/long-history.yaml \
+  data/data_source/generator/configs/large.yaml
 ```
 
 The benchmark writes a summary after every successful run and compares actual source bytes when two configurations describe the same dataset. Source bytes, peak RSS, maximum generation frame rows, retained run paths, merge inputs, and phase times answer different questions. The benchmark does not infer peak RSS from output size. The larger workload can take several minutes because validation reads all records and checks their relationships.

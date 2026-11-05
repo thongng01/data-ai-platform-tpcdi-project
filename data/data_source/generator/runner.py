@@ -41,7 +41,7 @@ def run(config: Config, output: Path):
     failure = None
     with (partial / "worker.log").open("w", encoding="utf-8") as log:
         process = subprocess.Popen(
-            [sys.executable, "-m", "data.generator", "_worker", "--config", str(config_path), "--output", str(partial)],
+            [sys.executable, "-m", "data.data_source.generator", "_worker", "--config", str(config_path), "--output", str(partial)],
             env=environment, stdout=log, stderr=subprocess.STDOUT,
         )
         try:
