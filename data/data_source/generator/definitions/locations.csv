@@ -1,0 +1,25 @@
+city,state,postal_code,area_code
+New York,NY,10001,212
+Los Angeles,CA,90012,213
+Chicago,IL,60601,312
+Houston,TX,77002,713
+Phoenix,AZ,85004,602
+Philadelphia,PA,19103,215
+San Antonio,TX,78205,210
+San Diego,CA,92101,619
+Dallas,TX,75201,214
+San Jose,CA,95113,408
+Austin,TX,78701,512
+Jacksonville,FL,32202,904
+San Francisco,CA,94103,415
+Columbus,OH,43215,614
+Memphis,TN,38103,901
+Seattle,WA,98101,206
+Denver,CO,80202,303
+Washington,DC,20001,202
+Boston,MA,02108,617
+Baltimore,MD,21201,410
+Detroit,MI,48201,313
+Portland,OR,97205,503
+Las Vegas,NV,89101,702
+Atlanta,GA,30303,404
