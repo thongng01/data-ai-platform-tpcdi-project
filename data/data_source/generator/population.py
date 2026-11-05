@@ -25,6 +25,7 @@ ACCOUNT_DTYPE = np.dtype([
 
 
 def rounded(value):
+    """Round a population count with decimal half-up semantics."""
     return int(Decimal(str(value)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
@@ -35,12 +36,14 @@ def uniform(identifiers, seed, field):
 
 @dataclass(frozen=True)
 class Population:
+    """Expose compact lifetime arrays and bounded contiguous customer groups."""
     customers: np.ndarray
     accounts: np.ndarray
     path: Path
     slot_stride: int
 
     def groups(self, size=2048):
+        """Yield complete customer groups without splitting their account ownership."""
         for first in range(1, len(self.customers) + 1, size):
             last = min(first + size, len(self.customers) + 1)
             left, right = np.searchsorted(self.accounts["customer_id"], [first, last])
@@ -48,6 +51,7 @@ class Population:
 
 
 def _session_days(config):
+    """Return actual NYSE session offsets for static lifetime planning."""
     calendar = xcals.get_calendar("XNYS", start=config.start, end=config.end)
     return np.asarray([
         (session.date() - config.start).days for session in calendar.sessions
@@ -56,6 +60,7 @@ def _session_days(config):
 
 
 def _death_days(ids, opening, rate, seed, field, sessions, sentinel):
+    """Draw continuous base-rate lifetimes and move closure to the next session."""
     if rate == 0 or not len(ids):
         return np.full(len(ids), sentinel, dtype=np.int32)
     # A continuous calendar-day hazard moves to the next session, not backwards.
@@ -67,6 +72,7 @@ def _death_days(ids, opening, rate, seed, field, sessions, sentinel):
 
 
 def _account_traits(config, ids):
+    """Select repeatable hidden account traits using whole-column draws."""
     n = len(ids)
     rows = np.zeros(n, dtype=ACCOUNT_DTYPE)
     rows["account_id"] = ids
@@ -121,8 +127,46 @@ def assign_tiers(customers, accounts, start=None, shares=(.1, .3, .6)):
         customers["tier"][indices[order]] = np.where(np.arange(count) < top, 1, np.where(np.arange(count) < middle, 2, 3))
 
 
+def _dynamic_population(config, root, path, customers, sentinel):
+    """Reserve checked account generations; runtime decides actual lifetimes."""
+    counts = 1 + np.searchsorted(np.cumsum(config.account_shares), uniform(customers["customer_id"], config.seed, "account-count"), side="right")
+    stride = 3 * config.account_generations
+    if len(customers) * stride >= 10**9:
+        raise ValueError("Dynamic account slots exceed the trade identifier capacity.")
+    blocks = []
+    for generation in range(config.account_generations):
+        for slot in range(1, 4):
+            indices = np.flatnonzero(counts >= slot)
+            ids = indices * stride + generation * 3 + slot
+            rows = _account_traits(config, ids)
+            rows["customer_id"] = indices + 1
+            rows["open_day"] = customers["open_day"][indices] if generation == 0 else sentinel
+            rows["close_day"] = sentinel
+            blocks.append(rows)
+    accounts = np.concatenate(blocks)
+    accounts.sort(order="account_id")
+    assign_tiers(customers, accounts, config.start, config.tier_shares)
+    # A global, deterministic expected-risk curve keeps normalization independent
+    # of execution groups. It uses planned joining traits, not future returns.
+    initial = accounts[accounts["open_day"] < sentinel]
+    weights = np.asarray([2., 1., .5, 1.5, 1.5])[initial["profile"]]
+    weights *= np.where(customers["tier"][initial["customer_id"] - 1] == 1, .7, 1.)
+    weighted = np.zeros(sentinel + 367)
+    count_curve = np.zeros_like(weighted)
+    openings = initial["open_day"]
+    np.add.at(weighted, openings, weights * 2)
+    np.add.at(weighted, openings + 365, -weights)
+    np.add.at(count_curve, openings, 1)
+    normalizer = np.cumsum(weighted)[:sentinel] / np.maximum(1, np.cumsum(count_curve)[:sentinel])
+    np.save(path / "risk_normalizer.npy", normalizer, allow_pickle=False)
+    np.save(path / "customers.npy", customers, allow_pickle=False)
+    np.save(path / "accounts.npy", accounts, allow_pickle=False)
+    return Population(np.load(path / "customers.npy", mmap_mode="r"),
+                      np.load(path / "accounts.npy", mmap_mode="r"), path, stride)
+
+
 def build_population(config, root):
-    """Plan base-rate closures. Generation stage 2 can replace this selection."""
+    """Plan expected customer joins and reserve stable account slots for execution."""
     root = Path(root)
     path = root / "_work" / "population"
     path.mkdir(parents=True, exist_ok=True)
@@ -155,6 +199,11 @@ def build_population(config, root):
         customer_count += new
         active += new
     customers = customers[:customer_count].copy()
+    if config.attrition_enabled:
+        # The first plan anchors expected joining counts. Runtime risks decide
+        # actual inactivation dates, so realized cutover counts can fluctuate.
+        customers["inactivation_day"] = sentinel
+        return _dynamic_population(config, root, path, customers, sentinel)
     # Grow numeric blocks rather than retaining one Python object per planned account.
     account_capacity = max(16, customer_count * 4)
     accounts = np.empty(account_capacity, dtype=ACCOUNT_DTYPE)
@@ -164,6 +213,7 @@ def build_population(config, root):
     next_slot = np.ones(customer_count, dtype=np.int64)
 
     def append(customer_indices, openings):
+        """Append one static account generation without retaining Python row objects."""
         nonlocal accounts, used
         count = len(customer_indices)
         # Draw keys do not depend on the eventual published slot stride.

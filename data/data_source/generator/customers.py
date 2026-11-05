@@ -4,40 +4,56 @@ from datetime import date, timedelta
 from xml.etree import ElementTree as ET
 
 import numpy as np
+import polars as pl
 
+from .personal_data import personal_columns, personal_values
 from .population import rounded, uniform
-from .random_values import uniform as draw
 
 
-def customer_birth_year(config, identifier=20):
+EMPLOYERS = np.asarray([
+    "Riverbend Health", "Summit Manufacturing", "Cedar Research",
+    "Community Services", "Pioneer Logistics", "Metro Education",
+])
+
+
+def customer_birth_year(config, identifier=20) -> int:
+    """Keep each customer's birth year within the configured adult age limits."""
     return max(config.end.year - 120, min(1940 + int(identifier) % 45, config.start.year - 18))
 
 
-def customer_values(identifier: int, tier: int = 3) -> dict:
+def customer_values(identifier: int, tier: int = 3, seed: int = 0) -> dict:
+    """Build source customer fields from stable personal identity and current tier."""
     identifier = int(identifier)
+    person = personal_values(identifier, seed)
     return {
         "C_ID": identifier, "C_TAX_ID": f"TAX{identifier}", "C_ST_ID": "ACTV",
-        "C_L_NAME": f"Family{identifier}", "C_F_NAME": "Alex", "C_M_NAME": "",
-        "C_GNDR": "U", "C_TIER": int(tier),
+        "C_L_NAME": person["last_name"], "C_F_NAME": person["first_name"], "C_M_NAME": person["middle_initial"],
+        "C_GNDR": person["gender"], "C_TIER": int(tier),
         "C_DOB": f"{1940 + identifier % 45}-01-01",
-        "C_ADLINE1": f"{identifier} Main Street", "C_ADLINE2": "", "C_ZIPCODE": "10001",
-        "C_CITY": "New York", "C_STATE_PROV": "NY", "C_CTRY": "USA",
+        "C_ADLINE1": person["address_line1"], "C_ADLINE2": person["address_line2"], "C_ZIPCODE": person["postal_code"],
+        "C_CITY": person["city"], "C_STATE_PROV": person["state"], "C_CTRY": person["country"],
         **{f"C_{part}_{number}": "" for number in range(1, 4) for part in ("CTRY", "AREA", "LOCAL", "EXT")},
-        "C_EMAIL_1": f"customer{identifier}@example.test", "C_EMAIL_2": "",
+        "C_EMAIL_1": person["email"], "C_EMAIL_2": person["alternate_email"],
         "C_LCL_TX_ID": "US1", "C_NAT_TX_ID": "US2",
+        "C_CTRY_1": person["phone_country"], "C_AREA_1": person["phone_area"], "C_LOCAL_1": person["phone_local"],
     }
 
 
 def account_values(config, account) -> dict:
+    """Name an account after its owner and its brokerage or retirement purpose."""
     identifier = int(account["account_id"])
+    person = personal_values(int(account["customer_id"]), config.seed)
+    purpose = "Retirement" if int(account["tax_status"]) != 1 else "Brokerage"
+    name = f"{person['first_name'][0]}. {person['last_name']} {purpose} {identifier}"
     return {
         "CA_ID": identifier, "CA_B_ID": int(account["broker_id"]),
-        "CA_C_ID": int(account["customer_id"]), "CA_NAME": f"Account {identifier}",
+        "CA_C_ID": int(account["customer_id"]), "CA_NAME": name,
         "CA_TAX_ST": int(account["tax_status"]), "CA_ST_ID": "ACTV",
     }
 
 
 def _text(parent, tag, value):
+    """Add one XML field, preserving explicit empty text as an empty element."""
     child = ET.SubElement(parent, tag)
     child.text = None if value is None else str(value)
     return child
@@ -95,6 +111,7 @@ def xml_action(kind, timestamp, customer_id, customer_values=None, account_value
 
 
 def _snapshot_dates(config):
+    """Yield the cutover snapshot and every monthly daily-delivery snapshot."""
     yield config.cutover
     current = config.daily_start_date
     while current <= config.end:
@@ -103,28 +120,44 @@ def _snapshot_dates(config):
         current += timedelta(days=1)
 
 
-def _prospect_values(identifier, identity, snapshot, seed, birth_year=None):
-    fields = customer_values(identity)
-    if birth_year is None:
-        birth_year = date.fromisoformat(fields["C_DOB"]).year
-    # Prospect values use only a persistent identity and the snapshot date, never a future tier.
-    income = 25000 + int(draw(identifier, seed, "prospect-income") * 175000)
+def _prospect_columns(identifiers, identities, snapshot: date, seed: int, birth_years=None) -> dict[str, np.ndarray]:
+    """Build a bounded prospect block without Python selection for each person."""
+    identifiers = np.asarray(identifiers, dtype=np.int64)
+    identities = np.asarray(identities, dtype=np.int64)
+    if identifiers.shape != identities.shape:
+        raise ValueError("Prospect and personal identity arrays must have the same shape.")
+    person = personal_columns(identities, seed)
+    if birth_years is None:
+        birth_years = 1940 + identities % 45
+    # Prospect income stays tied to the agency identity. Matching names and
+    # addresses use the customer identity and never depend on a future tier.
+    income = 25000 + (uniform(identifiers, seed, "prospect-income") * 175000).astype(np.int64)
+    id_text = identifiers.astype(str)
     return {
-        "AgencyID": f"AG{identifier}", "LastName": fields["C_L_NAME"],
-        "FirstName": fields["C_F_NAME"], "MiddleInitial": fields["C_M_NAME"],
-        "Gender": fields["C_GNDR"], "AddressLine1": fields["C_ADLINE1"],
-        "AddressLine2": fields["C_ADLINE2"], "PostalCode": fields["C_ZIPCODE"],
-        "City": fields["C_CITY"], "State": fields["C_STATE_PROV"], "Country": fields["C_CTRY"],
-        "Phone": "", "Income": income, "NumberCars": identifier % 3,
-        "NumberChildren": identifier % 4, "MaritalStatus": "U",
-        "Age": snapshot.year - birth_year,
-        "CreditRating": 550 + identifier % 251, "OwnOrRentFlag": "R" if identifier % 3 else "O",
-        "Employer": f"Employer{identifier % 1000}", "NumberCreditCards": 1 + identifier % 4,
-        "NetWorth": income * (2 + identifier % 10), "_key": f"{identifier:015d}",
+        "AgencyID": np.strings.add("AG", id_text), "LastName": person["last_name"],
+        "FirstName": person["first_name"], "MiddleInitial": person["middle_initial"],
+        "Gender": person["gender"], "AddressLine1": person["address_line1"],
+        "AddressLine2": person["address_line2"], "PostalCode": person["postal_code"],
+        "City": person["city"], "State": person["state"], "Country": person["country"],
+        "Phone": person["phone"], "Income": income, "NumberCars": identifiers % 3,
+        "NumberChildren": identifiers % 4, "MaritalStatus": np.full(len(identifiers), "U"),
+        "Age": snapshot.year - np.asarray(birth_years),
+        "CreditRating": 550 + identifiers % 251, "OwnOrRentFlag": np.where(identifiers % 3, "R", "O"),
+        "Employer": EMPLOYERS[identifiers % len(EMPLOYERS)], "NumberCreditCards": 1 + identifiers % 4,
+        "NetWorth": income * (2 + identifiers % 10),
+        "_key": np.strings.zfill(id_text, 15) if len(identifiers) else id_text,
     }
 
 
-def generate_prospects(generation, population):
+def _prospect_values(identifier, identity, snapshot, seed, birth_year=None) -> dict:
+    """Keep the scalar prospect interface equal to a one-row array selection."""
+    years = None if birth_year is None else np.asarray([birth_year])
+    columns = _prospect_columns([identifier], [identity], snapshot, seed, years)
+    return {name: column[0].item() for name, column in columns.items()}
+
+
+def generate_prospects(generation, population) -> None:
+    """Save persistent prospect identities and emit bounded monthly array blocks."""
     config = generation.config
     customers = population.customers
     accounts = population.accounts
@@ -152,9 +185,10 @@ def generate_prospects(generation, population):
     block_size = min(2048, config.export_rows)
     for snapshot, count in zip(dates, counts, strict=True):
         for first in range(0, count, block_size):
-            rows = []
-            for row in identities[first:min(first + block_size, count)]:
-                prospect = int(row["prospect_id"])
-                identity = int(row["customer_id"]) or len(customers) + prospect
-                rows.append(_prospect_values(prospect, identity, snapshot, config.seed, customer_birth_year(config, identity)))
-            generation.emit("Prospect", snapshot, rows)
+            block = identities[first:min(first + block_size, count)]
+            personal_ids = np.where(block["customer_id"], block["customer_id"], len(customers) + block["prospect_id"])
+            years = np.maximum(config.end.year - 120, np.minimum(1940 + personal_ids % 45, config.start.year - 18))
+            columns = _prospect_columns(block["prospect_id"], personal_ids, snapshot, config.seed, years)
+            # Only the export boundary needs row dictionaries. All random
+            # selection and field construction above operate on whole columns.
+            generation.emit("Prospect", snapshot, pl.DataFrame(columns).to_dicts())

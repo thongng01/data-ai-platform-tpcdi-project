@@ -175,8 +175,8 @@ The [data specification](docs/Data-Specification.md) owns Gold relationships and
 
 The generator simulates a mid-size firm day by day. Four generation stages separate business behavior, hidden attrition signal, source recording, and delivery. The generator runs the first three; the publisher runs delivery.
 
-- **Scale factor**: Factor 100 represents about 330,000 customers and 550,000 accounts at cutover, with about 8% annual net account growth. One unit targets about 1 GB of offline files over the full reference calendar. Market and reference data remain fixed; dates are separate settings.
-- **Volume**: Generate the large dataset once and measure at least 100 GB of offline source files. The estimated 18 GB cash transaction stream is separate. Each experiment processes only the scale factor and dates needed to show its effect.
+- **Scale factor**: Factor 100 sets an expected cutover anchor of 360,100 customers and about 601,367 accounts, with about 8% annual net account growth. Realized counts vary. One unit targets 1 GB of variable offline files over the full reference calendar, with fixed bytes additional. Market and reference data remain fixed; dates are separate settings.
+- **Volume**: Generate the large dataset once and measure at least 100 GB of offline source files. The separate factor 100 cash transaction stream is estimated at 33.9 GB from measured calibrated factor 1 bytes; factor 100 is not a measured result. Each experiment processes only the scale factor and dates needed to show its effect.
 - **Behavior**: Five hidden behavior profiles and hidden wealth levels produce trading and cash-flow patterns. Completed trades reconcile with cash transactions and holdings. About 20% of accounts use margin; no account sells securities it does not hold.
 - **Attrition**: About 3% of accounts close annually. Most closures follow a hidden 1 to 8 week leaving period; look-alike outflows keep a simple rule from solving the task alone.
 - **Source problems**: Data errors stay separate from skew and from the added `T_CHANNEL` schema change, effective 2019-07-01 by default.
@@ -349,4 +349,4 @@ Before the first start, [create the private configuration files](docs/IaC.md#1-h
    .venv/bin/python -m data.data_source.generator validate local/runs/small
    ```
 
-   The [generator guide](data/data_source/generator/README.md) explains the run settings, output paths, tests, and reference-calendar measurements. Only `offline/` files enter `upstream`; saved cash transaction messages remain separate from offline files.
+   The [generator guide](data/data_source/generator/README.md) explains the run settings, output paths, tests, and reference-calendar measurements. The [clean publisher guide](data/data_source/publisher/README.md) explains how to deliver saved files to `upstream` and replay cash transaction messages to Kafka. Only `offline/` files enter `upstream`; saved cash transaction messages remain separate from offline files.

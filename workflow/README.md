@@ -78,7 +78,7 @@ The zone belongs in the catalog namespace or database schema, not in the table n
 | [Design-Method.md](Design-Method.md) | Six-step engineering decision method (frame, map, research, generate options, evaluate, record). |
 | [Diagram-Guide.md](Diagram-Guide.md) | Visual language and workflow for editable draw.io diagrams and Mermaid ERDs. |
 | [Diagram-Examples.md](Diagram-Examples.md) | Worked visual examples rendered from `workflow/diagrams/style-examples/`. |
-| [records/](records/Polars-POC.md) | Working records: benchmark and POC evidence, and design drafts. Evidence moves into `docs/` when the component is built, and the record is then archived or removed; a design draft is deleted after the spec pass moves it into `docs/`. |
+| Working records | [Polars POC evidence](records/Polars-POC.md) and [generator verification](records/Generator-Verification.md), plus design drafts. Evidence moves into `docs/` when the component is built, and the record is then archived or removed; a design draft is deleted after the spec pass moves it into `docs/`. |
 | `tools/check_docs.py` | Checks all tracked and new Markdown files for broken links, heading anchors, line endings, and banned words. |
 | [tools/diagrams/](tools/diagrams/README.md) | Shared draw.io and Mermaid ERD validation and PNG export tool (`diagram.py`, `erd.py`, `theme.json`). |
 

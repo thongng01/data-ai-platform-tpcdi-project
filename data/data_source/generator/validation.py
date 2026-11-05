@@ -8,31 +8,38 @@ import math
 import re
 import tempfile
 from collections import defaultdict
+from contextlib import closing
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from itertools import groupby
 from pathlib import Path
+from typing import NamedTuple
 from xml.etree import ElementTree as ET
 
 import polars as pl
 
 from .config import Config, read_yaml
-from .formats import TYPES, load_sources
+from .formats import TYPES, load_sources, source_for_day
+from .random_values import uniform
+from .validation_faults import FaultAudit
 
 
 _VALIDATION_PARTITION_BYTES = 16 * 1024**2
 
 
 class ValidationError(ValueError):
+    """Report a source-contract or business-consistency failure."""
     pass
 
 
 def _require(condition, message):
+    """Raise a validation failure when a stated invariant is false."""
     if not condition:
         raise ValidationError(message)
 
 
 def _cents(value):
+    """Parse exact decimal cents and reject fractional cents or nonfinite values."""
     if value is None or value == "":
         return None
     try:
@@ -44,6 +51,7 @@ def _cents(value):
 
 
 def _lines(path):
+    """Read bounded ASCII source lines and enforce LF-only record endings."""
     with path.open("rb") as stream:
         number = 0
         while raw := stream.readline(1024 * 1024):
@@ -81,14 +89,17 @@ def _rows(path, source, batch):
 
 
 def _prior_year(day):
+    """Find the required prior-year price boundary, including leap dates."""
     return day.replace(year=day.year - 1, day=min(day.day, calendar.monthrange(day.year - 1, day.month)[1]))
 
 
 def _quarter(day):
+    """Map a date to a consecutive reporting-quarter ordinal."""
     return day.year * 4 + (day.month - 1) // 3
 
 
 def _release(quarter):
+    """Derive the final date of the month after a reporting quarter."""
     year, number = divmod(quarter + 1, 4)
     return date(year, number * 3 + 2, 1) - timedelta(days=1)
 
@@ -122,6 +133,7 @@ def _expected_files(config):
 
 
 def _field_type(field):
+    """Choose the typed replay representation, storing money as integer cents."""
     datatype = TYPES.get(field.type, field.type)
     if datatype.startswith(("NUM(", "SNUM(")) or datatype == "BOOLEAN":
         return pl.Int64 if "," not in datatype or datatype.endswith(",2)") else pl.String
@@ -129,6 +141,7 @@ def _field_type(field):
 
 
 def _typed(source, row):
+    """Convert parsed source text into typed business values for replay."""
     result = {}
     for field in source.fields:
         value = row.get(field.name)
@@ -145,6 +158,7 @@ class _Stage:
     """Write bounded typed blocks and bound row-group buffers across partitions."""
 
     def __init__(self, root, partitions, date_partitions=None):
+        """Initialize aggregate parse buffers and schemas for bounded disk staging."""
         self.root = root
         self.partitions = partitions
         self.date_partitions = date_partitions or partitions
@@ -155,6 +169,7 @@ class _Stage:
         self.peak_rows = 0
 
     def add(self, table, row, schema):
+        """Buffer a typed row and flush the largest table when the shared row bound is reached."""
         self.schemas[table] = schema
         self.buffers[table].append(row)
         self.rows += 1
@@ -163,6 +178,7 @@ class _Stage:
             self.flush(max(self.buffers, key=lambda name: len(self.buffers[name])))
 
     def flush(self, table):
+        """Write one typed staging block and release its share of the memory buffer."""
         rows = self.buffers[table]
         if not rows:
             return
@@ -175,10 +191,12 @@ class _Stage:
 
     @staticmethod
     def _row_group_rows(partitions):
+        """Bound aggregate Parquet row-group buffers across output partitions."""
         _require(0 < partitions <= PARQUET_BUFFER_ROWS, "Partition count exceeds the row-group buffer budget.")
         return max(1, min(8192, PARQUET_BUFFER_ROWS // partitions))
 
     def finish(self):
+        """Join daily prices once and partition typed records for independent replay."""
         for table in list(self.buffers):
             self.flush(table)
         # Join prices by day before account partitioning. This reads the market once,
@@ -223,21 +241,28 @@ class _Stage:
                 enriched.rmdir()
 
     def frame(self, table, partition):
+        """Read one bounded replay partition, preserving its schema when empty."""
         paths = list((self.root / "partitioned" / table / f"_partition={partition}").glob("*.parquet"))
         if not paths:
             return pl.DataFrame(schema=self.schemas.get(table, {}))
         return pl.scan_parquet(paths).collect(engine="streaming")
 
     def records(self, table, partition):
+        """Iterate named records from one typed replay partition."""
         return self.frame(table, partition).iter_rows(named=True)
 
 
 def _source_schema(source):
-    return {**{field.name: _field_type(field) for field in source.fields}, "_flag": pl.String,
+    """Describe typed business columns and private staging metadata."""
+    columns = {field.name: _field_type(field) for field in source.fields}
+    if source.name == "Trade":
+        columns["T_CHANNEL"] = pl.String
+    return {**columns, "_flag": pl.String,
             "_order": pl.Int64, "_day": pl.String, "_partition": pl.String}
 
 
 def _stage_source(stage, source, row, day, key):
+    """Route one typed source row to its bounded account or date partition."""
     result = _typed(source, row)
     result.update(_flag=row.get("_flag", "I"), _order=row.get("_order", 0), _day=day,
                   _partition=str(key) if source.name == "DailyMarket" else str(int(key) % stage.partitions))
@@ -288,7 +313,8 @@ def _xml_patch(customer, source):
     return patch
 
 
-def _xml(stage, path, sources, config):
+def _xml(stage, path, sources, config, audit=None):
+    """Parse initial CMS actions and retain explicit partial-update fields."""
     schema = {**_source_schema(sources["Customer"]), "_present": pl.List(pl.String), "_timestamp": pl.String, "_kind": pl.String}
     account_schema = {**_source_schema(sources["Account"]), "_present": pl.List(pl.String), "_timestamp": pl.String, "_kind": pl.String}
     context = ET.iterparse(path, events=("start", "end"))
@@ -317,6 +343,8 @@ def _xml(stage, path, sources, config):
         patch = _xml_patch(customer, sources["Customer"])
         _require("C_ID" in patch, "Missing customer XML ID.")
         identifier = int(patch["C_ID"])
+        if audit is not None:
+            patch = audit.restore("CustomerMgmt", timestamp[:10], patch, kind=kind, timestamp=timestamp)
         key = timestamp, identifier
         _require(key >= previous, "Customer actions must be ordered by timestamp and customer ID.")
         previous = key
@@ -358,7 +386,8 @@ def _xml(stage, path, sources, config):
     return dict(counts)
 
 
-def _finwire(paths, config, industries):
+def _finwire(paths, config, industries, audit=None):
+    """Validate released fixed-width company, security, and financial versions."""
     layouts = read_yaml(Path(__file__).parent / "definitions" / "finwire.yaml")
     companies = {}
     securities = defaultdict(list)
@@ -388,6 +417,8 @@ def _finwire(paths, config, industries):
             previous = key
             counts[kind] += 1
             if kind == "CMP":
+                if audit is not None:
+                    values = audit.restore("FINWIRE:CMP", str(posted.date()), values)
                 _require(values["Status"] in {"ACTV", "INAC"} and values["CIK"].isdigit(), "Invalid company identity or status.")
                 _require(values["IndustryID"] in industries, "Company industry is missing.")
                 _require(values["SPrating"] in {"AAA", "AA+", "AA", "AA-", "A+", "A", "A-", "BBB+", "BBB", "BBB-", "BB+", "BB", "BB-", "B+", "B", "B-", "CCC+", "CCC", "CCC-", "CC", "C", "D"}, "Invalid company credit rating.")
@@ -415,6 +446,7 @@ def _finwire(paths, config, industries):
 
 
 def _security(securities, symbol, timestamp):
+    """Resolve an active security version at the activity timestamp."""
     _require(symbol in securities, f"Missing security: {symbol}")
     version = None
     for candidate in securities[symbol]:
@@ -426,6 +458,7 @@ def _security(securities, symbol, timestamp):
 
 
 def _dividend_dates(symbol, config, sessions):
+    """Derive each security's quarterly payment dates from the trading calendar."""
     _require(re.fullmatch(r"S[0-9]{10}", symbol), "Dividend security does not use a generated symbol.")
     day_number = (int(symbol[1:]) - 1) % 25 + 1
     for year in range(config.start.year, config.end.year + 1):
@@ -438,6 +471,7 @@ def _dividend_dates(symbol, config, sessions):
 
 
 def _check_dividends(trade_events, cash, config, sessions, securities):
+    """Reconstruct start-of-day share counts and require every expected payment."""
     changes = defaultdict(list)
     for row in trade_events:
         if row["T_ST_ID"] == "CMPT":
@@ -465,6 +499,7 @@ def _check_dividends(trade_events, cash, config, sessions, securities):
 
 
 def _sessions(config):
+    """Derive NYSE session dates and early closes independently of saved metadata."""
     import exchange_calendars as xcals
 
     first = _prior_year(config.start)
@@ -475,9 +510,11 @@ def _sessions(config):
 
 
 def _stream(path, source):
+    """Parse ordered cash JSON fields with strict types and exact cent precision."""
     expected = ["ct_id", "ct_ca_id", "ct_dts", "ct_amt", "ct_name", "schema_version"]
     for number, line in enumerate(_lines(path), 1):
         def pairs(items):
+            """Reject unexpected JSON field order, missing fields, and duplicate keys."""
             _require([name for name, _ in items] == expected, "Unexpected stream fields, field order, or duplicate JSON key.")
             return dict(items)
         try:
@@ -501,6 +538,7 @@ def _stream(path, source):
 
 
 def _customer_replay(stage, partition, config, securities, tax_rates):
+    """Apply partial customer versions and prove watch lifetimes and cancellations."""
     events = list(stage.records("CustomerXML", partition))
     for row in stage.records("Customer", partition):
         row.update(_present=[name for name in row if name.startswith("C_")],
@@ -563,6 +601,7 @@ def _causal_events(events):
         cash_nodes = []
 
         def precedes(left, right):
+            """Add one causal dependency without counting the same edge twice."""
             if right not in edges[left]:
                 edges[left].add(right)
                 indegree[right] += 1
@@ -603,6 +642,7 @@ def _causal_events(events):
                         precedes(previous_cash, indices[0])
             previous_cash = index
         def priority(index):
+            """Prefer source-proven cash order and new pending reservations in ties."""
             kind, row = group[index][3:]
             if kind == "cash":
                 return 0, index
@@ -626,7 +666,23 @@ def _causal_events(events):
         _require(visited == len(group), "Same-second trade insertions conflict with the source cash transaction order.")
 
 
-def _account_replay(stage, partition, config, securities, sessions, brokers):
+def _check_trade_channel(row, account, config):
+    """Check the dated format and the channel implied by hidden account profile."""
+    channel = row.get("T_CHANNEL")
+    if row["_day"] == "initial" or row["_day"] < config.trade_channel_start:
+        _require(channel is None, "Trade channel appears before the daily schema change.")
+        return
+    shares = ((.45, .25), (.50, .35), (.20, .10), (.55, .40), (.45, .53))
+    profile = account["profile"]
+    _require(0 <= profile < len(shares), "Trade channel has an unknown hidden profile.")
+    web, mobile = shares[profile]
+    draw = uniform(row["T_ID"], config.seed, "source/trade-channel")
+    expected = "WEB" if draw < web else "MOBILE" if draw < web + mobile else "BROKER"
+    _require(channel == expected, "Trade channel differs from its profile-weighted source recording.")
+
+
+def _replay_accounts(stage, partition, brokers):
+    """Resolve account versions against saved customer lifetimes and hidden traits."""
     versions = list(stage.records("AccountXML", partition))
     for row in stage.records("Account", partition):
         row.update(_present=[name for name in row if name.startswith("CA_")],
@@ -638,7 +694,6 @@ def _account_replay(stage, partition, config, securities, sessions, brokers):
     customers = {row["customer_id"]: row for row in pl.scan_parquet(stage.root / "customers" / "*.parquet")
                  .filter(pl.col("customer_id").is_in(owners)).collect(engine="streaming").iter_rows(named=True)}
     accounts = {}
-    account_events = []
     for row in sorted(versions, key=lambda item: (item["_timestamp"], item["CA_ID"], item["_order"])):
         identifier = row["CA_ID"]
         existing = accounts.get(identifier)
@@ -665,6 +720,12 @@ def _account_replay(stage, partition, config, securities, sessions, brokers):
         if values["CA_ST_ID"] == "INAC":
             existing["closed"] = row["_timestamp"]
     _require(set(accounts) == set(hidden), "Hidden account and source account identities differ.")
+    return accounts, customers
+
+
+def _account_closures(accounts, customers):
+    """Check actual closure dates and create explicit replay boundary events."""
+    account_events = []
     for identifier, account in accounts.items():
         customer = customers[account["owner"]]
         if customer["closed"] is not None:
@@ -676,6 +737,11 @@ def _account_replay(stage, partition, config, securities, sessions, brokers):
         if account["closed"]:
             account_events.append((account["closed"], 4, identifier, "close", identifier))
 
+    return account_events
+
+
+def _replay_trade_versions(stage, partition):
+    """Expand initial snapshots through their histories, then append daily versions."""
     snapshots = {}
     daily = []
     for row in stage.records("Trade", partition):
@@ -707,6 +773,12 @@ def _account_replay(stage, partition, config, securities, sessions, brokers):
                     event[name] = None
             trade_events.append(event)
     trade_events.extend(daily)
+    return trade_events
+
+
+def _replay_inputs(stage, partition, config, sessions, securities):
+    """Index holding changes and settlements and verify all dividend payments."""
+    trade_events = _replay_trade_versions(stage, partition)
     holdings = {}
     for row in stage.records("HoldingHistory", partition):
         _require(row["HH_T_ID"] not in holdings, "A trade has more than one holding change.")
@@ -719,72 +791,97 @@ def _account_replay(stage, partition, config, securities, sessions, brokers):
             trade_id = int(row["CT_NAME"][17:])
             _require(trade_id not in settlements, "A trade has more than one settlement.")
             settlements[trade_id] = row
-    events = [(timestamp, 10**20, identifier, kind, identifier) for timestamp, _, identifier, kind, _ in account_events]
+    return trade_events, holdings, cash, settlements
+
+
+def _replay_events(account_events, trade_events, cash, settlements):
+    """Order account boundaries, trade transitions, and cash by source evidence."""
+    events = [ReplayEvent(timestamp, 10**20, identifier, kind, identifier) for timestamp, _, identifier, kind, _ in account_events]
     for row in trade_events:
         settlement = settlements.get(row["T_ID"])
         # CT_ID retains the source's same-second cash order. A trade ID does not:
         # an older pending order can complete after a newer market order.
         causal_order = (settlement["CT_ID"] if settlement is not None and settlement["CT_DTS"] == row["T_DTS"]
                         else 10**19 + row["T_ID"])
-        events.append((row["T_DTS"], causal_order, 0, "trade", row))
-    events.extend((row["CT_DTS"], row["CT_ID"], 1, "cash", row) for row in cash)
-    balances = defaultdict(int)
-    positions = {}
-    trades = {}
-    reservations = {}
-    reserved_cash = defaultdict(int)
-    reserved_shares = defaultdict(int)
-    completed = set()
+        events.append(ReplayEvent(row["T_DTS"], causal_order, 0, "trade", row))
+    events.extend(ReplayEvent(row["CT_DTS"], row["CT_ID"], 1, "cash", row) for row in cash)
+    return _causal_events(events)
 
-    def lifetime(account_id, timestamp):
-        _require(account_id in accounts, "Activity account is missing.")
-        account = accounts[account_id]
+
+class ReplayEvent(NamedTuple):
+    """Name the timestamp, source ordering evidence, event kind, and payload."""
+
+    timestamp: str
+    causal_order: int
+    rank: int
+    kind: str
+    row: dict | int
+
+
+class _AccountReplay:
+    """Replay one bounded partition with correct fees, balances, and reservations."""
+
+    def __init__(self, accounts, holdings, settlements, config: Config, securities, sessions):
+        """Start empty money and holding state for the partition's saved accounts."""
+        self.accounts, self.holdings, self.settlements = accounts, holdings, settlements
+        self.config, self.securities, self.sessions = config, securities, sessions
+        self.balances = defaultdict(int)
+        self.positions = {}
+        self.trades = {}
+        self.reservations = {}
+        self.reserved_cash = defaultdict(int)
+        self.reserved_shares = defaultdict(int)
+        self.completed = set()
+
+    def account_at(self, account_id, timestamp):
+        """Require an existing account whose lifetime contains this activity."""
+        _require(account_id in self.accounts, "Activity account is missing.")
+        account = self.accounts[account_id]
         _require(timestamp >= account["created"] and (account["closed"] is None or timestamp <= account["closed"]),
                  "Activity lies outside the account lifetime.")
         return account
 
-    for timestamp, _, _, kind, row in _causal_events(events):
-        if kind == "close":
-            identifier = row
-            _require(balances[identifier] == 0 and not any(account == identifier for account, _ in positions) and
-                     not any(trade["T_CA_ID"] == identifier and trade["T_ST_ID"] not in {"CMPT", "CNCL"} for trade in trades.values()),
-                     "Account closed before liquidation, debt repayment, withdrawal, or order cancellation.")
-            continue
-        if kind == "cash":
-            account_id = row["CT_CA_ID"]
-            account = lifetime(account_id, timestamp)
-            amount, name = row["CT_AMT"], row["CT_NAME"]
-            if name == "Deposit":
-                _require(amount > 0, "Deposit must be positive.")
-            elif name == "Withdrawal":
-                _require(amount < 0, "Withdrawal must be negative.")
-            elif name.startswith("Dividend "):
-                symbol = name[9:]
-                annual = _security(securities, symbol, timestamp)[1]
-                position = positions.get((account_id, symbol))
-                _require(timestamp[11:] == "06:00:00" and timestamp[:10] in sessions and position is not None,
-                         "Dividend requires start-of-day holdings at 06:00 on a session date.")
-                expected = int((Decimal(position[1] * annual) / 4).quantize(Decimal(1), rounding=ROUND_HALF_UP))
-                _require(amount == expected and expected > 0, "Dividend does not equal start-of-day shares times annual SEC dividend / 4.")
-            else:
-                _require(name.startswith("Trade settlement "), "Invalid cash transaction name.")
-                identifier = int(name[17:])
-                trade = trades.get(identifier)
-                _require(trade is not None and trade["T_ST_ID"] == "CMPT" and identifier in completed, "Settlement has no completed trade.")
-                continue
-            balances[account_id] += amount
-            limit = 0 if account["is_cash"] else account["margin_limit_cents"]
-            _require(balances[account_id] - reserved_cash[account_id] >= -limit, "Cash balance or reserved spending exceeds the borrowing limit.")
-            continue
-        identifier, account_id, symbol = row["T_ID"], row["T_CA_ID"], row["T_S_SYMB"]
-        account = lifetime(account_id, timestamp)
-        _security(securities, symbol, timestamp)
-        _require(timestamp[:10] in sessions and "09:30:00" <= timestamp[11:] <= sessions[timestamp[:10]],
-                 "Trade timestamp lies outside its NYSE session, including early closes.")
-        _require(row["T_TT_ID"] in {"TMB", "TMS", "TLB", "TLS", "TSL"} and row["T_IS_CASH"] == int(account["is_cash"]),
-                 "Trade type or account cash type is invalid.")
-        _require(row["T_QTY"] > 0 and row["T_BID_PRICE"] > 0, "Trade quantity and bid price must be positive.")
-        status, previous = row["T_ST_ID"], trades.get(identifier)
+    def check_spending(self, account_id, account, message):
+        """Protect reserved cash and the account's allowed margin borrowing."""
+        limit = 0 if account["is_cash"] else account["margin_limit_cents"]
+        _require(self.balances[account_id] - self.reserved_cash[account_id] >= -limit, message)
+
+    def close_account(self, identifier):
+        """Prove that closure removes no remaining money, holdings, or open order."""
+        _require(self.balances[identifier] == 0 and not any(account == identifier for account, _ in self.positions) and
+                 not any(trade["T_CA_ID"] == identifier and trade["T_ST_ID"] not in {"CMPT", "CNCL"} for trade in self.trades.values()),
+                 "Account closed before liquidation, debt repayment, withdrawal, or order cancellation.")
+
+    def cash_event(self, row):
+        """Check ordinary money movements; completed trades apply settlements once."""
+        account_id, timestamp = row["CT_CA_ID"], row["CT_DTS"]
+        account = self.account_at(account_id, timestamp)
+        amount, name = row["CT_AMT"], row["CT_NAME"]
+        if name == "Deposit":
+            _require(amount > 0, "Deposit must be positive.")
+        elif name == "Withdrawal":
+            _require(amount < 0, "Withdrawal must be negative.")
+        elif name.startswith("Dividend "):
+            symbol = name[9:]
+            annual = _security(self.securities, symbol, timestamp)[1]
+            position = self.positions.get((account_id, symbol))
+            _require(timestamp[11:] == "06:00:00" and timestamp[:10] in self.sessions and position is not None,
+                     "Dividend requires start-of-day holdings at 06:00 on a session date.")
+            expected = int((Decimal(position[1] * annual) / 4).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+            _require(amount == expected and expected > 0, "Dividend does not equal start-of-day shares times annual SEC dividend / 4.")
+        else:
+            _require(name.startswith("Trade settlement "), "Invalid cash transaction name.")
+            identifier = int(name[17:])
+            trade = self.trades.get(identifier)
+            _require(trade is not None and trade["T_ST_ID"] == "CMPT" and identifier in self.completed, "Settlement has no completed trade.")
+            return
+        self.balances[account_id] += amount
+        self.check_spending(account_id, account, "Cash balance or reserved spending exceeds the borrowing limit.")
+
+    def check_transition(self, row):
+        """Enforce lifecycle transitions and retain immutable order attributes."""
+        identifier, status, timestamp = row["T_ID"], row["T_ST_ID"], row["T_DTS"]
+        previous = self.trades.get(identifier)
         if row["_flag"] == "I":
             _require(previous is None and status in {"PNDG", "SBMT"}, "Trade insertion reused an ID or has an invalid initial status.")
         else:
@@ -795,69 +892,116 @@ def _account_replay(stage, partition, config, securities, sessions, brokers):
             _require(timestamp >= previous["T_DTS"], "Trade status timestamps must not decrease.")
             _require(all(row[name] == previous[name] for name in ("T_CA_ID", "T_S_SYMB", "T_QTY", "T_TT_ID", "T_IS_CASH", "T_BID_PRICE", "T_EXEC_NAME")),
                      "Trade update changed immutable attributes.")
-        values = [row[name] for name in ("T_TRADE_PRICE", "T_CHRG", "T_COMM", "T_TAX")]
-        _require(all(value is not None for value in values) if status == "CMPT" else all(value is None for value in values),
+        amounts = [row[name] for name in ("T_TRADE_PRICE", "T_CHRG", "T_COMM", "T_TAX")]
+        _require(all(value is not None for value in amounts) if status == "CMPT" else all(value is None for value in amounts),
                  "Only completed trades may have execution amounts.")
+
+    def change_reservation(self, row, account):
+        """Release prior reservations, then reserve only still-open order amounts."""
+        identifier, account_id = row["T_ID"], row["T_CA_ID"]
+        key = account_id, row["T_S_SYMB"]
         sell = row["T_TT_ID"] in {"TMS", "TLS", "TSL"}
-        position_key = account_id, symbol
-        if identifier in reservations:
-            reserve = reservations.pop(identifier)
+        if identifier in self.reservations:
+            reserve = self.reservations.pop(identifier)
             if sell:
-                reserved_shares[position_key] -= reserve
+                self.reserved_shares[key] -= reserve
             else:
-                reserved_cash[account_id] -= reserve
-        if status not in {"CMPT", "CNCL"}:
-            if sell:
-                available = positions.get(position_key, (0, 0))[1] - reserved_shares[position_key]
-                _require(available >= row["T_QTY"], "Open sell order reserves unavailable shares.")
-                reserved_shares[position_key] += row["T_QTY"]
-                reservations[identifier] = row["T_QTY"]
-            else:
-                value = row["T_QTY"] * row["T_BID_PRICE"]
-                reserve = value + config.charge_cents + (value * config.commission_basis_points + 5000) // 10000
-                limit = 0 if account["is_cash"] else account["margin_limit_cents"]
-                _require(balances[account_id] - reserved_cash[account_id] - reserve >= -limit, "Open buy orders reserve unavailable funds.")
-                reserved_cash[account_id] += reserve
-                reservations[identifier] = reserve
-        if status == "CMPT":
-            price, charge, commission, tax = values
-            expected_commission = (row["T_QTY"] * price * config.commission_basis_points + 5000) // 10000
-            _require(price > 0 and charge == config.charge_cents and commission == expected_commission and tax == 0,
-                     "Stage 1 execution fees or tax differ from the configured rule.")
-            low, high = row.get("_market_low"), row.get("_market_high")
-            _require(low is not None and low <= price <= high, "Execution price lies outside the daily low and high.")
-            if row["T_TT_ID"] == "TLB":
-                _require(price <= row["T_BID_PRICE"], "Limit buy exceeds its bid.")
-            elif row["T_TT_ID"] == "TLS":
-                _require(price >= row["T_BID_PRICE"], "Limit sell is below its bid.")
-            holding = holdings.get(identifier)
-            _require(holding is not None, "Completed trade has no holding change.")
-            origin, before = positions.get(position_key, (identifier, 0))
-            after = before + (-1 if sell else 1) * row["T_QTY"]
-            _require(after >= reserved_shares[position_key], "Completed sell exceeds unreserved holdings.")
-            _require((holding["HH_H_T_ID"], holding["HH_BEFORE_QTY"], holding["HH_AFTER_QTY"]) == (origin, before, after),
-                     "Holding origin or before/after quantity differs from position replay.")
-            _require(holding["_day"] == "initial" if timestamp[:10] <= str(config.cutover) else holding["_day"] == timestamp[:10],
-                     "Holding change lies in the wrong delivery.")
-            if after:
-                positions[position_key] = origin, after
-            else:
-                positions.pop(position_key, None)
-            settlement = settlements.get(identifier)
-            expected = (1 if sell else -1) * row["T_QTY"] * price - charge - commission - tax
-            _require(settlement is not None and (settlement["CT_CA_ID"], settlement["CT_DTS"], settlement["CT_AMT"]) ==
-                     (account_id, timestamp, expected), "Settlement does not match trade account, timestamp, value, or fees.")
-            balances[account_id] += expected
-            limit = 0 if account["is_cash"] else account["margin_limit_cents"]
-            _require(balances[account_id] - reserved_cash[account_id] >= -limit,
-                     "Settlement spends reserved funds or exceeds the cash or margin limit.")
-            completed.add(identifier)
-        trades[identifier] = row
-    _require(set(holdings) == completed and set(settlements) == completed, "Holding changes or settlements include a non-completed trade.")
-    return len(accounts), len(trades), len(completed)
+                self.reserved_cash[account_id] -= reserve
+        if row["T_ST_ID"] in {"CMPT", "CNCL"}:
+            return
+        if sell:
+            available = self.positions.get(key, (0, 0))[1] - self.reserved_shares[key]
+            _require(available >= row["T_QTY"], f"Open sell order reserves unavailable shares: trade={identifier}, account={account_id}, timestamp={row['T_DTS']}, available={available}, requested={row['T_QTY']}, position={self.positions.get(key)}, reserved={self.reserved_shares[key]}.")
+            self.reserved_shares[key] += row["T_QTY"]
+            self.reservations[identifier] = row["T_QTY"]
+        else:
+            value = row["T_QTY"] * row["T_BID_PRICE"]
+            reserve = value + self.config.charge_cents + (value * self.config.commission_basis_points + 5000) // 10000
+            self.reserved_cash[account_id] += reserve
+            self.check_spending(account_id, account, "Open buy orders reserve unavailable funds.")
+            self.reservations[identifier] = reserve
+
+    def change_holding(self, row):
+        """Match each completed trade to the saved origin and before/after quantity."""
+        identifier, timestamp = row["T_ID"], row["T_DTS"]
+        key = row["T_CA_ID"], row["T_S_SYMB"]
+        holding = self.holdings.get(identifier)
+        _require(holding is not None, "Completed trade has no holding change.")
+        origin, before = self.positions.get(key, (identifier, 0))
+        sell = row["T_TT_ID"] in {"TMS", "TLS", "TSL"}
+        after = before + (-1 if sell else 1) * row["T_QTY"]
+        _require(after >= self.reserved_shares[key], "Completed sell exceeds unreserved holdings.")
+        _require((holding["HH_H_T_ID"], holding["HH_BEFORE_QTY"], holding["HH_AFTER_QTY"]) == (origin, before, after),
+                 "Holding origin or before/after quantity differs from position replay.")
+        _require(holding["_day"] == "initial" if timestamp[:10] <= str(self.config.cutover) else holding["_day"] == timestamp[:10],
+                 "Holding change lies in the wrong delivery.")
+        if after:
+            self.positions[key] = origin, after
+        else:
+            self.positions.pop(key, None)
+
+    def complete_trade(self, row, account):
+        """Check correct fees and prices, then apply the exact holding and cash effects."""
+        identifier, account_id, timestamp = row["T_ID"], row["T_CA_ID"], row["T_DTS"]
+        price, charge, commission, tax = [row[name] for name in ("T_TRADE_PRICE", "T_CHRG", "T_COMM", "T_TAX")]
+        expected_commission = (row["T_QTY"] * price * self.config.commission_basis_points + 5000) // 10000
+        _require(price > 0 and charge == self.config.charge_cents and commission == expected_commission and tax == 0,
+                 "Stage 1 execution fees or tax differ from the configured rule.")
+        low, high = row.get("_market_low"), row.get("_market_high")
+        _require(low is not None and low <= price <= high, "Execution price lies outside the daily low and high.")
+        if row["T_TT_ID"] == "TLB":
+            _require(price <= row["T_BID_PRICE"], "Limit buy exceeds its bid.")
+        elif row["T_TT_ID"] == "TLS":
+            _require(price >= row["T_BID_PRICE"], "Limit sell is below its bid.")
+        self.change_holding(row)
+        settlement = self.settlements.get(identifier)
+        sell = row["T_TT_ID"] in {"TMS", "TLS", "TSL"}
+        expected = (1 if sell else -1) * row["T_QTY"] * price - charge - commission - tax
+        _require(settlement is not None and (settlement["CT_CA_ID"], settlement["CT_DTS"], settlement["CT_AMT"]) ==
+                 (account_id, timestamp, expected), "Settlement does not match trade account, timestamp, value, or fees.")
+        self.balances[account_id] += expected
+        self.check_spending(account_id, account, "Settlement spends reserved funds or exceeds the cash or margin limit.")
+        self.completed.add(identifier)
+
+    def trade_event(self, row):
+        """Follow one source trade transition through format, state, and ledger checks."""
+        identifier, account_id, symbol, timestamp = row["T_ID"], row["T_CA_ID"], row["T_S_SYMB"], row["T_DTS"]
+        account = self.account_at(account_id, timestamp)
+        _check_trade_channel(row, account, self.config)
+        _security(self.securities, symbol, timestamp)
+        _require(timestamp[:10] in self.sessions and "09:30:00" <= timestamp[11:] <= self.sessions[timestamp[:10]],
+                 "Trade timestamp lies outside its NYSE session, including early closes.")
+        _require(row["T_TT_ID"] in {"TMB", "TMS", "TLB", "TLS", "TSL"} and row["T_IS_CASH"] == int(account["is_cash"]),
+                 "Trade type or account cash type is invalid.")
+        _require(row["T_QTY"] > 0 and row["T_BID_PRICE"] > 0, "Trade quantity and bid price must be positive.")
+        self.check_transition(row)
+        self.change_reservation(row, account)
+        if row["T_ST_ID"] == "CMPT":
+            self.complete_trade(row, account)
+        self.trades[identifier] = row
+
+
+def _account_replay(stage, partition, config, securities, sessions, brokers):
+    """Prepare source-proven inputs and replay each named account event in order."""
+    accounts, customers = _replay_accounts(stage, partition, brokers)
+    closures = _account_closures(accounts, customers)
+    trades, holdings, cash, settlements = _replay_inputs(stage, partition, config, sessions, securities)
+    replay = _AccountReplay(accounts, holdings, settlements, config, securities, sessions)
+    for event in _replay_events(closures, trades, cash, settlements):
+        if event.kind == "close":
+            replay.close_account(event.row)
+        elif event.kind == "cash":
+            replay.cash_event(event.row)
+        else:
+            replay.trade_event(event.row)
+    _require(set(holdings) == replay.completed and set(settlements) == replay.completed,
+             "Holding changes or settlements include a non-completed trade.")
+    return len(accounts), len(replay.trades), len(replay.completed)
+
 
 
 def validate(root: Path, config: Config, inventory=None):
+    """Parse saved sources, verify fault evidence, and replay bounded business state."""
     root = Path(root)
     sources = load_sources()
     expected = _expected_files(config)
@@ -875,7 +1019,6 @@ def validate(root: Path, config: Config, inventory=None):
     sessions = _sessions(config)
     industries = {row["IN_ID"] for row in _rows(root / "offline" / "initial" / "Industry.txt", sources["Industry"], 1)}
     tax_rates = {row["TX_ID"] for row in _rows(root / "offline" / "initial" / "TaxRate.txt", sources["TaxRate"], 1)}
-    securities, finwire_counts = _finwire([root / name for name in expected if Path(name).name.startswith("FINWIRE")], config, industries)
     brokers = set()
     counts = {}
     cash_sequence = 0
@@ -883,7 +1026,9 @@ def validate(root: Path, config: Config, inventory=None):
     previous_market = None
     previous_initial_trade = -1
     previous_history = None
-    with tempfile.TemporaryDirectory(prefix="validation-", dir=root) as temporary:
+    trade_schemas = {"initial_v1": 0, "daily_v1": 0, "daily_v2": 0, "channels": {"WEB": 0, "MOBILE": 0, "BROKER": 0}}
+    with tempfile.TemporaryDirectory(prefix="validation-", dir=root) as temporary, closing(FaultAudit(root, Path(temporary), config, _require)) as audit:
+        securities, finwire_counts = _finwire([root / name for name in expected if Path(name).name.startswith("FINWIRE")], config, industries, audit)
         stage = _Stage(Path(temporary), partitions, date_partitions=len(sessions))
         hidden_paths = sorted((root / "summary" / "hidden").glob("accounts-*.parquet"))
         _require(bool(hidden_paths), "Hidden account attributes are required to prove cash and margin constraints.")
@@ -897,7 +1042,7 @@ def validate(root: Path, config: Config, inventory=None):
                              "Invalid hidden account identity or margin limit.")
                     row["_partition"] = str(row["account_id"] % partitions)
                     stage.add("Hidden", row, hidden_schema)
-        action_counts = _xml(stage, root / "offline" / "initial" / "CustomerMgmt.xml", sources, config)
+        action_counts = _xml(stage, root / "offline" / "initial" / "CustomerMgmt.xml", sources, config, audit)
         for relative in sorted(expected, key=lambda name: (0 if name.startswith("offline/initial/") else 1 if name.startswith("offline/") else 2, name)):
             path = root / relative
             if path.name.startswith("FINWIRE"):
@@ -912,7 +1057,7 @@ def validate(root: Path, config: Config, inventory=None):
                 if day != "initial":
                     day = datetime.strptime(day, "%Y%m%d").date().isoformat()
                 name = "CashTransaction" if relative.startswith("stream/") else path.stem.split("_")[0]
-                source = sources[name]
+                source = sources[name] if initial else source_for_day(sources[name], date.fromisoformat(day), config)
                 rows = _stream(path, source) if relative.startswith("stream/") else _rows(path, source, 1 if initial else 2)
                 count = 0
                 seen = set() if name in {"HR", "Date", "Time", "StatusType", "TradeType", "Industry", "TaxRate"} else None
@@ -943,6 +1088,11 @@ def validate(root: Path, config: Config, inventory=None):
                             _require(str(lower) <= date_value <= str(config.cutover) if initial else date_value == day,
                                      f"{name} timestamp lies outside its delivery.")
                         if name == "Trade":
+                            version = "initial_v1" if initial else "daily_v2" if day >= config.trade_channel_start else "daily_v1"
+                            trade_schemas[version] += 1
+                            if version == "daily_v2":
+                                _require(row["T_CHANNEL"] in trade_schemas["channels"], "Invalid trade channel.")
+                                trade_schemas["channels"][row["T_CHANNEL"]] += 1
                             if initial:
                                 identifier = int(row["T_ID"])
                                 _require(identifier > previous_initial_trade, "Initial trades must have unique increasing IDs.")
@@ -977,6 +1127,9 @@ def validate(root: Path, config: Config, inventory=None):
                             _require(key in sessions and 0 < _cents(row["DM_LOW"]) <= _cents(row["DM_CLOSE"]) <= _cents(row["DM_HIGH"]), "Invalid market date or price bounds.")
                             _require(int(row["DM_VOL"]) >= 0, "Market volume cannot be negative.")
                             _security(securities, row["DM_S_SYMB"], key + " 23:59:59")
+                        if name in {"Customer", "Trade"}:
+                            fault_day = row["T_DTS"][:10] if name == "Trade" else day
+                            row = audit.restore(name, fault_day, row)
                         _stage_source(stage, source, row, day, key)
                 if name == "Time":
                     _require(count == 86400, "Time reference must contain 86400 seconds.")
@@ -1005,12 +1158,16 @@ def validate(root: Path, config: Config, inventory=None):
                      "Duplicate Prospect identity in one snapshot.")
             for index, value in enumerate(_account_replay(stage, partition, config, securities, sessions, brokers)):
                 totals[index] += value
+        audit.finish()
+        fault_count = audit.count
+        error_measurements = audit.report()
         peak_rows = stage.peak_rows
     return {"status": "passed", "files": len(expected), "rows": sum(counts.values()), "bytes": total_bytes,
             "customers": customers, "accounts": totals[0], "trades": totals[1], "completed_trades": totals[2],
             "cash_transactions": cash_sequence, "customer_actions": action_counts, "finwire": finwire_counts,
-            "partitions": partitions, "maximum_parse_buffer_rows": peak_rows,
+            "partitions": partitions, "maximum_parse_buffer_rows": peak_rows, "verified_source_errors": fault_count,
+            "source_recording": {"errors": error_measurements, "trade_schemas": trade_schemas},
             "checks": ["independent file cadence", "formats and LF endings", "saved hashes and counts" if saved is not None else "parsed counts",
                        "customer and account versions", "trade lifecycles and cutover snapshots", "cash and margin replay",
                        "source-visible order reservations", "settlements", "position holding history", "NYSE session and price bounds",
-                       "start-of-day dividend amounts", "watch lifecycles and inactivation"]}
+                       "start-of-day dividend amounts", "watch lifecycles and inactivation", "source error audit and correct-value replay", "dated trade channels"]}

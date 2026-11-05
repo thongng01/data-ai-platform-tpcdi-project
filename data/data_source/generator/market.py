@@ -12,23 +12,28 @@ from numpy.lib.format import open_memmap
 
 from .config import Config, calendar_for, read_yaml
 from .random_values import values
+from .recording import SourceRecorder
 
 
 def prior_year(day: date) -> date:
+    """Shift to the prior year, using its last February day when needed."""
     return day.replace(year=day.year - 1, day=min(day.day, calendar.monthrange(day.year - 1, day.month)[1]))
 
 
 def quarter_start(day: date) -> date:
+    """Return the first calendar date of the date's reporting quarter."""
     return date(day.year, (day.month - 1) // 3 * 3 + 1, 1)
 
 
 def shift_quarter(day: date, count: int) -> date:
+    """Move a quarter boundary by a signed number of quarters."""
     ordinal = day.year * 4 + (day.month - 1) // 3 + count
     year, quarter = divmod(ordinal, 4)
     return date(year, quarter * 3 + 1, 1)
 
 
 def report_release(quarter: date) -> date:
+    """Return the final date of the month after a reporting quarter."""
     following = shift_quarter(quarter, 1)
     return following.replace(day=calendar.monthrange(following.year, following.month)[1])
 
@@ -43,15 +48,18 @@ def finwire_postings(config: Config):
 
 
 def money(cents: int) -> str:
+    """Format integer cents for source fields without binary rounding."""
     cents = int(cents)
     return f"{'-' if cents < 0 else ''}{abs(cents) // 100}.{abs(cents) % 100:02d}"
 
 
 def _uniform(ids, config, purpose):
+    """Return stable array draws for a named market purpose."""
     return (values(ids, config.seed, purpose) >> np.uint64(11)).astype(np.float64) / 2**53
 
 
 def _fixed(layout, fields):
+    """Pad each checked FINWIRE field to its declared width and alignment."""
     result = []
     for name, (width, alignment) in layout.items():
         value = str(fields.get(name, ""))
@@ -62,7 +70,9 @@ def _fixed(layout, fields):
 
 
 class Market:
+    """Expose read-only shared price arrays and quarterly security postings."""
     def __init__(self, root: Path, config: Config):
+        """Open the saved calendar metadata and shared memory-mapped market arrays."""
         self.config = config
         self.directory = Path(root) / "_work" / "market"
         self.calendar_metadata = json.loads((self.directory / "calendar.json").read_text(encoding="utf-8"))
@@ -74,6 +84,7 @@ class Market:
         self._release_dates = np.load(self.directory / "release_dates.npy", mmap_mode="r", allow_pickle=False)
 
     def day(self, day: date) -> dict:
+        """Read one complete market-day block and reject dates outside the run."""
         index = (day - self.first).days
         if index < 0 or index >= len(self._arrays["trading"]):
             raise ValueError(f"Market date is outside this run: {day}")
@@ -82,6 +93,7 @@ class Market:
                 for name, array in self._arrays.items() if name != "annual_dividends"}
 
     def annual_dividends(self, day: date):
+        """Return the latest released annual dividend amounts at this date."""
         index = int(np.searchsorted(self._release_dates, day.toordinal(), side="right")) - 1
         if index < 0:
             raise ValueError("No security posting exists at this date.")
@@ -89,6 +101,7 @@ class Market:
 
     @classmethod
     def build(cls, config: Config, root: Path, generation):
+        """Build market prices, session flags, dividends, and released source records."""
         directory = Path(root) / "_work" / "market"
         directory.mkdir(parents=True, exist_ok=True)
         first = prior_year(config.start)
@@ -147,13 +160,20 @@ class Market:
                 if postings[release_index][0] >= first:
                     annual[release_index] = np.where(paying, np.maximum(4, np.floor(close * yields / 4 + .5).astype(np.int64) * 4), 0)
             if trading:
+                # Box-Muller converts two repeatable uniform draws into normal
+                # noise. The lower bound prevents taking the logarithm of zero.
                 first_draw = np.maximum(_uniform(ids, config, f"market/return-a/{day}"), 1e-12)
                 second_draw = _uniform(ids, config, f"market/return-b/{day}")
                 noise = np.sqrt(-2 * np.log(first_draw)) * np.cos(2 * np.pi * second_draw)
+                # Each security's volatility-scaled noise combines with a shared
+                # market move. A shock adds -0.06 or +0.06 to that shared log return.
                 common = (float(_uniform([day.toordinal()], config, "market/common")[0]) - .5) * .015
                 if shock:
                     common += -.06 if int(values([day.toordinal()], config.seed, "market/shock-sign")[0]) % 2 else .06
                 previous = close
+                # The exponential applies the combined log return and 0.00015
+                # daily drift. Adding 0.5 before flooring rounds to integer cents.
+                # Clipping keeps the close between 1 and 90,000,000 cents.
                 close = np.clip(np.floor(previous * np.exp(noise * config.market_volatility + common + .00015) + .5), 1, 90000000).astype(np.int64)
                 spread = np.maximum(1, np.floor(close * (.002 + _uniform(ids, config, f"market/spread/{day}") * .015)).astype(np.int64))
                 high = np.minimum(99999999, np.maximum(previous, close) + spread)
@@ -181,24 +201,22 @@ class Market:
         return market
 
     def _emit_finwire(self, generation, postings, base):
+        """Release correct company, security, and financial records through stage 3."""
         config = self.config
         layouts = read_yaml(Path(__file__).parent / "definitions" / "finwire.yaml")
         company_ids = np.arange(1, config.companies + 1, dtype=np.uint64)
         pe = 5 + _uniform(company_ids, config, "market/pe") * 35
         losses = _uniform(company_ids, config, "market/loss") < .03
         initial_posting = postings[0][0]
+        recorder = SourceRecorder(generation)
         for index, (posting, quarter) in enumerate(postings):
             stamp = posting.strftime("%Y%m%d-000000")
             filename = f"FINWIRE{posting.year}Q{(posting.month - 1) // 3 + 1}"
             relative = f"offline/initial/{filename}" if posting <= config.cutover else f"offline/daily/{posting:%Y%m%d}/{filename}"
-            rows = []
-
             def emit(kind, identifier, fields):
-                rows.append((f"{stamp}/{('CMP', 'SEC', 'FIN').index(kind)}/{identifier:015d}",
-                             _fixed(layouts[kind], {**fields, "PTS": stamp, "RecType": kind})))
-                if len(rows) >= config.export_rows:
-                    generation.text(relative, rows.copy())
-                    rows.clear()
+                """Pass each correct FINWIRE record through stage 3 before padding."""
+                key = f"{stamp}/{('CMP', 'SEC', 'FIN').index(kind)}/{identifier:015d}"
+                recorder.finwire(kind, posting, {**fields, "PTS": stamp, "RecType": kind}, key, relative, layouts[kind])
 
             for identifier in range(1, config.companies + 1):
                 emit("CMP", identifier, {"CompanyName": f"Company {identifier}", "CIK": identifier,
@@ -226,5 +244,3 @@ class Market:
                         "DilutedEPS": money(quarter_eps), "Margin": f"{earnings / revenue:.2f}",
                         "Inventory": money(revenue // 10), "Assets": money(revenue * 4), "Liabilities": money(revenue * 2),
                         "ShOut": "1000000", "DilutedShOut": "1000000", "CoNameOrCIK": identifier})
-            if rows:
-                generation.text(relative, rows)

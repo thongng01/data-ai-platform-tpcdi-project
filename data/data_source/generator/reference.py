@@ -2,14 +2,34 @@
 
 from datetime import timedelta
 
+import numpy as np
+
 from .config import calendar_for
 from .market import finwire_postings, prior_year
+from .personal_data import personal_columns
 
 
-def generate_reference(generation):
+def employee_columns(config) -> dict[str, np.ndarray]:
+    """Build the fixed HR roster with independent employee names and branch contacts."""
+    identifiers = np.arange(config.brokers * 4, dtype=np.int64)
+    people = personal_columns(identifiers, config.seed, "employee")
+    return {
+        "EmployeeID": identifiers, "ManagerID": np.zeros(len(identifiers), dtype=np.int64),
+        "EmployeeFirstName": people["first_name"], "EmployeeLastName": people["last_name"],
+        "EmployeeMI": people["middle_initial"],
+        "EmployeeJobCode": np.where((identifiers >= 1) & (identifiers <= config.brokers), 314, 100),
+        "EmployeeBranch": people["city"],
+        "EmployeeOffice": np.strings.add("Office", (identifiers % 8 + 1).astype(str)),
+        "EmployeePhone": people["phone"],
+    }
+
+
+def generate_reference(generation) -> None:
+    """Emit initial-only lookup data, a fixed HR roster, and calendar dimensions."""
     config = generation.config
 
     def emit(name, records):
+        """Convert ordered source fields into bounded export batches with stable keys."""
         columns = generation.sources[name].columns
         rows = []
         for values in records:
@@ -29,8 +49,10 @@ def generate_reference(generation):
                        ("TLB", "Limit Buy", 0, 0), ("TLS", "Limit Sell", 1, 0), ("TSL", "Stop Loss", 1, 0)])
     emit("Industry", [("AA", "Misc. Capital Goods", "FN")])
     emit("TaxRate", [("US1", "Local income tax", "0.10000"), ("US2", "National income tax", "0.20000")])
-    emit("HR", ((identifier, 0, "Alex", f"Employee{identifier}", "", 314 if 1 <= identifier <= config.brokers else 100,
-                 "New York", "Office1", "2125550100") for identifier in range(config.brokers * 4)))
+    employees = employee_columns(config)
+    # Convert columns to ordinary Python values only where the source writer
+    # needs ordered rows. Identity keys then retain their numeric padding.
+    emit("HR", zip(*(employees[name].tolist() for name in generation.sources["HR"].columns), strict=True))
     emit("Time", ((second, f"{second // 3600:02d}:{second // 60 % 60:02d}:{second % 60:02d}", second // 3600,
                    f"{second // 3600:02d}", second // 60 % 60, f"{second // 3600:02d}:{second // 60 % 60:02d}",
                    second % 60, f"{second // 3600:02d}:{second // 60 % 60:02d}:{second % 60:02d}",
@@ -40,6 +62,7 @@ def generate_reference(generation):
     sessions = {stamp.date() for stamp in exchange.sessions}
 
     def dates():
+        """Yield calendar attributes and the exchange holiday flag for each date."""
         current = first
         while current <= config.end:
             quarter = (current.month - 1) // 3 + 1

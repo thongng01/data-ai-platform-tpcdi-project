@@ -36,7 +36,7 @@ The generator produces connected records for all 18 TPC-DI business and referenc
 
 ### Generation Model
 
-Four generation stages separate business behavior from data errors and delivery problems. The generator runs stages 1 to 3. The publisher runs stage 4, so a new publisher profile does not require new business data. Both belong to the simulated source department under `data/data_source/`, in `generator/` and `publisher/`.
+Four generation stages separate business behavior from data errors and delivery problems. The generator runs stages 1 to 3. The publisher runs stage 4, so a new publisher profile does not require new business data. Both belong to the simulated source department under `data/data_source/`, in `generator/` and `publisher/`. The [generator guide](../data/data_source/generator/README.md) explains configuration and execution; the [publisher guide](../data/data_source/publisher/README.md) explains clean delivery of saved files and messages.
 
 Offline files carry the initial load and daily deliveries. Kafka carries cash transactions for the daily delivery period. The generator's three stages form one day-by-day model, not three separate services or full-dataset rewrites.
 
@@ -67,14 +67,14 @@ The generator simulates one retail brokerage day by day. Each account receives a
 | Property | Definition | Basis |
 | --- | --- | --- |
 | Business | A mid-size US retail brokerage serving individual investors | Simulation assumption |
-| Cutover size | About 330,000 customers and 550,000 accounts at factor 100 | Design assumption, subject to volume calibration |
-| Growth | About 8% net account growth per year, before and after cutover; about 374,000 accounts at the start and 943,000 at the end of the reference calendar | Assumed growth; counts derived from the cutover size |
+| Cutover size | An expected 360,100 customers and about 601,367 accounts at factor 100 | Default anchor of 3,601 customers per unit; 1.67 accounts per customer on average |
+| Growth | About 8% net account growth per year, before and after cutover; about 409,000 accounts at the start and 1.03 million at the end of the reference calendar | Assumed growth; counts derived from the expected cutover size |
 | Initial load | 2014-01-01 to 2018-12-31: 1,826 calendar days and 1,258 trading days, delivered together | Chosen calendar; NYSE holiday calendar |
 | Daily delivery period | 2019-01-01 to 2025-12-31: 2,557 daily deliveries and 1,760 trading days | Chosen calendar; NYSE holiday calendar |
 | Run parameters | `initial_start`, `initial_end`, `daily_start`, `daily_end`: four inclusive UTC dates, with `daily_start` exactly one day after `initial_end` | Run contract; invalid or nonadjacent periods are rejected |
 | Clock | UTC without daylight saving time; NYSE holidays apply to dates; trading uses local NYSE session hours on the UTC clock | Deliberate timing simplification |
-| Reference volume | About 29 GB in the initial load and 71 GB in daily offline files, about 100 GB overall; daily offline files rise from about 8 GB in 2019 to 13 GB in 2025 | Firm-model estimate, not measured output |
-| Stream volume | About 18 GB of streamed cash transactions, separate from offline volume | Estimate, not part of the 100 GB offline requirement |
+| Reference volume | About 28.5 GB in the initial load and 72.8 GB in daily offline files at factor 100, or 101.3 GB overall; daily offline files rise from about 8 GB in 2019 to 13 GB in 2025 | Linear estimate from measured factor 1 bytes, not measured factor 100 output |
+| Stream volume | About 34 GB of streamed cash transactions at factor 100, separate from offline volume | Linear estimate, not part of the 100 GB offline requirement |
 
 The trading-day counts include the unscheduled NYSE closures on 2018-12-05 and 2025-01-09. Every calendar date has a daily delivery, including weekends and holidays. A zero-record file means no activity; a missing expected file means an incomplete delivery. The initial `Prospect.csv` snapshot represents `initial_end`.
 
@@ -82,19 +82,23 @@ The trading-day counts include the unscheduled NYSE closures on 2018-12-05 and 2
 
 `scale_factor` changes the firm's customer, account, prospect, and broker counts and their activity. It does not change the market, reference data, calendar, profile shares, per-account rates, or error and delivery problem rates. The four run dates set the calendar separately. A shorter calendar produces less activity from the same firm.
 
-One unit targets about 1 GB of offline files over the reference calendar, 2014-01-01 to 2025-12-31. Fixed market and reference data add about 0.4 GB at every factor. This factor is not the TPC-DI scale factor: the SF3 sample is about factor 0.3 on this project's scale.
+One unit targets 1,000,000,000 variable offline bytes over the reference calendar, 2014-01-01 to 2025-12-31. Fixed market and reference data add about 0.43 GB at every factor. This factor is not the TPC-DI scale factor. The default `customers_per_unit=3601` sets the expected customer anchor; the account shares give 1.67 accounts per customer on average. Actual populations vary with joining and exit draws.
 
-| Factor | Customers at cutover | Accounts | Initial load | One trading-day delivery | 2019 daily offline files | Full-calendar offline files | Streamed cash transactions, 2019 to 2025 | Intended use |
+The byte columns summarize rounded factor 1 measurements and linear estimates at every higher factor. They multiply the calibrated run's measured variable bytes by the factor, then add the applicable fixed bytes. The measured full-calendar slope is 1,008,534,820 variable offline bytes per unit, not an assumed one GB. The trading-day column averages all 2019 trading dates, including monthly prospect snapshots and quarterly FINWIRE releases. GB and MB use decimal units.
+
+| Factor | Expected cutover customers | Expected accounts | Initial load | Mean 2019 trading-day files | 2019 daily offline files | Full-calendar offline files | Streamed cash transactions, 2019 to 2025 | Intended use |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | 3,300 | 5,500 | 0.3 GB | 0.2 MB | 0.08 GB | 1 GB | 0.2 GB | First implementation runs and tests |
-| 5 | 16,500 | 27,500 | 1.5 GB | 0.9 MB | 0.4 GB | 5 GB | 0.9 GB | Daily development |
-| 10 | 33,000 | 55,000 | 2.9 GB | 1.9 MB | 0.8 GB | 10 GB | 1.8 GB | Integration and first stream replays |
-| 15 | 49,500 | 82,500 | 4.4 GB | 2.8 MB | 1.2 GB | 15 GB | 2.6 GB | Larger integration runs |
-| 20 | 66,000 | 110,000 | 5.8 GB | 3.7 MB | 1.6 GB | 20 GB | 3.5 GB | Tuning with an initial load larger than the current 5 GB Spark worker limit |
-| 50 | 165,000 | 275,000 | 14.5 GB | 9.3 MB | 4 GB | 50 GB | 8.8 GB | Experiment runs and demonstrations |
-| 100 | 330,000 | 550,000 | 29 GB | 19 MB | 8 GB | 100 GB | 17.6 GB | Designed firm and offline volume evidence |
+| 1 | 3,601 | 6,014 | 0.47 GB | 0.41 MB | 0.11 GB | 1.44 GB | 0.34 GB | First implementation runs and tests |
+| 5 | 18,005 | 30,068 | 1.61 GB | 1.52 MB | 0.43 GB | 5.47 GB | 1.70 GB | Daily development |
+| 10 | 36,010 | 60,137 | 3.02 GB | 2.91 MB | 0.83 GB | 10.52 GB | 3.39 GB | Integration and first stream replays |
+| 15 | 54,015 | 90,205 | 4.44 GB | 4.30 MB | 1.24 GB | 15.56 GB | 5.09 GB | Larger integration runs |
+| 20 | 72,020 | 120,273 | 5.86 GB | 5.68 MB | 1.64 GB | 20.60 GB | 6.78 GB | Tuning with an initial load larger than a 5 GB Spark worker budget |
+| 50 | 180,050 | 300,684 | 14.36 GB | 14.00 MB | 4.04 GB | 50.86 GB | 16.95 GB | Experiment runs and demonstrations |
+| 100 | 360,100 | 601,367 | 28.53 GB | 27.87 MB | 8.04 GB | 101.28 GB | 33.91 GB | Designed firm and offline volume evidence |
 
-These are estimates from the firm model, excluding the fixed 0.4 GB. They do not establish runtime. First measured runs at factors 1 and 5 calibrate the customers per unit, initially about 3,300. The full-calendar large run must measure at least 100 GB of offline source files for rubric row `r5`. If factor 100 falls short, a higher factor, such as 105, supplies the required volume. Stream bytes are counted separately.
+These estimates do not establish runtime. Calibration uses a full-reference-calendar factor 1 run and subtracts measured fixed-family bytes from its offline total. Fixed families are `DailyMarket`, FINWIRE, and the six reference files; HR scales with the firm. The remainder estimates variable bytes per unit. The new anchor is `old_customers_per_unit * 1,000,000,000 / variable_offline_bytes`, rounded with decimal half-up rounding. A second factor 1 run checks that anchor with the market, behavior settings, and seed unchanged.
+
+The factor 1 slope is provisional: projecting it to factor 5 is not a measurement at factor 5. Population sampling and staffing rounding can change scaling. The full-calendar large run must measure at least 100 GB of offline source files for rubric row `r5`; a factor 100 projection does not satisfy that requirement. If factor 100 falls short, a higher factor supplies the required volume. Stream bytes are counted separately.
 
 Generation size and processed workload are separate. The large dataset is generated once. Each environment processes the largest factor it handles well, and each experiment processes only the dates and volume needed to show its effect. A typical experiment uses the initial load and some daily deliveries. Larger firms use the same partitioned processing principles. Unmeasured capacity projections are not established limits. Local service groups and resource limits are in [Infrastructure](IaC.md#2-development-environment).
 
@@ -102,14 +106,16 @@ Generation size and processed workload are separate. The large dataset is genera
 
 | Entity | Source | Count at cutover, factor 100 | Relationships and cadence | Basis |
 | --- | --- | --- | --- | --- |
-| Customer | `CustomerMgmt.xml`, `Customer.txt` | About 330,000 | Owns 1 account (50%), 2 (33%), or 3 (17%) | Assumed population and account mix |
-| Account | `CustomerMgmt.xml`, `Account.txt` | About 550,000 | One customer and one broker | Derived population; TPC-DI relationships |
-| Broker | `HR.csv`, job code 314 | About 550 among 2,200 employees | About 1,000 accounts per broker; initial load only | Staffing assumption; TPC-DI broker code |
-| Prospect | `Prospect.csv` | About 1.1 million, growing with the firm | Full snapshot on the first day of each month; about 30% of new customers appear before joining | Assumed population, overlap, and monthly cadence |
+| Customer | `CustomerMgmt.xml`, `Customer.txt` | An expected 360,100 | Owns 1 account (50%), 2 (33%), or 3 (17%) | Default population anchor and assumed account mix |
+| Account | `CustomerMgmt.xml`, `Account.txt` | About 601,367 | One customer and one broker | Expected population; TPC-DI relationships |
+| Broker | `HR.csv`, job code 314 | 602 among 2,408 employees | About 1,000 accounts per broker; initial load only | Staffing from the expected anchor, rounded up; TPC-DI broker code |
+| Prospect | `Prospect.csv` | About 1.2 million, growing with the firm | Full snapshot on the first day of each month; about 30% of new customers appear before joining | Expected population, overlap, and monthly cadence |
 | Company | FINWIRE `CMP`, `FIN` | About 1,250 at every factor | One or more securities; quarterly releases | Assumed market size; TPC-DI relationships |
 | Security | FINWIRE `SEC` | About 2,000 at every factor | One issuing company | Assumed market size; TPC-DI relationship |
 
 `HR.csv` and the six reference files (`Date.txt`, `Time.txt`, `Industry.txt`, `StatusType.txt`, `TaxRate.txt`, and `TradeType.txt`) load once and stay static. Market and reference settings remain independent of firm size.
+
+Customers, prospects, and HR employees use small public-domain name lists from the Social Security Administration (SSA) and the Census Bureau. Stable identity and field-purpose keys select names and coherent city, state, and postal code combinations. Matching prospects share customer names and addresses. Synthetic streets, reserved fictional telephone numbers, and example-domain emails keep personal data reproducible without copying household records. The [word-list provenance](../data/data_source/generator/definitions/README.md) records sources and terms.
 
 #### Attributes That Drive Behavior
 
@@ -189,14 +195,29 @@ These are factor 100 expectations, not measured results. Counts and activity vol
 | --- | --- | --- |
 | Account skew | Top 1% make about 20 to 25% of trades; top 10% make about 60% | Profile-model expectation; measure account-key counts |
 | Security skew | Top 1% receive about 25 to 35% of trades | Assumed popularity; measure security-key counts |
-| Trades | About 77,000 per trading day; about 230,000 on a shock day | Derived from account count and profile rates |
-| Daily offline files | About 19 MB per trading day, 2 MB per weekend day or holiday, plus a 228 MB monthly prospect snapshot | Volume estimate; measure emitted bytes by source and date |
-| Cash transaction stream | About 82,000 cash transactions and 8 MB per trading day; about 85% settlements | Firm-model estimate; measure transaction types and bytes separately from files |
-| Bytes per trade | About 280 source bytes including trade history, cash transactions, and holdings; cash transactions are about 30% | TPC-DI SF3 measurement, used for volume estimates |
+| Trades | About 84,000 per trading day; about 250,000 on a shock day before spending and holding constraints | Expected account count and profile-rate estimate; measure executed activity |
+| Daily offline files | About 28 MB per 2019 trading day on average, including monthly and quarterly sources | Linear estimate from factor 1; measure emitted bytes by source and date |
+| Cash transaction stream | Every completed trade settles; deposits, withdrawals, and dividends add other messages | Measure transaction types and bytes separately from files; no fixed settlement share |
+| Reference bytes per trade | About 280 source bytes including trade history, cash transactions, and holdings; cash transactions are about 30% | Historical TPC-DI SF3 measurement; the workload table uses measured generator bytes |
+
+#### Measured Full-Calendar Runs
+
+These factor 1 measurements use the full reference calendar, seed `20261029`, two workers, two Polars threads per worker, 1,250 companies, and 2,000 securities. The saved files pass full validation. The customer anchor is a planning input; the cutover counts below are realized observations.
+
+| Customers per unit | Cutover customers | Cutover accounts | Offline bytes | Stream bytes | Generation seconds | Validation seconds |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3,300 | 3,278 | 5,488 | 1,346,693,500 | 307,655,539 | 954.77 | 753.54 |
+| 3,601 | 3,597 | 6,028 | 1,438,704,592 | 339,074,412 | 896.26 | 829.15 |
+
+Both runs contain 430,169,772 fixed offline bytes. The first contains 916,523,728 variable offline bytes; the calibrated run contains 1,008,534,820, or 0.853482% above the one-GB variable target. At the default anchor, combined initial and streamed cash transactions are 69.189662% settlements, 16.302305% deposits, 8.572914% dividends, and 5.935119% withdrawals. Four fixed security-selection slots per account allow repeated buys in the same small universe; the dividend-paying share remains 40%.
+
+The calibrated annual account-closure rate is 2.925087%, customer inactivation is 2.027576%, and confirmed look-alikes are 2.021389%. Candidates receive no closure immunity. Of 2,369 actual closed accounts, 1,891 have matched final warning plans (79.82271%). These plans schedule 7 to 56 warning days, with a median of 30; scheduled steps do not prove that sales occurred when an account held no assets. Outflow candidates, unlike warning-plan counts, require an executed sale and a positive withdrawal.
+
+On 512 sampled accounts with chronological splits and 30-day label gaps, the calibrated signal model's test average precision is 0.228498, compared with 0.005527 for the outflow rule. The rule's precision is 0.9052%. This measures the synthetic signal check, not downstream model quality. The [generator guide](../data/data_source/generator/README.md#full-calendar-measurements) gives resource measurements.
 
 ### Generation Stage 2: Attrition Signal
 
-Business behavior sets how many accounts close. The attrition signal stage sets what happens before closure, so observed behavior can support the [30-day account attrition task](ML-Platform.md). Hidden state never enters platform features.
+The attrition signal stage selects account closures and customer inactivations from profile, tenure, tier, and past investment results. It adds the behavior before closure so observed events can support the [30-day account attrition task](ML-Platform.md). Risk selection uses completed earlier days, not future outcomes. Hidden state never enters platform features.
 
 | Rule | Value | Basis |
 | --- | --- | --- |
@@ -205,9 +226,11 @@ Business behavior sets how many accounts close. The attrition signal stage sets 
 | Leaving period | 1 to 8 weeks: deposits and buys stop; holdings sell in 1 to 4 steps; each sale is followed by a withdrawal within a day; cash drains toward zero; a configured share of the customer's watches cancel | Signal assumption |
 | Customer inactivation | All accounts of the customer leave together, and all of the customer's watches cancel | Customer inactivation closes all of the customer's accounts |
 | Closure order | Before an account closes, its open orders cancel, its holdings sell, any borrowing is repaid by a deposit, and the remaining cash is withdrawn. A closure without warning does this within its last days | No holding or debt disappears without a source record |
-| Look-alikes | About 2% of accounts per year sell 20 to 50% of holdings and make one large withdrawal, while deposits and trading continue | Signal assumption to prevent an outflow rule from solving the task alone |
-| Recording | Hidden leaving periods and look-alike flags appear only in the generator summary | Leakage prevention |
+| Look-alikes | Intended confirmed rate of 2% per account-year: an executed sale of 20 to 50% of holdings and a positive withdrawal, with the account still open through 30 observed days; ordinary closure hazards continue | Signal assumption to prevent an outflow rule from solving the task alone |
+| Recording | Hidden leaving periods and outflow outcome classifications appear only in local generator reports | Leakage prevention |
 | Signal check | On a small sample, a quick model must beat the rule “no deposit and net outflow over 30 days”; that rule's precision must stay below about 30% | Acceptance check for the synthetic signal, before pipeline work |
+
+A deterministic expected-trait curve normalizes risk across customer groups. The plan anchors expected firm size at cutover; measurements report realized customer and account counts and exit rates. The configured annual rates do not guarantee exact rates in each sample.
 
 ### Generation Stage 3: Source Recording
 
@@ -222,13 +245,17 @@ The source recording stage writes TPC-DI formats and data errors. It changes rec
 | Fee or commission above trade value | About 0.1% of completed trades for each error; settlement still uses the correct amount | TPC-DI SF3 rates; consistent settlement rule |
 | Schema change | From a configurable date, 2019-07-01 by default, `Trade.txt` adds `T_CHANNEL` at the end: `WEB`, `MOBILE`, or `BROKER`. Traders favor web and mobile; retirees use brokers more often. The initial load keeps the original format. | Project addition; TPC-DI itself has fixed formats |
 
-The trade format changes from 14 to 15 business fields. Daily CDC fields are additional fields in both versions. The simulation has no text encoding problem and no change to `CT_NAME`. Section 3 defines error and schema handling.
+The five data errors use independent stable draws and can occur together in one record. Customer errors apply to initial CMS XML and daily customer rows; rating errors apply to FINWIRE company records. Fee errors apply only to completed trades. The recorder keeps correct business values separate from recorded fields, so settlements and hidden state remain correct.
+
+The local `summary/data_errors.jsonl` audit stores each source identity, field, correct value, and recorded value. It stays outside source delivery and ingestion. Generator validation recomputes error selection, verifies exact audit evidence, and restores only verified values for business replay. Missing, duplicate, unused, or mismatched evidence fails validation; enabling an error rate does not authorize arbitrary corruption.
+
+The trade format changes from 14 to 15 business fields according to the daily delivery date, even when a trade began earlier. The initial load always retains 14 business fields. Daily CDC fields are additional fields in both versions. The simulation has no text encoding problem and no change to `CT_NAME`. Section 3 defines platform error and schema handling.
 
 ### Generation Stage 4: Delivery
 
 The publisher reads one generated dataset and applies a named publisher profile, such as `clean` or `realistic`. It publishes complete files to `upstream` and cash transactions for the daily delivery period to Kafka. Generated files contain no delivery problems. The publisher report compares delivered data with those files and records actual delays, repeats, and corrections.
 
-The clean profile comes first in implementation. The realistic profile adds the configurable defaults below after a clean end-to-end path works.
+The clean profile sends the saved bytes without adding delivery problems. The realistic profile applies the configurable defaults below.
 
 | Problem | Realistic default | Basis |
 | --- | --- | --- |
@@ -257,7 +284,7 @@ Evidence comes from measured runs, not the configured rates alone. The publisher
 
 ### Generator Engineering Rules
 
-- **Bounded memory**: The day-by-day Polars simulation carries account state and processes bounded groups. Account, holding, and unfinished-trade state must have an explicit memory budget.
+- **Bounded memory**: NumPy arrays hold mutable account state and select daily activity over bounded customer groups. Polars builds export batches, hidden-state files, and validation queries. Memory budgets cover account, holding, unfinished-trade, and recent-return state. Ordered execution preserves spending and settlement rules.
 - **Repeatability**: IDs and random draws use stable entity keys and named seeds, not chunk size or worker count. The same semantic settings, seeds, and generator version produce the same source bytes.
 - **Ordered exports**: Sort records in bounded runs and merge them without collecting the entire dataset into one frame. Preserve event and CDC order across groups.
 - **Separate reports**: The local generator summary records settings, per-file bytes and rows, hidden state, data errors, and measured characteristics. Ingestion never reads it. The publisher writes a separate delivery report.

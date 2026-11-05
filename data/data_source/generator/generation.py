@@ -1,4 +1,4 @@
-"""Source routing and bounded recording for generation stage 1."""
+"""Coordinate source routing and bounded export across generation stages 1 to 3."""
 
 import calendar
 import json
@@ -6,10 +6,9 @@ import re
 from datetime import date, timedelta
 from pathlib import Path
 
-import polars as pl
-
 from .config import Config
-from .formats import load_sources, record_fields
+from .formats import load_sources, source_for_day
+from .recording import AUDIT_PATH
 from .sorting import SortedOutput
 
 
@@ -17,18 +16,11 @@ INITIAL_SOURCES = ("Trade", "TradeHistory", "CashTransaction", "HoldingHistory",
                    "DailyMarket", "HR", "Prospect", "StatusType", "TradeType", "Industry", "TaxRate", "Date", "Time")
 DAILY_SOURCES = ("Customer", "Account", "Trade", "HoldingHistory", "WatchHistory", "DailyMarket")
 CASH_KIND_RANK = {"Deposit": 0, "Trade settlement": 1, "Dividend": 2, "Withdrawal": 3}
-FORMAT_VERSION = "brokerage-m1-1"
-
-
-def padded(expression):
-    return expression.cast(pl.String).str.pad_start(15, "0")
-
-
-def order_key(*expressions):
-    return pl.concat_str(expressions, separator="/").alias("_key")
+FORMAT_VERSION = "brokerage-m3-1"
 
 
 def business_date(config, day):
+    """Normalize a source date without changing the configured UTC calendar."""
     if type(day) is int:
         return config.start + timedelta(days=day)
     if isinstance(day, str):
@@ -39,6 +31,7 @@ def business_date(config, day):
 
 
 def source_path(config, name, day):
+    """Choose the initial, daily, or cash-stream path from the business date."""
     day = business_date(config, day)
     if name == "CashTransaction" and day > config.cutover:
         return f"stream/cash_transactions/{day:%Y%m%d}.jsonl"
@@ -57,6 +50,7 @@ def source_path(config, name, day):
 
 
 def finwire_release_dates(config):
+    """Yield quarterly release dates, including the required support history."""
     first_quarter = config.start.year * 4 + (config.start.month - 1) // 3 - 5
     quarter = first_quarter
     while True:
@@ -93,6 +87,7 @@ def expected_file_list(config):
 
 
 def cash_kind(name):
+    """Parse only the accepted cash transaction name forms."""
     if name in ("Deposit", "Withdrawal"):
         return name
     if re.fullmatch(r"Trade settlement [1-9][0-9]{0,14}", name):
@@ -103,6 +98,7 @@ def cash_kind(name):
 
 
 def cents_text(cents):
+    """Format an integer-cent amount without floating-point rounding."""
     if type(cents) is not int:
         raise ValueError("Cash amounts must use integer cents.")
     sign = "-" if cents < 0 else ""
@@ -110,7 +106,9 @@ def cents_text(cents):
 
 
 class Generation:
+    """Route source records and merge bounded sorted runs into delivery files."""
     def __init__(self, config: Config, root: Path):
+        """Open the bounded export catalog for one coordinator or account group."""
         self.config = config
         self.root = Path(root)
         self.sources = load_sources()
@@ -118,25 +116,33 @@ class Generation:
         self._cash_sequence = 0
 
     def path(self, source, day):
+        """Resolve a source name and business day to its delivery path."""
         return source_path(self.config, source, day)
 
     def emit(self, name: str, day, rows):
+        """Queue business rows with the exact contract for this delivery date."""
         if name == "CashTransaction":
             raise ValueError("Use Generation.cash so CT_ID is assigned during the global merge.")
         day = business_date(self.config, day)
-        source = self.sources[name]
-        if isinstance(rows, pl.DataFrame):
-            rows = rows.iter_rows(named=True)
-        recorded = (record_fields(source, day, row) for row in rows)
-        self.output.add(self.path(name, day), recorded, source, source.cdc and day > self.config.cutover)
+        source = source_for_day(self.sources[name], day, self.config)
+        self.output.add(self.path(name, day), rows, source, source.cdc and day > self.config.cutover)
 
     def text(self, relative: str, rows):
+        """Queue encoded XML or fixed-width rows inside the source output roots."""
         relative = str(relative)
         if not relative.startswith(("offline/", "stream/")) or ".." in Path(relative).parts:
             raise ValueError("Text output paths must stay inside offline or stream.")
         self.output.add(relative, ({"_key": key, "_payload": payload} for key, payload in rows))
 
+    def record_fault(self, entry):
+        """Spool one fault with a stable identity, using the bounded export buffer."""
+        payload = json.dumps(entry, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        key = json.dumps([entry["source"], entry["day"], entry["identity"], entry["field"]],
+                         sort_keys=True, separators=(",", ":"))
+        self.output.add(AUDIT_PATH, [{"_key": key, "_payload": payload}])
+
     def cash(self, day, timestamp_str, account, ordinal, amount_cents, name):
+        """Queue a cash event before the global merge assigns its CT_ID."""
         day = business_date(self.config, day)
         if not self.config.start <= day <= self.config.end or timestamp_str[:10] != day.isoformat():
             raise ValueError("A cash timestamp must match a date within the run.")
@@ -146,21 +152,25 @@ class Generation:
         kind = cash_kind(name)
         amount = cents_text(amount_cents)
         values = ["1", str(account), timestamp_str, amount, name]
-        self.sources["CashTransaction"].check(values)
         key = f"{timestamp_str}/{account:011d}/{ordinal:015d}/{CASH_KIND_RANK[kind]}"
         self.output.add(self.path("CashTransaction", day), [{"_key": key, "_payload": "|".join(values[1:])}])
 
     def flush(self):
+        """Persist the current record buffer without writing final delivery files."""
         self.output.flush()
 
     def close(self):
+        """Persist group runs and close their catalog so the coordinator can adopt them."""
         self.output.close()
 
     def adopt(self, group_root):
+        """Merge a completed group catalog into the coordinator without loading its records."""
         self.output.adopt(group_root)
 
     def _cash_record(self, stream):
+        """Build a final writer that assigns cash IDs across the initial and daily periods."""
         def transform(key, payload):
+            """Assign the next global cash identity and encode its file or stream form."""
             self._cash_sequence += 1
             account, timestamp, amount, name = payload.split("|", 3)
             self.sources["CashTransaction"].check([str(self._cash_sequence), account, timestamp, amount, name])
@@ -174,6 +184,7 @@ class Generation:
 
     @staticmethod
     def _check_finwire(payload):
+        """Check the fixed-width record type and timestamp at the final output boundary."""
         lengths = {"CMP": (543,), "SEC": (170, 220), "FIN": (196, 246)}
         if payload[15:18] not in lengths or len(payload) not in lengths[payload[15:18]]:
             raise ValueError("Invalid FINWIRE record type or width.")
@@ -181,12 +192,14 @@ class Generation:
             raise ValueError("Invalid FINWIRE timestamp.")
 
     def finish(self):
+        """Write expected deliveries, the separate fault audit, and the source inventory."""
         self.flush()
         expected = expected_file_list(self.config)
         expected_set = set(expected)
         for (relative,) in self.output.catalog.execute("SELECT DISTINCT relative FROM runs"):
-            if relative not in expected_set:
+            if relative not in expected_set and relative != AUDIT_PATH:
                 raise ValueError(f"Unexpected source output: {relative}")
+        self.recording_summary = self.output.write(AUDIT_PATH)
         cash_initial = "offline/initial/CashTransaction.txt"
         cash_paths = [cash_initial] + [p for p in expected if p.startswith("stream/")]
         inventory = []
@@ -200,6 +213,9 @@ class Generation:
             xml = filename == "CustomerMgmt.xml"
             name = Path(filename).stem.split("_", 1)[0]
             source = self.sources.get(name)
+            if source and relative.startswith("offline/daily/"):
+                day = date.fromisoformat(f"{Path(relative).parent.name[:4]}-{Path(relative).parent.name[4:6]}-{Path(relative).parent.name[6:]}")
+                source = source_for_day(source, day, self.config)
             check = self._check_finwire if filename.startswith("FINWIRE") else source.check_payload if source else None
             cdc = bool(source and source.cdc and relative.startswith("offline/daily/"))
             inventory.append(self.output.write(relative, cdc=cdc, xml=xml, check=check))

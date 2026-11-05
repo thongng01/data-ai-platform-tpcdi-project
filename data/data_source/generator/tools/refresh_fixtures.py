@@ -53,12 +53,12 @@ DELIMITERS = {
 
 
 def source_root(explicit: str | None) -> Path:
-    if explicit:
-        return Path(explicit).resolve()
-    if DEFAULT_REFERENCE.exists():
-        return DEFAULT_REFERENCE
+    """Resolve and require an explicit or default reference checkout directory."""
+    root = Path(explicit).resolve() if explicit else DEFAULT_REFERENCE
+    if root.is_dir():
+        return root
     raise SystemExit(
-        f"Upstream TPC-DI reference not found at {DEFAULT_REFERENCE}.\n"
+        f"Upstream TPC-DI reference not found at {root}.\n"
         "Restore it with:\n"
         "    git clone https://github.com/AlaaAlmutawa/TPC-DI.git local/tpcdi\n"
         "or pass the path explicitly:\n"
@@ -66,34 +66,59 @@ def source_root(explicit: str | None) -> Path:
     )
 
 
+def check_required_sources(data_root: Path) -> None:
+    """Require every source file before the refresh can replace any fixture byte."""
+    missing = [relative for relative in SLICES if not (data_root / relative).is_file()]
+    if missing:
+        details = "\n".join(f"    {relative}" for relative in missing)
+        raise SystemExit(f"Required upstream source files are missing or not regular files:\n{details}")
+
+
 def slice_lines(path: Path, limit: int) -> bytes:
-    """First ``limit`` CRLF-terminated lines, byte-for-byte."""
-    raw = path.read_bytes()
+    """Read only the requested source-line prefix, retaining nonempty CRLF records."""
     out = bytearray()
-    for line in raw.split(b"\r\n"):
-        if not line:
-            continue
-        out += line + b"\r\n"
-        if len(out.split(b"\r\n")) - 1 >= limit:
-            break
+    # Upstream source records use CRLF. The physical line limit also applies to
+    # blank input, so an unusable prefix cannot trigger a scan of the whole file.
+    with path.open("rb") as stream:
+        for _, raw_line in zip(range(limit), stream):
+            line = raw_line.removesuffix(b"\r\n")
+            if line:
+                out += line + b"\r\n"
     return bytes(out)
 
 
+def read_samples(data_root: Path) -> dict[str, bytes]:
+    """Read and validate all required sample payloads before any output can change."""
+    check_required_sources(data_root)
+    samples = {}
+    invalid = []
+    for relative, limit in SLICES.items():
+        payload = slice_lines(data_root / relative, limit)
+        records = payload.split(b"\r\n")[:-1]
+        if not records or any(not record.strip() for record in records):
+            invalid.append(relative)
+        samples[relative] = payload
+    if invalid:
+        details = "\n".join(f"    {relative}" for relative in invalid)
+        raise SystemExit(f"Required upstream samples contain no records or blank records:\n{details}")
+    return samples
+
+
 def main(argv: list[str] | None = None) -> int:
+    """Save byte-exact reference slices and rebuild their format and hash manifest."""
     argv = sys.argv[1:] if argv is None else argv
     root = source_root(argv[0] if argv else None)
     data_root = root / "sf_3" / "output_data"
+    # Coverage is all-or-nothing: a missing or blank late sample must not leave
+    # earlier fixtures overwritten or replace the manifest with unusable entries.
+    samples = read_samples(data_root)
 
     manifest_files: dict[str, dict[str, object]] = {}
 
-    for relative, limit in SLICES.items():
+    for relative, payload in samples.items():
         source = data_root / relative
-        if not source.exists():
-            print(f"  MISSING upstream file, skipped: {relative}")
-            continue
         target = FIXTURE_ROOT / relative
         target.parent.mkdir(parents=True, exist_ok=True)
-        payload = slice_lines(source, limit)
         target.write_bytes(payload)
 
         first = payload.split(b"\r\n")[0].decode("utf-8")
