@@ -77,7 +77,7 @@ Configuration holds numbers and distribution choices. Source definitions hold fi
 | Settings | Meaning |
 | --- | --- |
 | `initial_start`, `initial_end`, `daily_start`, `daily_end` | Inclusive UTC dates; `daily_start` must be the day after `initial_end` |
-| `scale_factor`, `customers_per_unit`, `seed` | Firm size at the expected cutover anchor and the stable random seed |
+| `scale_factor`, `customers_per_unit`, `seed` | Firm size at the expected cutover anchor and the stable random seed; `customers_per_unit` defaults to 3,601 |
 | Population, profile, wealth, and activity settings | Joining, closure, inactivation, update, trade, cash-flow, margin, and watch distributions |
 | `positions_per_account` | Repeatable security-selection slots per account; default 4; zero lets buys select from the full market |
 | `account_generations` | Reserved account generations for each joining account slot; default 8; checked capacity prevents ID reuse |
@@ -91,6 +91,8 @@ Configuration holds numbers and distribution choices. Source definitions hold fi
 | `customer_group_size`, `workers`, `threads` | Customer group bound, one or two business worker processes, and Polars thread count |
 | `export_rows`, `merge_fan_in` | Aggregate export row buffer and maximum inputs to one merge |
 | Resource settings | Aggregate process-tree memory, disk, and elapsed-time budgets |
+
+The expected cutover customer count is `scale_factor * customers_per_unit`. With the default account shares, each customer has 1.67 accounts on average. Factor 1 therefore anchors about 3,601 customers and 6,014 accounts; factor 100 anchors about 360,100 customers and 601,367 accounts. These are planning expectations, not exact realized populations.
 
 Profile arrays use this order: dormant, long-term investor, retiree, active trader, and day trader. Account-count shares refer to one, two, and three accounts. Tier shares refer to tiers 1, 2, and 3. Tax-status shares refer to codes 0, 1, and 2.
 
@@ -219,6 +221,14 @@ Tests cover deterministic personal fields, XML omission and empty text, ledger a
 | `supervision.json` | Sampled aggregate RSS, process count, disk use, temporary disk peaks, and sampling intervals |
 
 Phase times cover references, market, population, activity, prospects, final export, and validation. Buffer flushes and intermediate merges count toward the phase that emits their records. The final export phase measures final merges and writes, not all export work.
+
+### Full-Calendar Measurements
+
+These runs cover generation stages 1 to 3 over 2014-01-01 through 2025-12-31, with two workers, two Polars threads per worker, seed `20261029`, 1,250 companies, and 2,000 securities. Each run passes full saved-file validation. Generation seconds sum the measured phases before validation; peak RSS covers the supervisor and all descendants. Disk sampling occurs every two seconds, so temporary storage is a sampled peak.
+
+| Factor | Customers per unit | Offline bytes | Stream bytes | Generation seconds | Validation seconds | Peak RSS MiB | Peak temporary GiB |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 3,300 | 1,346,693,500 | 307,655,539 | 954.77 | 753.54 | 1,374.79 | 2.426 |
 
 ### Original Stage 1 Reference Measurement
 
