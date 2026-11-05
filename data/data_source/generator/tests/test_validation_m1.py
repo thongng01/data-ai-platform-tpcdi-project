@@ -20,17 +20,20 @@ from data.data_source.generator.validation import ValidationError, _cents, _rows
 
 @pytest.mark.parametrize("value,expected", [("0.00", 0), ("-12.34", -1234), ("999.99", 99999), ("", None)])
 def test_exact_cent_parser(value, expected):
+    """Parse decimal amounts without changing their exact cent values."""
     assert _cents(value) == expected
 
 
 @pytest.mark.parametrize("value", ["0.001", "NaN", "Infinity", "not money"])
 def test_cent_parser_rejects_non_cent_values(value):
+    """Reject fractional cents and nonfinite money values."""
     with pytest.raises(ValidationError):
         _cents(value)
 
 
 @pytest.mark.parametrize("payload", ["I|2|1|1|0|1\n", "U|1|1|1|0|1\n", "I|1|1|1|0|1\r\n", "I|1|1|1|0|1"])
 def test_daily_parser_rejects_sequences_operations_and_line_endings(tmp_path, payload):
+    """Enforce consecutive CDC sequences, accepted flags, and LF record endings."""
     path = tmp_path / "HoldingHistory.txt"
     path.write_bytes(payload.encode())
     with pytest.raises(ValidationError):
@@ -38,6 +41,7 @@ def test_daily_parser_rejects_sequences_operations_and_line_endings(tmp_path, pa
 
 
 def test_xml_patch_keeps_absent_and_empty_distinct():
+    """Keep omitted CMS fields separate from explicit empty field updates."""
     customer = ET.fromstring('<Customer C_ID="1"><Name><C_M_NAME /></Name><ContactInfo><C_ALT_EMAIL /></ContactInfo></Customer>')
     patch = _xml_patch(customer, load_sources()["Customer"])
     assert patch == {"C_ID": "1", "C_M_NAME": "", "C_EMAIL_2": ""}
@@ -48,6 +52,7 @@ def test_xml_patch_keeps_absent_and_empty_distinct():
 @pytest.mark.parametrize("changes", [{"ct_id": True}, {"ct_amt": 1.0}, {"ct_amt": "1.001"},
                                     {"ct_dts": "2019-01-01 08:00:00"}, {"schema_version": True}, {"extra": 1}])
 def test_stream_contract_rejects_wrong_types_and_fields(tmp_path, changes):
+    """Reject stream records that violate strict JSON types or field coverage."""
     payload = {"ct_id": 1, "ct_ca_id": 1, "ct_dts": "2019-01-01T08:00:00Z", "ct_amt": "1.00",
                "ct_name": "Deposit", "schema_version": 1, **changes}
     path = tmp_path / "20190101.jsonl"
@@ -57,6 +62,7 @@ def test_stream_contract_rejects_wrong_types_and_fields(tmp_path, changes):
 
 
 def test_independent_cadence_and_calendar_boundaries():
+    """Derive source coverage and NYSE dates independently of exporter state."""
     config = Config(initial_start="2018-12-20", initial_end="2018-12-31", daily_start="2019-01-01", daily_end="2019-02-03",
                     scale_factor=.01, securities=8, companies=4)
     expected = validation._expected_files(config)
@@ -75,6 +81,7 @@ def test_independent_cadence_and_calendar_boundaries():
 
 @pytest.fixture(scope="module")
 def exported(tmp_path_factory):
+    """Create a small exported fixture without manifest hash evidence."""
     from data.data_source.generator.activity import generate_activity
     from data.data_source.generator.customers import generate_prospects
     from data.data_source.generator.market import Market
@@ -99,6 +106,7 @@ def exported(tmp_path_factory):
 
 
 def _mutate_row(root, source, field, replacement, predicate=lambda row: True, *, daily=False):
+    """Change the first matching source field while retaining its row structure."""
     columns = load_sources()[source].columns
     paths = sorted((root / "offline" / "daily").glob(f"*/{source}_*.txt")) if daily else [root / "offline" / "initial" / f"{source}.txt"]
     for path in paths:
@@ -116,6 +124,7 @@ def _mutate_row(root, source, field, replacement, predicate=lambda row: True, *,
 
 
 def test_exported_replay_and_partition_replay_agree(exported, monkeypatch):
+    """Require equivalent business totals with one partition and multiple partitions."""
     root, config, inventory = exported
     result = validate(root, config, inventory)
     assert result["status"] == "passed"
@@ -141,6 +150,7 @@ def test_exported_replay_and_partition_replay_agree(exported, monkeypatch):
     ("prospect_identity", "Duplicate Prospect"), ("customer_tax", "tax rate"), ("xml_structure", "XML root child"),
 ])
 def test_corrupted_source_fails_without_hash_evidence(exported, tmp_path, case, match):
+    """Reject each business or structural corruption through independent replay checks."""
     original, config, _ = exported
     root = tmp_path / "corrupt"
     shutil.copytree(original, root, ignore=shutil.ignore_patterns("_work"))
@@ -233,6 +243,7 @@ def test_corrupted_source_fails_without_hash_evidence(exported, tmp_path, case, 
 
 @pytest.mark.parametrize("source_name,partitions", [("CashTransaction", 128), ("DailyMarket", 1024)])
 def test_partition_sink_bounds_aggregate_row_group_buffers(tmp_path, monkeypatch, source_name, partitions):
+    """Keep aggregate Parquet buffers bounded when many partitions exist."""
     from data.data_source.generator.validation import _Stage, _stage_source
     from data.data_source.generator.formats import load_sources
     import polars as pl
@@ -246,6 +257,7 @@ def test_partition_sink_bounds_aggregate_row_group_buffers(tmp_path, monkeypatch
     original = pl.LazyFrame.sink_parquet
     calls = []
     def bounded_sink(frame, path, **kwargs):
+        """Record each partitioned sink and enforce its aggregate row-group bound."""
         if isinstance(path, pl.PartitionBy):
             group_rows = kwargs.get("row_group_size")
             assert group_rows is not None
@@ -258,16 +270,22 @@ def test_partition_sink_bounds_aggregate_row_group_buffers(tmp_path, monkeypatch
 
 
 def test_saved_hash_evidence_detects_unrelated_text_change(exported, tmp_path):
+    """Detect a valid-format text mutation using the saved source hash."""
     original, config, inventory = exported
     root = tmp_path / "hash"
     shutil.copytree(original, root, ignore=shutil.ignore_patterns("_work"))
     path = root / "offline" / "initial" / "Prospect.csv"
-    path.write_text(path.read_text().replace("Alex", "Alec", 1))
+    lines = path.read_text().splitlines()
+    fields = lines[0].split(",")
+    fields[1] = "Different" if fields[1] != "Different" else "Changed"
+    lines[0] = ",".join(fields)
+    path.write_text("\n".join(lines) + "\n")
     with pytest.raises(ValidationError, match="SHA-256"):
         validate(root, config, inventory)
 
 
 def test_duplicate_json_keys_fail(tmp_path):
+    """Reject duplicate stream JSON keys instead of silently overwriting them."""
     path = tmp_path / "20190101.jsonl"
     path.write_text('{"ct_id":1,"ct_id":1,"ct_ca_id":1,"ct_dts":"2019-01-01T08:00:00Z",'
                     '"ct_amt":"1.00","ct_name":"Deposit","schema_version":1}\n')
@@ -276,6 +294,7 @@ def test_duplicate_json_keys_fail(tmp_path):
 
 
 def _causal_replay(tmp_path, *, pending_first, submission_conflict=False, negative_first=False):
+    """Build same-second source scenarios that require causal cash and trade ordering."""
     config = Config(initial_start="2018-11-15", initial_end="2018-12-31", daily_start="2019-01-01", daily_end="2019-01-01",
                     scale_factor=.01, companies=1, securities=1, commission_basis_points=0, charge_cents=0 if submission_conflict else 100)
     customer_directory = tmp_path / "customers"
@@ -289,6 +308,7 @@ def _causal_replay(tmp_path, *, pending_first, submission_conflict=False, negati
     tables = {"Hidden": [account], "AccountXML": [version], "Trade": [], "TradeHistory": [], "HoldingHistory": [], "CashTransaction": []}
 
     def snapshot(identifier, kind, timestamp):
+        """Add a completed initial Trade snapshot with exact replay money fields."""
         tables["Trade"].append({"T_ID": identifier, "T_CA_ID": 1, "T_S_SYMB": "S0000000001", "T_ST_ID": "CMPT",
                                 "T_DTS": timestamp, "T_TT_ID": kind, "T_IS_CASH": 1, "T_QTY": 1, "T_BID_PRICE": 1000,
                                 "T_EXEC_NAME": "Alex Broker", "T_TRADE_PRICE": 1000, "T_CHRG": 100, "T_COMM": 0, "T_TAX": 0,
@@ -296,14 +316,17 @@ def _causal_replay(tmp_path, *, pending_first, submission_conflict=False, negati
                                 "_market_low": 1000, "_market_high": 1000})
 
     def history(identifier, status, timestamp):
+        """Add one source-visible status transition to the initial trade history."""
         tables["TradeHistory"].append({"TH_T_ID": identifier, "TH_DTS": timestamp, "TH_ST_ID": status,
                                        "_day": "initial", "_order": len(tables["TradeHistory"]) + 1})
 
     def cash(amount, name, timestamp):
+        """Append a cash transaction with its exact source sequence and amount."""
         tables["CashTransaction"].append({"CT_ID": len(tables["CashTransaction"]) + 1, "CT_CA_ID": 1,
                                           "CT_DTS": timestamp, "CT_AMT": amount, "CT_NAME": name, "_day": "initial"})
 
     def holding(identifier, origin, before, after):
+        """Append the saved origin and before/after quantities for a completed trade."""
         tables["HoldingHistory"].append({"HH_T_ID": identifier, "HH_H_T_ID": origin, "HH_BEFORE_QTY": before,
                                          "HH_AFTER_QTY": after, "_day": "initial"})
 
@@ -368,14 +391,17 @@ def _causal_replay(tmp_path, *, pending_first, submission_conflict=False, negati
 
 @pytest.mark.parametrize("pending_first", [False, True])
 def test_same_second_settlement_order_preserves_cash_and_position_origin(tmp_path, pending_first):
+    """Use source cash order to preserve spending and holding origins in timestamp ties."""
     _causal_replay(tmp_path, pending_first=pending_first)
 
 
 def test_same_second_new_pending_order_reserves_before_higher_trade_id(tmp_path):
+    """Reject a market buy that would spend funds already reserved by a pending order."""
     with pytest.raises(ValidationError, match="Open buy orders reserve unavailable funds"):
         _causal_replay(tmp_path, pending_first=False, submission_conflict=True)
 
 
 def test_same_second_later_deposit_cannot_fund_earlier_cash_transaction(tmp_path):
+    """Reject a withdrawal that would need a later same-second deposit."""
     with pytest.raises(ValidationError, match="Cash balance"):
         _causal_replay(tmp_path, pending_first=False, negative_first=True)

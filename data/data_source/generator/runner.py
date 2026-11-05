@@ -20,12 +20,14 @@ RUNTIME_KEYS = {"customer_group_size", "workers", "merge_fan_in", "export_rows",
 
 
 def write_json(path, value):
+    """Write stable, readable JSON and create its parent directory."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _disk_bytes(root):
+    """Count retained file bytes while tolerating concurrent spool cleanup."""
     total = 0
     for directory, _, filenames in os.walk(root):
         for name in filenames:
@@ -37,12 +39,14 @@ def _disk_bytes(root):
 
 
 def _temporary_disk_bytes(root):
+    """Count export spools and validation partitions separately from source files."""
     return _disk_bytes(root / "_work") + sum(
         _disk_bytes(path) for path in root.glob("validation-*") if path.is_dir()
     )
 
 
 def _process_tree_sample(pid):
+    """Measure aggregate resident memory and active non-tracker processes."""
     try:
         root = psutil.Process(pid)
         processes = [root] + root.children(recursive=True)
@@ -66,6 +70,7 @@ def _process_tree_sample(pid):
 
 
 def _stop_process_tree(process):
+    """Stop the coordinator and its descendants without leaving workers running."""
     if os.name == "posix":
         try:
             os.killpg(process.pid, signal.SIGTERM)
@@ -97,6 +102,7 @@ def _stop_process_tree(process):
 
 
 def run(config: Config, output: Path):
+    """Supervise a bounded worker and retain evidence if it cannot finish safely."""
     output = Path(output).absolute()
     partial = output.with_name(output.name + ".partial")
     if output.exists() or partial.exists() or output.is_symlink() or partial.is_symlink():
@@ -186,6 +192,7 @@ def run(config: Config, output: Path):
 
 
 def inventory_summary(inventory):
+    """Aggregate source bytes and rows by family, delivery, and date."""
     totals = {"initial": {"rows": 0, "bytes": 0}, "daily": {"rows": 0, "bytes": 0}, "stream": {"rows": 0, "bytes": 0}}
     families = {}
     dates = {}
@@ -204,6 +211,7 @@ def inventory_summary(inventory):
 
 
 def worker(config: Config, output: Path):
+    """Run the generation stages, export, independent validation, and local reports."""
     import importlib.metadata
     import locale
     import resource
@@ -222,12 +230,13 @@ def worker(config: Config, output: Path):
     implementation_files = {
         str(path.relative_to(package)): hashlib.sha256(path.read_bytes()).hexdigest()
         for path in sorted(package.rglob("*"))
-        if path.is_file() and path.suffix in (".py", ".yaml") and "tests" not in path.parts and "configs" not in path.parts
+        if path.is_file() and path.suffix in (".py", ".yaml", ".csv", ".txt") and "tests" not in path.parts and "configs" not in path.parts
     }
     generation = Generation(config, output)
     timings = {}
 
     def phase(name, function, *args):
+        """Measure and announce one named stage without changing its return value."""
         print(f"Starting {name}.", flush=True)
         started = time.monotonic()
         result = function(*args)
@@ -248,7 +257,7 @@ def worker(config: Config, output: Path):
     identity = {"config": semantic_config, "format_version": FORMAT_VERSION, "definitions": definitions,
                 "calendar_fingerprint": market.fingerprint}
     versions = {name: importlib.metadata.version(name) for name in
-                ("polars", "numpy", "PyYAML", "exchange-calendars", "duckdb", "pyarrow", "psutil")}
+                ("polars", "numpy", "PyYAML", "exchange-calendars", "psutil")}
     measured = inventory_summary(inventory)
     offline = sum(measured["deliveries"][name]["bytes"] for name in ("initial", "daily"))
     manifest = {
@@ -266,6 +275,8 @@ def worker(config: Config, output: Path):
         "stream_records": measured["deliveries"]["stream"]["rows"], "files": inventory, "validation": validation,
     }
     summary = {"config": config.as_dict(), "files": measured, "activity": activity, "prospects": prospects,
+               "data_errors": {**generation.recording_summary, "measurements": validation["source_recording"]["errors"]},
+               "trade_recording": validation["source_recording"]["trade_schemas"],
                "calendar": market.calendar_metadata, "runtime": {"python": sys.version, "dependencies": versions,
                "timings_seconds": timings,
                "peak_rss_bytes": manifest["peak_rss_bytes"], "maximum_export_buffer_rows": generation.output.maximum_buffer_rows,
@@ -277,6 +288,7 @@ def worker(config: Config, output: Path):
 
 
 def compare(first: Path, second: Path):
+    """Rehash saved sources and require identical semantic configuration and bytes."""
     roots = [Path(first), Path(second)]
     manifests = [json.loads((path / "manifest.json").read_text()) for path in roots]
     if any(manifest.get("status") != "validated" for manifest in manifests):

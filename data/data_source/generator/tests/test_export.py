@@ -1,3 +1,5 @@
+"""Verify bounded export, cash identity, source formats, and retained failure evidence."""
+
 import hashlib
 import json
 from datetime import date
@@ -15,6 +17,7 @@ from data.data_source.generator.sorting import SortedOutput
 
 
 def config(**kwargs):
+    """Build a short export configuration with deliberately small merge bounds."""
     values = dict(initial_start="2018-12-28", initial_end="2018-12-31", daily_start="2019-01-01",
                   daily_end="2019-01-03", securities=2, companies=1, scale_factor=.001,
                   export_rows=3, merge_fan_in=2)
@@ -22,6 +25,7 @@ def config(**kwargs):
 
 
 def test_expected_paths_have_cadence_and_no_benchmark_files():
+    """Require the designed source cadence and exclude benchmark-only files."""
     settings = config(daily_end="2019-02-02")
     paths = expected_file_list(settings)
     assert "offline/initial/CustomerMgmt.xml" in paths
@@ -37,6 +41,7 @@ def test_expected_paths_have_cadence_and_no_benchmark_files():
 
 
 def test_temporary_disk_measurement_includes_validation_partitions(tmp_path):
+    """Count validation partitions as temporary disk rather than final source data."""
     for relative, size in (("_work/runs/1.txt", 2), ("validation-one/blocks/trade.parquet", 3),
                            ("validation-two/partitioned/cash.parquet", 5), ("offline/Trade.txt", 7),
                            ("validation.json", 11)):
@@ -47,6 +52,7 @@ def test_temporary_disk_measurement_includes_validation_partitions(tmp_path):
 
 
 def test_aggregate_buffer_and_disk_catalog_bound_paths(tmp_path):
+    """Keep the shared row buffer and retained Python path lists within their bounds."""
     output = SortedOutput(tmp_path, fan_in=3, export_rows=7)
     for i in range(200):
         output.add(f"offline/{i}.txt", [{"_key": "1", "_payload": "value"}])
@@ -64,6 +70,7 @@ def test_aggregate_buffer_and_disk_catalog_bound_paths(tmp_path):
 
 
 def test_multilevel_merge_and_cdc_sequence(tmp_path):
+    """Merge many runs and assign one consecutive CDC sequence at final write."""
     output = SortedOutput(tmp_path, 2, 2)
     for i in reversed(range(101)):
         output.add("offline/daily/test.txt", [{"_key": f"{i:05d}", "_payload": f"I|{i}"}])
@@ -79,6 +86,7 @@ def test_multilevel_merge_and_cdc_sequence(tmp_path):
 
 @pytest.mark.parametrize("across_runs", [False, True])
 def test_duplicate_complete_keys_fail(tmp_path, across_runs):
+    """Reject duplicate complete keys both inside a buffer and across runs."""
     output = SortedOutput(tmp_path, 2, 3)
     output.add("offline/file.txt", [{"_key": "same", "_payload": "first"}])
     if across_runs:
@@ -89,6 +97,7 @@ def test_duplicate_complete_keys_fail(tmp_path, across_runs):
 
 
 def test_final_writer_checks_widths_even_for_raw_text(tmp_path):
+    """Reject raw text that bypasses early formatting but violates the final contract."""
     generation = Generation(config(), tmp_path)
     generation.text("offline/initial/StatusType.txt", [("1", "LONGER|bad")])
     with pytest.raises(ValueError, match="exceeds"):
@@ -96,6 +105,7 @@ def test_final_writer_checks_widths_even_for_raw_text(tmp_path):
 
 
 def test_raw_delimiter_and_control_character_fail(tmp_path):
+    """Reject delimiters and control separators before they corrupt the spool format."""
     output = SortedOutput(tmp_path, 2, 2)
     source = Source("Example", "example.txt", "|", (Field("value", "CHAR(20)"),))
     with pytest.raises(ValueError, match="Delimiter"):
@@ -106,6 +116,7 @@ def test_raw_delimiter_and_control_character_fail(tmp_path):
 
 
 def add_cash(generation):
+    """Queue cash events in a different order from their required final identity order."""
     generation.cash(date(2019, 1, 1), "2019-01-01 08:00:00", 2, 1, 200, "Deposit")
     generation.cash(date(2018, 12, 31), "2018-12-31 08:00:00", 1, 2, -300, "Withdrawal")
     generation.cash(date(2018, 12, 31), "2018-12-31 08:00:00", 1, 1, 500, "Deposit")
@@ -113,6 +124,7 @@ def add_cash(generation):
 
 
 def test_global_cash_sequence_crosses_cutover_and_uses_event_order(tmp_path):
+    """Assign global CT_ID values across file and stream deliveries in event order."""
     generation = Generation(config(), tmp_path)
     add_cash(generation)
     inventory = generation.finish()
@@ -138,6 +150,7 @@ def test_global_cash_sequence_crosses_cutover_and_uses_event_order(tmp_path):
 
 @pytest.mark.parametrize("name", ["deposit", "Trade 1", "Dividend", "Trade settlement -1"])
 def test_cash_name_is_fixed(tmp_path, name):
+    """Reject descriptions outside the shared cash transaction naming contract."""
     generation = Generation(config(), tmp_path)
     with pytest.raises(ValueError, match="CT_NAME"):
         generation.cash(date(2019, 1, 1), "2019-01-01 08:00:00", 1, 1, 100, name)
@@ -145,6 +158,7 @@ def test_cash_name_is_fixed(tmp_path, name):
 
 
 def test_adopted_group_runs_repeat_bytes_across_bounds(tmp_path):
+    """Preserve final bytes when a coordinator adopts differently buffered group runs."""
     first = Generation(config(), tmp_path / "first")
     add_cash(first)
     first_files = first.finish()
@@ -161,6 +175,7 @@ def test_adopted_group_runs_repeat_bytes_across_bounds(tmp_path):
 
 
 def test_existing_output_and_partial_refuse_without_changes(tmp_path):
+    """Refuse occupied destinations while keeping all existing evidence unchanged."""
     destination = tmp_path / "run"
     partial = tmp_path / "run.partial"
     partial.mkdir()
@@ -174,10 +189,12 @@ def test_existing_output_and_partial_refuse_without_changes(tmp_path):
 
 
 def test_failed_worker_retains_evidence_without_final_rename(tmp_path, monkeypatch):
+    """Keep worker diagnostics in the partial directory after a failed run."""
     from data.data_source.generator import runner
     real_popen = subprocess.Popen
 
     def failed_worker(*args, **kwargs):
+        """Launch a worker that fails immediately to test retained diagnostics."""
         return real_popen([sys.executable, "-c", "raise RuntimeError('worker evidence')"], **kwargs)
 
     monkeypatch.setattr(runner.subprocess, "Popen", failed_worker)
@@ -192,6 +209,7 @@ def test_failed_worker_retains_evidence_without_final_rename(tmp_path, monkeypat
 
 
 def test_supervisor_stops_nested_workers_and_retains_budget_failure(tmp_path, monkeypatch):
+    """Stop an excessive process tree and save its resource-limit failure."""
     from data.data_source.generator import runner
     real_popen = subprocess.Popen
     pid_file = tmp_path / "child.pid"
@@ -200,6 +218,7 @@ def test_supervisor_stops_nested_workers_and_retains_budget_failure(tmp_path, mo
               f"Path({str(pid_file)!r}).write_text(str(child.pid)); time.sleep(60)")
 
     def nested_worker(*args, **kwargs):
+        """Launch an extra descendant to exceed the configured process bound."""
         return real_popen([sys.executable, "-c", script], **kwargs)
 
     monkeypatch.setattr(runner.subprocess, "Popen", nested_worker)
@@ -213,10 +232,12 @@ def test_supervisor_stops_nested_workers_and_retains_budget_failure(tmp_path, mo
 
 
 def test_timeout_retains_partial_without_completed_manifest(tmp_path, monkeypatch):
+    """Retain partial evidence when the worker exceeds its time budget."""
     from data.data_source.generator import runner
     real_popen = subprocess.Popen
 
     def slow_worker(*args, **kwargs):
+        """Launch a sleeping process that exceeds the short test timeout."""
         return real_popen([sys.executable, "-c", "import time; time.sleep(60)"], **kwargs)
 
     monkeypatch.setattr(runner.subprocess, "Popen", slow_worker)
@@ -227,6 +248,7 @@ def test_timeout_retains_partial_without_completed_manifest(tmp_path, monkeypatc
 
 
 def test_compare_rehashes_actual_files(tmp_path):
+    """Detect source changes even when both saved manifests claim identical bytes."""
     inventory = []
     for name in ("first", "second"):
         root = tmp_path / name
@@ -241,6 +263,7 @@ def test_compare_rehashes_actual_files(tmp_path):
 
 
 def test_tpcdi_format_fixtures_keep_the_original_business_fields():
+    """Check pinned official sample rows against the original source contracts."""
     from pathlib import Path
     from data.data_source.generator.formats import load_sources
 

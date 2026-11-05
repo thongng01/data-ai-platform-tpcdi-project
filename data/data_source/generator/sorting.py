@@ -14,7 +14,9 @@ from .formats import Source
 
 
 class SortedOutput:
+    """Keep one bounded record buffer and merge its sorted disk runs."""
     def __init__(self, root: Path, fan_in: int, export_rows: int = 8192):
+        """Open the disk-backed run catalog and configure buffer and file bounds."""
         if fan_in < 2 or export_rows < 1:
             raise ValueError("Merge fan-in must be at least two and export_rows must be positive.")
         self.root = Path(root)
@@ -33,6 +35,7 @@ class SortedOutput:
         self.maximum_retained_run_paths = 0
 
     def _new_run(self):
+        """Create a new spool file without overwriting retained evidence."""
         # O_EXCL also protects retained evidence if this object is opened again.
         while True:
             run = self.work / "runs" / f"{self.sequence:012d}.txt"
@@ -45,12 +48,14 @@ class SortedOutput:
                 continue
 
     def _compact(self, paths):
+        """Merge a bounded set of runs into one replacement run."""
         merged = self._new_run()
         with merged.open("w", encoding="ascii", newline="\n") as stream:
             stream.writelines(self._merge(paths))
         return merged
 
     def _retain(self, relative, run, level=0):
+        """Catalog a run and compact full merge levels within the open-file limit."""
         while True:
             self.catalog.execute("INSERT INTO runs VALUES (?, ?, ?)", (relative, level, str(run)))
             paths = [Path(row[0]) for row in self.catalog.execute(
@@ -67,6 +72,7 @@ class SortedOutput:
             level += 1
 
     def add(self, relative: str, frame, source: Source | None = None, cdc=False):
+        """Encode records into the shared bounded buffer and protect spool separators."""
         if isinstance(frame, pl.DataFrame):
             rows = frame.iter_rows(named=True)
         else:
@@ -77,7 +83,10 @@ class SortedOutput:
                 raise ValueError(f"Invalid sort key in {relative}.")
             if source:
                 values = ["" if row.get(field.name) is None else str(row[field.name]) for field in source.fields]
-                source.check(values)
+                if any(source.separator in value for value in values):
+                    raise ValueError(f"Delimiter in {source.name} fields.")
+                # The final writer checks widths and types once, after merging.
+                # This early check only protects the spool record separators.
                 payload = source.separator.join(values)
                 if cdc:
                     flag = row.get("_flag", "I")
@@ -94,6 +103,7 @@ class SortedOutput:
                 self.flush()
 
     def flush(self):
+        """Sort the buffer, detect duplicate keys, and persist per-output runs."""
         if not self.buffer:
             self.catalog.commit()
             return
@@ -113,6 +123,7 @@ class SortedOutput:
         self.catalog.commit()
 
     def _merge(self, paths):
+        """Merge sorted input streams while enforcing the configured file bound."""
         self.maximum_merge_inputs = max(self.maximum_merge_inputs, len(paths))
         self.maximum_retained_run_paths = max(self.maximum_retained_run_paths, len(paths))
         if len(paths) > self.fan_in:
@@ -122,6 +133,7 @@ class SortedOutput:
             yield from heapq.merge(*streams)
 
     def adopt(self, root):
+        """Move completed group runs into this coordinator's catalog."""
         self.flush()
         root = Path(root)
         if root.resolve() == self.root.resolve():
@@ -143,6 +155,7 @@ class SortedOutput:
             other.close()
 
     def _final_paths(self, relative):
+        """Reduce runs on disk until the final merge fits the file bound."""
         # Reduce on disk: no Python list grows with run or delivery count.
         while True:
             paths = [Path(row[0]) for row in self.catalog.execute(
@@ -158,6 +171,7 @@ class SortedOutput:
                 path.unlink()
 
     def write(self, relative, *, cdc=False, xml=False, transform=None, check=None):
+        """Write a delivery with final contract checks, row counts, and a SHA-256 digest."""
         self.flush()
         paths = self._final_paths(relative)
         target = self.root / relative
@@ -167,6 +181,7 @@ class SortedOutput:
         previous = None
         with target.open("wb") as stream:
             def emit(text):
+                """Write ASCII output bytes and update the same file digest."""
                 encoded = text.encode("ascii")
                 stream.write(encoded)
                 digest.update(encoded)
@@ -202,6 +217,7 @@ class SortedOutput:
         return {"path": relative, "rows": count, "bytes": target.stat().st_size, "sha256": digest.hexdigest()}
 
     def close(self):
+        """Persist remaining rows and resource metrics before closing the catalog."""
         self.flush()
         metrics = {name: getattr(self, name) for name in ("maximum_frame_rows", "maximum_buffer_rows",
                    "maximum_merge_inputs", "maximum_retained_run_paths")}
