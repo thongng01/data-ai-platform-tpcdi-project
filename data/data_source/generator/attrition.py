@@ -206,7 +206,7 @@ class AttritionPlanner(Stage1IntentPlanner):
                     self._start(simulation, index, period)
 
     def start_day(self, simulation, day) -> None:
-        """Release old orders before leaving accounts can receive another buy."""
+        """Reset today's external cash-flow totals before cash intents execute."""
         # Cancellations stay in the event queue. Releasing reservations before
         # their recorded timestamp would let an earlier withdrawal spend them.
         self.external_flow[:] = 0
