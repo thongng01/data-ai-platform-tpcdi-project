@@ -4,7 +4,7 @@ from hypothesis import given, settings, strategies as st
 import numpy as np
 import pytest
 
-from data.data_source.generator.activity import HoldingBook, Ledger, SourceRecorder, decimal_cents, poisson
+from data.data_source.generator.activity import BusinessSimulation, HoldingBook, Ledger, SourceRecorder, Stage1IntentPlanner, decimal_cents, poisson
 from data.data_source.generator.random_values import scalar, values
 
 
@@ -73,6 +73,46 @@ def test_recording_cannot_mutate_business_fields():
     SourceRecorder(generation, transform).record("Trade", 0, original, "key")
     assert original == {"T_CHRG": "1.00"}
     assert emitted[0][2][0]["T_CHRG"] == "200.00"
+
+
+def test_intent_planner_controls_cash_trades_and_closure(tmp_path):
+    from data.data_source.generator.config import Config
+    from data.data_source.generator.population import ACCOUNT_DTYPE, CUSTOMER_DTYPE
+
+    config = Config(initial_start="2019-01-25", initial_end="2019-01-25",
+                    daily_start="2019-01-26", daily_end="2019-01-26",
+                    securities=1, companies=1, scale_factor=.001,
+                    annual_trade_rates=(0, 0, 0, 0, 0), annual_deposit_rates=(0, 0, 0, 0, 0),
+                    annual_withdrawal_rates=(0, 0, 0, 0, 0), watch_daily_rate=0,
+                    annual_customer_update=0, annual_account_update=0)
+    customers = np.array([(1, 0, 2, 3)], dtype=CUSTOMER_DTYPE)
+    accounts = np.array([(4, 1, 0, 0, 1, True, 100000, 0, 1, 1)], dtype=ACCOUNT_DTYPE)
+    calls = []
+    class Planner(Stage1IntentPlanner):
+        def closing(self, account, day):
+            calls.append(("close", day))
+            return False
+        def allow_cash(self, simulation, index, day, name):
+            calls.append((name, day))
+            return False
+        def allow_trade(self, simulation, index, day, kind):
+            calls.append((kind, day))
+            return False
+    cash = []
+    generation = SimpleNamespace(config=config, cash=lambda *args: cash.append(args),
+                                 emit=lambda *args: None, text=lambda *args: None)
+    prices = {"close": np.array([100]), "low": np.array([90]), "high": np.array([110]),
+              "dividends": np.array([0]), "trading": True, "close_second": 57600, "shock": False}
+    market = SimpleNamespace(day=lambda day: prices, sessions_per_year={2019: 252})
+    simulation = BusinessSimulation(generation, market, customers, accounts, planner=Planner())
+    simulation.run()
+    assert ("close", 0) in calls
+    assert ("Deposit", 0) in calls
+    assert accounts[0]["close_day"] == config.total_days
+    assert len(cash) == 1  # Opening funding remains a business requirement.
+    simulation.submit(0, config.start, 0, 34200, prices, 1)
+    assert not simulation.orders
+    assert simulation.metrics["rejected_by_intent_planner"] == 1 or simulation.metrics["rejected_no_holding"] == 1
 
 
 def test_decimal_cent_encoding():

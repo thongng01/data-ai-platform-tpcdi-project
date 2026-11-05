@@ -3,11 +3,12 @@
 import json
 import shutil
 from datetime import date
-from decimal import Decimal
-from pathlib import Path
-from xml.etree import ElementTree as ET
+from types import SimpleNamespace
 
 import polars as pl
+from decimal import Decimal
+from xml.etree import ElementTree as ET
+
 import pytest
 
 from data.data_source.generator import validation
@@ -122,23 +123,11 @@ def test_exported_replay_and_partition_replay_agree(exported, monkeypatch):
     assert result["cash_transactions"] > result["completed_trades"]
     assert result["customer_actions"].get("CLOSEACCT", 0) + result["customer_actions"].get("INACT", 0) > 0
     assert not list(root.glob("validation-*"))
-    original_init = validation._Stage.__init__
-
-    def smaller_partitions(self, directory, count):
-        original_init(self, directory, count * 3)
-
-    # Split the typed blocks to inspect partition I/O directly. The production
-    # validator still visits every configured partition, so replay all three here.
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(validation._Stage, "__init__", smaller_partitions)
-        stage = validation._Stage(root / "partition-unit", 1)
-        schema = {"account": pl.Int64, "_partition": pl.String}
-        for account in range(9):
-            stage.add("Example", {"account": account, "_partition": str(account % 3)}, schema)
-        stage.finish()
-        for partition in range(3):
-            assert sorted(stage.frame("Example", partition)["account"].to_list()) == list(range(partition, 9, 3))
-    shutil.rmtree(root / "partition-unit")
+    monkeypatch.setattr(validation, "_VALIDATION_PARTITION_BYTES", max(1, result["bytes"] // 3))
+    partitioned = validate(root, config, inventory)
+    assert partitioned["partitions"] >= 3
+    for name in ("customers", "accounts", "trades", "completed_trades", "cash_transactions", "rows", "bytes"):
+        assert partitioned[name] == result[name]
 
 
 @pytest.mark.parametrize("case,match", [
@@ -149,6 +138,7 @@ def test_exported_replay_and_partition_replay_agree(exported, monkeypatch):
     ("missing_holding", "no holding"), ("missing_dividend", "dividend"),
     ("lifecycle", "lifecycle|initial status"), ("cdc_sequence", "CDC_DSN"),
     ("missing_file", "coverage"), ("unexpected_file", "coverage"), ("early_close", "NYSE session|snapshot"),
+    ("prospect_identity", "Duplicate Prospect"), ("customer_tax", "tax rate"), ("xml_structure", "XML root child"),
 ])
 def test_corrupted_source_fails_without_hash_evidence(exported, tmp_path, case, match):
     original, config, _ = exported
@@ -206,6 +196,19 @@ def test_corrupted_source_fails_without_hash_evidence(exported, tmp_path, case, 
         (root / "stream" / "cash_transactions" / "20190203.jsonl").unlink()
     elif case == "unexpected_file":
         (root / "offline" / "daily" / "20190203" / "CashTransaction_20190203.txt").touch()
+    elif case == "prospect_identity":
+        path = root / "offline" / "initial" / "Prospect.csv"
+        with path.open("a") as stream:
+            stream.write(path.read_text().splitlines()[0] + "\n")
+    elif case == "customer_tax":
+        path = root / "offline" / "initial" / "CustomerMgmt.xml"
+        original_text = path.read_text()
+        changed = original_text.replace("<C_LCL_TX_ID>US1</C_LCL_TX_ID>", "<C_LCL_TX_ID>NOPE</C_LCL_TX_ID>", 1)
+        assert changed != original_text
+        path.write_text(changed)
+    elif case == "xml_structure":
+        path = root / "offline" / "initial" / "CustomerMgmt.xml"
+        path.write_text(path.read_text().replace("</TPCDI:Actions>", "<Ignored />\n</TPCDI:Actions>"))
     elif case == "early_close":
         history = [line.split("|") for line in (root / "offline" / "initial" / "TradeHistory.txt").read_text().splitlines()]
         latest = max((row for row in history if row[1].startswith("2018-12-24") and row[2] == "CMPT"), key=lambda row: row[1])
@@ -244,3 +247,109 @@ def test_duplicate_json_keys_fail(tmp_path):
                     '"ct_amt":"1.00","ct_name":"Deposit","schema_version":1}\n')
     with pytest.raises(ValidationError, match="duplicate JSON key"):
         list(_stream(path, load_sources()["CashTransaction"]))
+
+
+def _causal_replay(tmp_path, *, pending_first, submission_conflict=False, negative_first=False):
+    config = Config(initial_start="2018-11-15", initial_end="2018-12-31", daily_start="2019-01-01", daily_end="2019-01-01",
+                    scale_factor=.01, companies=1, securities=1, commission_basis_points=0, charge_cents=0 if submission_conflict else 100)
+    customer_directory = tmp_path / "customers"
+    customer_directory.mkdir()
+    pl.DataFrame({"customer_id": [1], "created": ["2018-11-15 00:00:00"], "closed": [None]},
+                 schema={"customer_id": pl.Int64, "created": pl.String, "closed": pl.String}).write_parquet(customer_directory / "one.parquet")
+    account = {"account_id": 1, "customer_id": 1, "is_cash": True, "margin_limit_cents": 0,
+               "wealth_cents": 100000, "profile": 0, "open_date": config.start, "close_date": None}
+    fields = {"CA_ID": 1, "CA_B_ID": 1, "CA_C_ID": 1, "CA_NAME": "One", "CA_TAX_ST": 1, "CA_ST_ID": "ACTV"}
+    version = {**fields, "_present": list(fields), "_timestamp": "2018-11-15 00:00:00", "_day": "2018-11-15", "_flag": "I", "_order": 1}
+    tables = {"Hidden": [account], "AccountXML": [version], "Trade": [], "TradeHistory": [], "HoldingHistory": [], "CashTransaction": []}
+
+    def snapshot(identifier, kind, timestamp):
+        tables["Trade"].append({"T_ID": identifier, "T_CA_ID": 1, "T_S_SYMB": "S0000000001", "T_ST_ID": "CMPT",
+                                "T_DTS": timestamp, "T_TT_ID": kind, "T_IS_CASH": 1, "T_QTY": 1, "T_BID_PRICE": 1000,
+                                "T_EXEC_NAME": "Alex Broker", "T_TRADE_PRICE": 1000, "T_CHRG": 100, "T_COMM": 0, "T_TAX": 0,
+                                "_day": "initial", "_flag": "I", "_order": len(tables["Trade"]) + 1,
+                                "_market_low": 1000, "_market_high": 1000})
+
+    def history(identifier, status, timestamp):
+        tables["TradeHistory"].append({"TH_T_ID": identifier, "TH_DTS": timestamp, "TH_ST_ID": status,
+                                       "_day": "initial", "_order": len(tables["TradeHistory"]) + 1})
+
+    def cash(amount, name, timestamp):
+        tables["CashTransaction"].append({"CT_ID": len(tables["CashTransaction"]) + 1, "CT_CA_ID": 1,
+                                          "CT_DTS": timestamp, "CT_AMT": amount, "CT_NAME": name, "_day": "initial"})
+
+    def holding(identifier, origin, before, after):
+        tables["HoldingHistory"].append({"HH_T_ID": identifier, "HH_H_T_ID": origin, "HH_BEFORE_QTY": before,
+                                         "HH_AFTER_QTY": after, "_day": "initial"})
+
+    timestamp = "2018-11-16 09:35:00"
+    if negative_first:
+        cash(-100, "Withdrawal", "2018-11-16 08:00:00")
+        cash(100, "Deposit", "2018-11-16 08:00:00")
+        expected_trades = 0
+    elif submission_conflict:
+        cash(100, "Deposit", "2018-11-16 08:00:00")
+        snapshot(1000001, "TLB", timestamp)
+        tables["Trade"][-1].update(T_ST_ID="PNDG", T_BID_PRICE=70, T_TRADE_PRICE=None, T_CHRG=None, T_COMM=None, T_TAX=None)
+        history(1000001, "PNDG", timestamp)
+        snapshot(1000002, "TMB", timestamp)
+        tables["Trade"][-1].update(T_BID_PRICE=80, T_TRADE_PRICE=20, T_CHRG=0, _market_low=20, _market_high=80)
+        history(1000002, "SBMT", timestamp)
+        history(1000002, "CMPT", timestamp)
+        cash(-20, "Trade settlement 1000002", timestamp)
+        holding(1000002, 1000002, 0, 1)
+        expected_trades = 2
+    elif pending_first:
+        # An older order reserves $11. The newer market order creates the position
+        # before that older order completes in the same source second.
+        cash(2200, "Deposit", "2018-11-15 08:00:00")
+        snapshot(1000001, "TLB", timestamp)
+        history(1000001, "PNDG", "2018-11-15 09:30:00")
+        history(1000001, "CMPT", timestamp)
+        snapshot(1000002, "TMB", timestamp)
+        history(1000002, "SBMT", timestamp)
+        history(1000002, "CMPT", timestamp)
+        cash(-1100, "Trade settlement 1000002", timestamp)
+        cash(-1100, "Trade settlement 1000001", timestamp)
+        holding(1000002, 1000002, 0, 1)
+        holding(1000001, 1000002, 1, 2)
+        expected_trades = 2
+    else:
+        # The first buy leaves $2 and one share. The same-second sale adds $9,
+        # which funds the next $11 buy. Trade-only ordering loses that funding.
+        cash(1300, "Deposit", "2018-11-16 08:00:00")
+        opening = "2018-11-16 09:30:00"
+        snapshot(1000001, "TMB", opening)
+        history(1000001, "SBMT", opening)
+        history(1000001, "CMPT", opening)
+        cash(-1100, "Trade settlement 1000001", opening)
+        holding(1000001, 1000001, 0, 1)
+        for identifier, kind in ((1000002, "TMS"), (1000003, "TMB")):
+            snapshot(identifier, kind, timestamp)
+            history(identifier, "SBMT", timestamp)
+            history(identifier, "CMPT", timestamp)
+        cash(900, "Trade settlement 1000002", timestamp)
+        cash(-1100, "Trade settlement 1000003", timestamp)
+        holding(1000002, 1000001, 1, 0)
+        holding(1000003, 1000003, 0, 1)
+        expected_trades = 3
+    stage = SimpleNamespace(root=tmp_path, records=lambda table, partition: iter(tables.get(table, [])),
+                            frame=lambda table, partition: pl.DataFrame(tables.get(table, [])))
+    securities = {"S0000000001": [("2017-07-01 00:00:00", 0, "ACTV")]}
+    result = validation._account_replay(stage, 0, config, securities,
+                                        {"2018-11-15": "16:00:00", "2018-11-16": "16:00:00"}, {1})
+    assert result == (1, expected_trades, expected_trades)
+
+
+@pytest.mark.parametrize("pending_first", [False, True])
+def test_same_second_settlement_order_preserves_cash_and_position_origin(tmp_path, pending_first):
+    _causal_replay(tmp_path, pending_first=pending_first)
+
+
+def test_same_second_new_pending_order_reserves_before_higher_trade_id(tmp_path):
+    with pytest.raises(ValidationError, match="Open buy orders reserve unavailable funds"):
+        _causal_replay(tmp_path, pending_first=False, submission_conflict=True)
+
+
+def test_same_second_later_deposit_cannot_fund_earlier_cash_transaction(tmp_path):
+    with pytest.raises(ValidationError, match="Cash balance"):
+        _causal_replay(tmp_path, pending_first=False, negative_first=True)

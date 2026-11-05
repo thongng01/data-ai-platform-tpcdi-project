@@ -152,8 +152,20 @@ class Stage1IntentPlanner:
     def closing(self, account, day):
         return int(account["close_day"]) == day
 
+    def closures(self, simulation, day, scheduled_indices):
+        return [index for index in scheduled_indices if self.closing(simulation.accounts[index], day)]
+
     def allow_ordinary(self, account, day):
         return int(account["open_day"]) <= day < int(account["close_day"])
+
+    def allow_cash(self, simulation, index, day, name):
+        return True
+
+    def allow_trade(self, simulation, index, day, kind):
+        return True
+
+    def watch_cancel_share(self, simulation, customer, day, default_share):
+        return default_share
 
 
 class BusinessSimulation:
@@ -344,6 +356,9 @@ class BusinessSimulation:
         bid = int(prices["close"][security])
         if kind in ("TMB", "TMS"):
             bid = int(prices["high"][security]) if kind == "TMB" else int(prices["low"][security])
+        if force_sell is None and not self.planner.allow_trade(self, index, offset, kind):
+            self.metrics["rejected_by_intent_planner"] += 1
+            return
         if kind in ("TMB", "TLB"):
             available = self.ledger.available(index)
             unit_cost = bid + (bid * self.config.commission_basis_points + 9999) // 10000
@@ -425,6 +440,15 @@ class BusinessSimulation:
         for offset in range(self.total_days):
             day = config.start + timedelta(days=offset)
             prices = self.market.day(day)
+            scheduled = set(closes[offset])
+            selected = set(self.planner.closures(self, offset, tuple(sorted(scheduled))))
+            for index in scheduled - selected:
+                self.accounts[index]["close_day"] = self.total_days
+            for index in selected:
+                if not 0 <= index < len(self.accounts) or int(self.accounts[index]["open_day"]) > offset:
+                    raise ValueError("A closure intent requires an existing account.")
+                self.accounts[index]["close_day"] = offset
+            closes[offset] = sorted(selected)
             active = (self.accounts["open_day"] <= offset) & (self.accounts["close_day"] > offset)
             self.metrics["account_days"] += int(np.count_nonzero(active)) + len(closes[offset])
             new_customers = set(joins[offset])
@@ -482,6 +506,8 @@ class BusinessSimulation:
                             intents.append((second, account_id, ordinal, "submit", int(index), ordinal))
                     deposit = bool(deposits[position])
                     withdrawal = bool(withdrawals[position])
+                    deposit = deposit and self.planner.allow_cash(self, int(index), offset, "Deposit")
+                    withdrawal = withdrawal and self.planner.allow_cash(self, int(index), offset, "Withdrawal")
                     if deposit or withdrawal:
                         multiplier = config.tax_season_multiplier if day.month in (4, 12) and int(account["tax_status"]) != 1 else 1
                         if deposit:
@@ -530,7 +556,8 @@ class BusinessSimulation:
                     self.customer_versions[identifier] += 1
                     self.action("UPDCUST", day, 3, identifier, ordinal=self.customer_versions[identifier])
                 for security, due in sorted(list(self.watches.get(identifier, {}).items())):
-                    cancel_for_account = identifier in closing_customers and self.draw(identifier, offset, "close-watch", security) < config.account_watch_cancel_share
+                    cancel_share = self.planner.watch_cancel_share(self, identifier, offset, config.account_watch_cancel_share)
+                    cancel_for_account = identifier in closing_customers and self.draw(identifier, offset, "close-watch", security) < cancel_share
                     if due <= offset or identifier in inactive_customers or cancel_for_account:
                         self.watch(identifier, security, day, 21 * 3600, "CNCL")
                         del self.watches[identifier][security]
@@ -560,11 +587,11 @@ class BusinessSimulation:
             "live_holdings": len(self.holdings.index), "peak_live_holdings": self.holdings.high_water,
             "open_trades": len(self.orders), "peak_open_trades": self.maximum_open_orders,
             "active_watches": sum(len(w) for w in self.watches.values()), "peak_active_watches": self.maximum_watches,
-            "state_buffer_bytes": self.holdings.data.nbytes + self.ledger.balance.nbytes + self.ledger.reserved.nbytes,
+            "numeric_state_buffer_bytes": sum(array.nbytes for array in (self.holdings.data, self.ledger.balance, self.ledger.reserved, self.ledger.limits, self.accounts, self.customers, self.cash_ordinals, self.trade_ordinals, self.account_versions, self.activity_variation)),
         }
 
 
-def _run_group(config_dict, root_string, first_customer, last_customer):
+def _run_group(config_dict, root_string, first_customer, last_customer, planner_factory=Stage1IntentPlanner, recorder_factory=SourceRecorder):
     from .config import Config
     from .generation import Generation
     from .market import Market
@@ -577,24 +604,36 @@ def _run_group(config_dict, root_string, first_customer, last_customer):
     group_accounts = accounts[(accounts["customer_id"] >= first_customer) & (accounts["customer_id"] < last_customer)]
     group_root = root / "_work/groups" / f"{first_customer:011d}"
     generation = Generation(config, group_root)
-    simulation = BusinessSimulation(generation, Market(root, config), group_customers, group_accounts)
+    simulation = BusinessSimulation(generation, Market(root, config), group_customers, group_accounts,
+                                    planner=planner_factory(), recorder=recorder_factory(generation))
     result = simulation.run()
+    frame = pl.DataFrame({name: group_accounts[name] for name in group_accounts.dtype.names}).with_columns(
+        (pl.lit(config.start) + pl.duration(days=pl.col("open_day"))).cast(pl.Date).alias("open_date"),
+        pl.when(pl.col("close_day") < config.total_days)
+        .then(pl.lit(config.start) + pl.duration(days=pl.col("close_day")))
+        .otherwise(None).cast(pl.Date).alias("close_date"),
+    )
+    hidden = root / "summary" / "hidden"
+    hidden.mkdir(parents=True, exist_ok=True)
+    frame.write_parquet(hidden / f"accounts-{first_customer:011d}.parquet")
     generation.close()
     return str(group_root), result
 
 
-def generate_activity(generation, market, population):
+def generate_activity(generation, market, population, planner_factory=Stage1IntentPlanner, recorder_factory=SourceRecorder):
     from concurrent.futures import ProcessPoolExecutor
     from multiprocessing import get_context
 
     config = generation.config
     root = generation.root
+    for path in (root / "summary" / "hidden").glob("accounts-*.parquet"):
+        path.unlink()
     maximum_customer = int(population.customers["customer_id"].max())
     groups = [(first, min(maximum_customer + 1, first + config.customer_group_size)) for first in range(1, maximum_customer + 1, config.customer_group_size)]
     summaries = []
     if config.workers == 1:
         for first, last in groups:
-            path, summary = _run_group(config.as_dict(), str(root), first, last)
+            path, summary = _run_group(config.as_dict(), str(root), first, last, planner_factory, recorder_factory)
             generation.adopt(Path(path))
             summaries.append(summary)
     else:
@@ -602,10 +641,10 @@ def generate_activity(generation, market, population):
         with ProcessPoolExecutor(max_workers=1, mp_context=get_context("spawn")) as executor:
             for offset in range(0, len(groups), 2):
                 first, last = groups[offset]
-                future = executor.submit(_run_group, config.as_dict(), str(root), first, last)
+                future = executor.submit(_run_group, config.as_dict(), str(root), first, last, planner_factory, recorder_factory)
                 if offset + 1 < len(groups):
                     a, b = groups[offset + 1]
-                    path, summary = _run_group(config.as_dict(), str(root), a, b)
+                    path, summary = _run_group(config.as_dict(), str(root), a, b, planner_factory, recorder_factory)
                     generation.adopt(Path(path))
                     summaries.append(summary)
                 path, summary = future.result()
@@ -618,7 +657,7 @@ def generate_activity(generation, market, population):
         for key, value in summary.items():
             if key in counters:
                 counters[key].update(value)
-            elif key.startswith("peak_") or key == "state_buffer_bytes":
+            elif key.startswith("peak_") or key == "numeric_state_buffer_bytes":
                 peaks[key] = max(peaks[key], value)
             else:
                 totals[key] += value

@@ -2,6 +2,7 @@
 
 import calendar
 import hashlib
+import heapq
 import json
 import math
 import re
@@ -9,13 +10,17 @@ import tempfile
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from itertools import groupby
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
 import polars as pl
 
 from .config import Config, read_yaml
-from .formats import Field, TYPES, load_sources
+from .formats import TYPES, load_sources
+
+
+_VALIDATION_PARTITION_BYTES = 16 * 1024**2
 
 
 class ValidationError(ValueError):
@@ -280,9 +285,16 @@ def _xml(stage, path, sources, config):
     _require(root.tag == "{http://www.tpc.org/tpc-di}Actions" and not root.attrib, "Unexpected XML root.")
     previous = ("", -1)
     counts = defaultdict(int)
+    depth = 1
     for event, action in context:
-        if event != "end" or action.tag != "{http://www.tpc.org/tpc-di}Action":
+        if event == "start":
+            depth += 1
+            _require(depth != 2 or action.tag == "{http://www.tpc.org/tpc-di}Action", "Unexpected XML root child.")
             continue
+        depth -= 1
+        if action.tag != "{http://www.tpc.org/tpc-di}Action":
+            continue
+        _require(depth == 1, "An XML action must be a direct child of Actions.")
         _require(set(action.attrib) == {"ActionTS", "ActionType"}, "Unexpected XML action attributes.")
         timestamp = action.attrib["ActionTS"]
         _require(len(timestamp) == 19 and datetime.fromisoformat(timestamp).isoformat() == timestamp, "Invalid XML action timestamp.")
@@ -335,7 +347,7 @@ def _xml(stage, path, sources, config):
     return dict(counts)
 
 
-def _finwire(paths, config):
+def _finwire(paths, config, industries):
     layouts = read_yaml(Path(__file__).parent / "definitions" / "finwire.yaml")
     companies = {}
     securities = defaultdict(list)
@@ -366,6 +378,7 @@ def _finwire(paths, config):
             counts[kind] += 1
             if kind == "CMP":
                 _require(values["Status"] in {"ACTV", "INAC"} and values["CIK"].isdigit(), "Invalid company identity or status.")
+                _require(values["IndustryID"] in industries, "Company industry is missing.")
                 _require(values["SPrating"] in {"AAA", "AA+", "AA", "AA-", "A+", "A", "A-", "BBB+", "BBB", "BBB-", "BB+", "BB", "BB-", "B+", "B", "B-", "CCC+", "CCC", "CCC-", "CC", "C", "D"}, "Invalid company credit rating.")
                 companies[int(values["CIK"])] = posted.strftime("%Y-%m-%d %H:%M:%S")
             elif kind == "SEC":
@@ -476,7 +489,7 @@ def _stream(path, source):
             raise ValidationError(f"{path}, row {number}: {error}") from error
 
 
-def _customer_replay(stage, partition, config, securities):
+def _customer_replay(stage, partition, config, securities, tax_rates):
     events = list(stage.records("CustomerXML", partition))
     for row in stage.records("Customer", partition):
         row.update(_present=[name for name in row if name.startswith("C_")],
@@ -494,9 +507,11 @@ def _customer_replay(stage, partition, config, securities):
         for name in row["_present"]:
             values[name] = row[name]
         _require(values["C_TIER"] in (1, 2, 3) and values["C_ST_ID"] in {"ACTV", "INAC"}, "Invalid customer tier or status.")
+        _require(values["C_LCL_TX_ID"] in tax_rates and values["C_NAT_TX_ID"] in tax_rates, "Customer tax rate is missing.")
         born = date.fromisoformat(values["C_DOB"])
-        age = date.fromisoformat(row["_day"]).year - born.year
-        _require(0 <= age <= 120, "Customer date of birth is outside the valid range.")
+        current_date = date.fromisoformat(row["_day"])
+        age = current_date.year - born.year
+        _require(born <= current_date and age <= 120, "Customer date of birth is outside the valid range.")
         if existing is None:
             lifetimes[identifier] = [row["_timestamp"], None]
         if values["C_ST_ID"] == "INAC":
@@ -523,6 +538,81 @@ def _customer_replay(stage, partition, config, securities):
     directory.mkdir(exist_ok=True)
     pl.DataFrame(rows, schema=schema).write_parquet(directory / f"{partition:08d}.parquet")
     return len(current)
+
+
+def _causal_events(events):
+    """Keep source-proven dependencies when several events share one second."""
+    events.sort(key=lambda item: (*item[:3], item[4]["_order"] if item[3] == "trade" else 0))
+    for _, same_second in groupby(events, key=lambda item: item[0]):
+        group = list(same_second)
+        edges = [set() for _ in group]
+        indegree = [0] * len(group)
+        transitions = defaultdict(list)
+        insertions = defaultdict(list)
+        cash_nodes = []
+
+        def precedes(left, right):
+            if right not in edges[left]:
+                edges[left].add(right)
+                indegree[right] += 1
+
+        for index, (_, _, _, kind, row) in enumerate(group):
+            if kind == "trade":
+                transitions[row["T_ID"]].append(index)
+                if row["_flag"] == "I":
+                    insertions[row["T_CA_ID"]].append(index)
+            elif kind == "cash":
+                cash_nodes.append(index)
+        for indices in transitions.values():
+            indices.sort(key=lambda index: group[index][4]["_order"])
+            for left, right in zip(indices, indices[1:]):
+                precedes(left, right)
+        for indices in insertions.values():
+            indices.sort(key=lambda index: (group[index][4]["T_ID"], group[index][4]["_order"]))
+            for left, right in zip(indices, indices[1:]):
+                precedes(left, right)
+                if group[left][4]["T_TT_ID"] in {"TMB", "TMS"}:
+                    terminal = next((node for node in transitions[group[left][4]["T_ID"]]
+                                     if group[node][4]["T_ST_ID"] == "CMPT"), None)
+                    if terminal is not None:
+                        precedes(terminal, right)
+        cash_nodes.sort(key=lambda index: group[index][4]["CT_ID"])
+        previous_cash = None
+        for index in cash_nodes:
+            row = group[index][4]
+            if previous_cash is not None:
+                precedes(previous_cash, index)
+            if row["CT_NAME"].startswith("Trade settlement "):
+                trade_id = int(row["CT_NAME"][17:])
+                indices = transitions.get(trade_id, [])
+                terminal = next((node for node in indices if group[node][4]["T_ST_ID"] == "CMPT"), None)
+                if terminal is not None:
+                    precedes(terminal, index)
+                    if previous_cash is not None:
+                        precedes(previous_cash, indices[0])
+            previous_cash = index
+        def priority(index):
+            kind, row = group[index][3:]
+            if kind == "cash":
+                return 0, index
+            if kind == "trade" and row["_flag"] == "I" and row["T_ST_ID"] == "PNDG":
+                # No source ordinal places this new pending order against an older
+                # outcome. Use the executor's new-submission-before-due precedence.
+                return 1, index
+            return 2, index
+
+        available = [priority(index) for index, count in enumerate(indegree) if count == 0]
+        heapq.heapify(available)
+        visited = 0
+        while available:
+            _, index = heapq.heappop(available)
+            visited += 1
+            yield group[index]
+            for following in edges[index]:
+                indegree[following] -= 1
+                if indegree[following] == 0:
+                    heapq.heappush(available, priority(following))
+        _require(visited == len(group), "Same-second trade insertions conflict with the source cash transaction order.")
 
 
 def _account_replay(stage, partition, config, securities, sessions, brokers):
@@ -618,10 +708,15 @@ def _account_replay(stage, partition, config, securities, sessions, brokers):
             trade_id = int(row["CT_NAME"][17:])
             _require(trade_id not in settlements, "A trade has more than one settlement.")
             settlements[trade_id] = row
-    events = account_events + [(row["T_DTS"], 1, row["T_ID"], "trade", row) for row in trade_events]
-    events.extend((row["CT_DTS"], 0 if row["CT_NAME"] in {"Deposit"} or row["CT_NAME"].startswith("Dividend ") else 2,
-                   row["CT_ID"], "cash", row) for row in cash)
-    events.sort(key=lambda item: (*item[:3], item[4]["_order"] if item[3] == "trade" else 0))
+    events = [(timestamp, 10**20, identifier, kind, identifier) for timestamp, _, identifier, kind, _ in account_events]
+    for row in trade_events:
+        settlement = settlements.get(row["T_ID"])
+        # CT_ID retains the source's same-second cash order. A trade ID does not:
+        # an older pending order can complete after a newer market order.
+        causal_order = (settlement["CT_ID"] if settlement is not None and settlement["CT_DTS"] == row["T_DTS"]
+                        else 10**19 + row["T_ID"])
+        events.append((row["T_DTS"], causal_order, 0, "trade", row))
+    events.extend((row["CT_DTS"], row["CT_ID"], 1, "cash", row) for row in cash)
     balances = defaultdict(int)
     positions = {}
     trades = {}
@@ -637,7 +732,7 @@ def _account_replay(stage, partition, config, securities, sessions, brokers):
                  "Activity lies outside the account lifetime.")
         return account
 
-    for timestamp, _, _, kind, row in events:
+    for timestamp, _, _, kind, row in _causal_events(events):
         if kind == "close":
             identifier = row
             _require(balances[identifier] == 0 and not any(account == identifier for account, _ in positions) and
@@ -665,6 +760,7 @@ def _account_replay(stage, partition, config, securities, sessions, brokers):
                 identifier = int(name[17:])
                 trade = trades.get(identifier)
                 _require(trade is not None and trade["T_ST_ID"] == "CMPT" and identifier in completed, "Settlement has no completed trade.")
+                continue
             balances[account_id] += amount
             limit = 0 if account["is_cash"] else account["margin_limit_cents"]
             _require(balances[account_id] - reserved_cash[account_id] >= -limit, "Cash balance or reserved spending exceeds the borrowing limit.")
@@ -740,6 +836,10 @@ def _account_replay(stage, partition, config, securities, sessions, brokers):
             expected = (1 if sell else -1) * row["T_QTY"] * price - charge - commission - tax
             _require(settlement is not None and (settlement["CT_CA_ID"], settlement["CT_DTS"], settlement["CT_AMT"]) ==
                      (account_id, timestamp, expected), "Settlement does not match trade account, timestamp, value, or fees.")
+            balances[account_id] += expected
+            limit = 0 if account["is_cash"] else account["margin_limit_cents"]
+            _require(balances[account_id] - reserved_cash[account_id] >= -limit,
+                     "Settlement spends reserved funds or exceeds the cash or margin limit.")
             completed.add(identifier)
         trades[identifier] = row
     _require(set(holdings) == completed and set(settlements) == completed, "Holding changes or settlements include a non-completed trade.")
@@ -760,9 +860,11 @@ def validate(root: Path, config: Config, inventory=None):
     if saved is not None:
         _require(set(saved) == expected, "Manifest file coverage differs from independently derived cadence.")
     total_bytes = sum((root / relative).stat().st_size for relative in actual)
-    partitions = max(1, math.ceil(total_bytes / (16 * 1024**2)))
+    partitions = max(1, math.ceil(total_bytes / _VALIDATION_PARTITION_BYTES))
     sessions = _sessions(config)
-    securities, finwire_counts = _finwire([root / name for name in expected if Path(name).name.startswith("FINWIRE")], config)
+    industries = {row["IN_ID"] for row in _rows(root / "offline" / "initial" / "Industry.txt", sources["Industry"], 1)}
+    tax_rates = {row["TX_ID"] for row in _rows(root / "offline" / "initial" / "TaxRate.txt", sources["TaxRate"], 1)}
+    securities, finwire_counts = _finwire([root / name for name in expected if Path(name).name.startswith("FINWIRE")], config, industries)
     brokers = set()
     counts = {}
     cash_sequence = 0
@@ -802,7 +904,7 @@ def validate(root: Path, config: Config, inventory=None):
                 source = sources[name]
                 rows = _stream(path, source) if relative.startswith("stream/") else _rows(path, source, 1 if initial else 2)
                 count = 0
-                seen = set() if name in {"Prospect", "HR", "Date", "Time", "StatusType", "TradeType", "Industry", "TaxRate"} else None
+                seen = set() if name in {"HR", "Date", "Time", "StatusType", "TradeType", "Industry", "TaxRate"} else None
                 for number, row in enumerate(rows, 1):
                     count = number
                     row.setdefault("_order", number)
@@ -815,7 +917,12 @@ def validate(root: Path, config: Config, inventory=None):
                             brokers.add(int(row["EmployeeID"]))
                     elif name == "Time":
                         _require(int(row["SK_TimeID"]) == number - 1, "Time reference must cover ordered seconds 0..86399.")
-                    elif name in {"StatusType", "TradeType", "Industry", "TaxRate", "Date", "Prospect"}:
+                    elif name == "Prospect":
+                        identity = row["AgencyID"]
+                        bucket = int.from_bytes(hashlib.blake2b(identity.encode("ascii"), digest_size=8).digest(), "big") % partitions
+                        schema = {"identity": pl.String, "date": pl.String, "_partition": pl.String}
+                        stage.add("ProspectIdentity", {"identity": identity, "date": day, "_partition": str(bucket)}, schema)
+                    elif name in {"StatusType", "TradeType", "Industry", "TaxRate", "Date"}:
                         pass
                     else:
                         timestamp_field = {"Trade": "T_DTS", "TradeHistory": "TH_DTS", "CashTransaction": "CT_DTS", "WatchHistory": "W_DTS", "DailyMarket": "DM_DATE"}.get(name)
@@ -879,9 +986,12 @@ def validate(root: Path, config: Config, inventory=None):
             observed = stage.frame("DailyMarket", market_date)
             observed_symbols = set(observed["DM_S_SYMB"].to_list()) if not observed.is_empty() else set()
             _require(observed_symbols == required_symbols, f"Market coverage is incomplete for {market_date}.")
-        customers = sum(_customer_replay(stage, partition, config, securities) for partition in range(partitions))
+        customers = sum(_customer_replay(stage, partition, config, securities, tax_rates) for partition in range(partitions))
         totals = [0, 0, 0]
         for partition in range(partitions):
+            prospects = stage.frame("ProspectIdentity", partition)
+            _require(prospects.is_empty() or not prospects.select("identity", "date").is_duplicated().any(),
+                     "Duplicate Prospect identity in one snapshot.")
             for index, value in enumerate(_account_replay(stage, partition, config, securities, sessions, brokers)):
                 totals[index] += value
         peak_rows = stage.peak_rows
