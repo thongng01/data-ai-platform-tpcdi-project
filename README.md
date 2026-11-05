@@ -1,4 +1,4 @@
-# Brokerage Data and AI Platform
+# Data and AI Platform for TPC-DI Financial Data
 
 **Contents**
 
