@@ -136,13 +136,13 @@ The weighted rates yield about 0.1 trades per account per calendar day, or about
 | Event | Source | Rule | Basis |
 | --- | --- | --- | --- |
 | Trade | `Trade.txt`, `TradeHistory.txt` | Market buy 20%, limit buy 30%, limit sell 30%, market sell 20%; market orders complete; limit orders may cancel or stay pending. About 92.7% complete, 5.8% cancel, 1.5% stay pending. | TPC-DI SF3 mix and outcomes |
-| Settlement | Cash transaction | Every completed buy removes price times quantity plus fees; a completed sell adds price times quantity minus fees | Business consistency rule |
+| Settlement | Cash transaction | Every completed buy removes price times quantity plus fees; a completed sell adds price times quantity minus fees. Fees are the charge and commission; transaction tax is zero | Business consistency rule |
 | Deposit | Cash transaction | Opening deposit, then profile schedule; retirement contributions increase before the April tax deadline and in December | Simulation assumption |
 | Withdrawal | Cash transaction | Profile schedule and April tax withdrawals; cannot exceed available cash plus permitted margin borrowing | Simulation assumption and spending constraint |
 | Dividend | Cash transaction | About 40% of securities pay, mostly at 1 to 4% yield. Each paying security has a fixed quarterly date moved to the next trading day; that date is also the record date. At 06:00 UTC, start-of-day holders receive one quarter of the annual dividend per share, times the shares held. Dividend per share changes only through FINWIRE `SEC`. | Simulation assumption and simplified dividend calendar |
-| Holding change | `HoldingHistory.txt` | One per completed trade | Consistency rule |
+| Holding change | `HoldingHistory.txt` | One holding per account and security: the first buy creates it, later trades change its quantity, and a full sale ends it. One holding change per completed trade | Consistency rule; matches the TPC-DI field meanings |
 | Watch | `WatchHistory.txt` | About 0.1 per customer per day; popular securities receive more watches | TPC-DI SF3 rate; assumed popularity |
-| Daily price | `DailyMarket.txt` | One row per security per trading day; random walk plus market-wide movement | Source grain; assumed price model |
+| Daily price | `DailyMarket.txt` | One row per security per trading day; random walk plus market-wide movement. The initial load also covers the year before `initial_start`, so 52-week values exist from the first day | Source grain; assumed price model |
 | Financial report | FINWIRE `FIN` | One per company per quarter, released on the last day of the following month; file quarter follows posting timestamp `PTS`, while the record keeps its reporting period | Project cadence using TPC-DI fields |
 | Earnings | FINWIRE `FIN` | Reports begin five quarters before the quarter containing `initial_start`, 2012 Q4 for the reference calendar. Prices set the earnings scale so most P/E values fall between 5 and 40, with a few loss-making companies. | Simulation assumption; four released quarters must be available from the first day of the initial load |
 
@@ -168,7 +168,7 @@ As a source, “Cash transaction” means `CashTransaction.txt` in the initial l
 
 | Time scale | Trades | Cash transactions | Basis |
 | --- | --- | --- | --- |
-| Day | 09:30 to 16:00 UTC; peaks at the open and close | Mostly 08:00 to 22:00 UTC; dividends at 06:00 UTC | Assumed timing; simplified session clock |
+| Day | 09:30 to 16:00 UTC, or to 13:00 UTC on NYSE early-close days; peaks at the open and close | Mostly 08:00 to 22:00 UTC; dividends at 06:00 UTC | Assumed timing; simplified session clock |
 | Week | Weekdays except NYSE holidays | Every day; weekend deposits and withdrawals at about 40% of weekday levels | Holiday calendar and assumed cash-flow pattern |
 | Month | No extra pattern | Payday deposits and withdrawals near month end | Simulation assumption |
 | Year | About 4 market-shock days, each with a sharp market move and about 3 times normal trading | Tax-season contributions and withdrawals | Simulation assumption |
@@ -202,8 +202,9 @@ Business behavior sets how many accounts close. The attrition signal stage sets 
 | --- | --- | --- |
 | Closure risk | Dormant x2; active and day traders x1.5; retirees x0.5; first-year tenure x2; tier 1 x0.7; value loss above 20% over 3 months x1.5 | Assumed relative risks, calibrated to about 3% annual closure |
 | Warning pattern | 80% of closures have a leaving period; 20% have no warning | Signal assumption |
-| Leaving period | 1 to 8 weeks: deposits and buys stop; holdings sell in 1 to 4 steps; each sale is followed by a withdrawal within a day; cash drains toward zero; watches cancel | Signal assumption |
-| Customer inactivation | All accounts of the customer leave together | Customer inactivation closes all of the customer's accounts |
+| Leaving period | 1 to 8 weeks: deposits and buys stop; holdings sell in 1 to 4 steps; each sale is followed by a withdrawal within a day; cash drains toward zero; a configured share of the customer's watches cancel | Signal assumption |
+| Customer inactivation | All accounts of the customer leave together, and all of the customer's watches cancel | Customer inactivation closes all of the customer's accounts |
+| Closure order | Before an account closes, its open orders cancel, its holdings sell, any borrowing is repaid by a deposit, and the remaining cash is withdrawn. A closure without warning does this within its last days | No holding or debt disappears without a source record |
 | Look-alikes | About 2% of accounts per year sell 20 to 50% of holdings and make one large withdrawal, while deposits and trading continue | Signal assumption to prevent an outflow rule from solving the task alone |
 | Recording | Hidden leaving periods and look-alike flags appear only in the generator summary | Leakage prevention |
 | Signal check | On a small sample, a quick model must beat the rule “no deposit and net outflow over 30 days”; that rule's precision must stay below about 30% | Acceptance check for the synthetic signal, before pipeline work |
