@@ -349,4 +349,4 @@ Before the first start, [create the private configuration files](docs/IaC.md#1-h
    .venv/bin/python -m data.data_source.generator validate local/runs/small
    ```
 
-   The [generator guide](data/data_source/generator/README.md) explains the run settings, output paths, tests, and reference-calendar measurements. Only `offline/` files enter `upstream`; saved cash transaction messages remain separate from offline files.
+   The [generator guide](data/data_source/generator/README.md) explains the run settings, output paths, tests, and reference-calendar measurements. The [clean publisher guide](data/data_source/publisher/README.md) explains how to deliver saved files to `upstream` and replay cash transaction messages to Kafka. Only `offline/` files enter `upstream`; saved cash transaction messages remain separate from offline files.

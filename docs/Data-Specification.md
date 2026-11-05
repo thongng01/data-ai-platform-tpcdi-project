@@ -440,7 +440,9 @@ U|1488405|372101|2017-07-08 00:57:49|SBMT|TLS|0|AAAAAAAAAAAABFV|5225|4.06|428|99
 | `T_CHRG` | `VALUE_T` | Null except in CMPT records, then >= 0 | Fee charged for placing this trade request. |
 | `T_COMM` | `VALUE_T` | Null except in CMPT records, then >= 0 | Commission earned on this trade |
 | `T_TAX` | `VALUE_T` | Null except in CMPT records, then >= 0 | Amount of tax due on this trade |
-| `T_CHANNEL` | Text | `WEB`, `MOBILE`, `BROKER` | Project addition at the end of version 2 rows, from 2019-07-01 by default. Version 1 has 14 business fields; version 2 has 15. Daily rows also have the two CDC fields. |
+| `T_CHANNEL` | Text | `WEB`, `MOBILE`, `BROKER` | Project addition at the end of version 2 daily rows, from the configured date, 2019-07-01 by default. Version 1 has 14 business fields; version 2 has 15. Daily rows also have the two CDC fields. |
+
+The initial load always uses version 1, even if its period reaches the configured channel date. A daily file uses its delivery business date to select the contract, not the trade's original `T_DTS`. An update to an earlier trade therefore carries `T_CHANNEL` when its daily contract requires it.
 
 DP1 checks field count against the dated contract. The first version 2 write adds the channel column to Bronze through Delta schema merge. Silver maps both versions to one schema, and `dim_trade.channel` stays NULL when the source did not record it. Rows that match neither contract go to quarantine.
 

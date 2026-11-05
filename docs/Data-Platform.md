@@ -36,7 +36,7 @@ The generator produces connected records for all 18 TPC-DI business and referenc
 
 ### Generation Model
 
-Four generation stages separate business behavior from data errors and delivery problems. The generator runs stages 1 to 3. The publisher runs stage 4, so a new publisher profile does not require new business data. Both belong to the simulated source department under `data/data_source/`, in `generator/` and `publisher/`.
+Four generation stages separate business behavior from data errors and delivery problems. The generator runs stages 1 to 3. The publisher runs stage 4, so a new publisher profile does not require new business data. Both belong to the simulated source department under `data/data_source/`, in `generator/` and `publisher/`. The [generator guide](../data/data_source/generator/README.md) explains configuration and execution; the [publisher guide](../data/data_source/publisher/README.md) explains clean delivery of saved files and messages.
 
 Offline files carry the initial load and daily deliveries. Kafka carries cash transactions for the daily delivery period. The generator's three stages form one day-by-day model, not three separate services or full-dataset rewrites.
 
@@ -90,11 +90,13 @@ One unit targets about 1 GB of offline files over the reference calendar, 2014-0
 | 5 | 16,500 | 27,500 | 1.5 GB | 0.9 MB | 0.4 GB | 5 GB | 0.9 GB | Daily development |
 | 10 | 33,000 | 55,000 | 2.9 GB | 1.9 MB | 0.8 GB | 10 GB | 1.8 GB | Integration and first stream replays |
 | 15 | 49,500 | 82,500 | 4.4 GB | 2.8 MB | 1.2 GB | 15 GB | 2.6 GB | Larger integration runs |
-| 20 | 66,000 | 110,000 | 5.8 GB | 3.7 MB | 1.6 GB | 20 GB | 3.5 GB | Tuning with an initial load larger than the current 5 GB Spark worker limit |
+| 20 | 66,000 | 110,000 | 5.8 GB | 3.7 MB | 1.6 GB | 20 GB | 3.5 GB | Tuning with an initial load larger than a 5 GB Spark worker budget |
 | 50 | 165,000 | 275,000 | 14.5 GB | 9.3 MB | 4 GB | 50 GB | 8.8 GB | Experiment runs and demonstrations |
 | 100 | 330,000 | 550,000 | 29 GB | 19 MB | 8 GB | 100 GB | 17.6 GB | Designed firm and offline volume evidence |
 
-These are estimates from the firm model, excluding the fixed 0.4 GB. They do not establish runtime. First measured runs at factors 1 and 5 calibrate the customers per unit, initially about 3,300. The full-calendar large run must measure at least 100 GB of offline source files for rubric row `r5`. If factor 100 falls short, a higher factor, such as 105, supplies the required volume. Stream bytes are counted separately.
+These are estimates from the firm model, excluding the fixed 0.4 GB. They do not establish runtime. Calibration uses a full-reference-calendar factor 1 run and subtracts measured fixed-family bytes from its offline total. Fixed families are `DailyMarket`, FINWIRE, and the six reference files; HR scales with the firm. The remainder estimates variable bytes per unit. A second factor 1 run checks the adjusted `customers_per_unit`, with the market, behavior settings, and seed unchanged.
+
+The factor 1 slope is provisional: projecting it to factor 5 is not a measurement at factor 5. Population sampling and staffing rounding can change scaling. The full-calendar large run must measure at least 100 GB of offline source files for rubric row `r5`; a factor 100 projection does not satisfy that requirement. If factor 100 falls short, a higher factor supplies the required volume. Stream bytes are counted separately.
 
 Generation size and processed workload are separate. The large dataset is generated once. Each environment processes the largest factor it handles well, and each experiment processes only the dates and volume needed to show its effect. A typical experiment uses the initial load and some daily deliveries. Larger firms use the same partitioned processing principles. Unmeasured capacity projections are not established limits. Local service groups and resource limits are in [Infrastructure](IaC.md#2-development-environment).
 
@@ -110,6 +112,8 @@ Generation size and processed workload are separate. The large dataset is genera
 | Security | FINWIRE `SEC` | About 2,000 at every factor | One issuing company | Assumed market size; TPC-DI relationship |
 
 `HR.csv` and the six reference files (`Date.txt`, `Time.txt`, `Industry.txt`, `StatusType.txt`, `TaxRate.txt`, and `TradeType.txt`) load once and stay static. Market and reference settings remain independent of firm size.
+
+Customers, prospects, and HR employees use small public-domain name lists from the Social Security Administration (SSA) and the Census Bureau. Stable identity and field-purpose keys select names and coherent city, state, and postal code combinations. Matching prospects share customer names and addresses. Synthetic streets, reserved fictional telephone numbers, and example-domain emails keep personal data reproducible without copying household records. The [word-list provenance](../data/data_source/generator/definitions/README.md) records sources and terms.
 
 #### Attributes That Drive Behavior
 
@@ -196,7 +200,7 @@ These are factor 100 expectations, not measured results. Counts and activity vol
 
 ### Generation Stage 2: Attrition Signal
 
-Business behavior sets how many accounts close. The attrition signal stage sets what happens before closure, so observed behavior can support the [30-day account attrition task](ML-Platform.md). Hidden state never enters platform features.
+The attrition signal stage selects account closures and customer inactivations from profile, tenure, tier, and past investment results. It adds the behavior before closure so observed events can support the [30-day account attrition task](ML-Platform.md). Risk selection uses completed earlier days, not future outcomes. Hidden state never enters platform features.
 
 | Rule | Value | Basis |
 | --- | --- | --- |
@@ -208,6 +212,8 @@ Business behavior sets how many accounts close. The attrition signal stage sets 
 | Look-alikes | About 2% of accounts per year sell 20 to 50% of holdings and make one large withdrawal, while deposits and trading continue | Signal assumption to prevent an outflow rule from solving the task alone |
 | Recording | Hidden leaving periods and look-alike flags appear only in the generator summary | Leakage prevention |
 | Signal check | On a small sample, a quick model must beat the rule “no deposit and net outflow over 30 days”; that rule's precision must stay below about 30% | Acceptance check for the synthetic signal, before pipeline work |
+
+A deterministic expected-trait curve normalizes risk across customer groups. The plan anchors expected firm size at cutover; measurements report realized customer and account counts and exit rates. The configured annual rates do not guarantee exact rates in each sample.
 
 ### Generation Stage 3: Source Recording
 
@@ -222,13 +228,17 @@ The source recording stage writes TPC-DI formats and data errors. It changes rec
 | Fee or commission above trade value | About 0.1% of completed trades for each error; settlement still uses the correct amount | TPC-DI SF3 rates; consistent settlement rule |
 | Schema change | From a configurable date, 2019-07-01 by default, `Trade.txt` adds `T_CHANNEL` at the end: `WEB`, `MOBILE`, or `BROKER`. Traders favor web and mobile; retirees use brokers more often. The initial load keeps the original format. | Project addition; TPC-DI itself has fixed formats |
 
-The trade format changes from 14 to 15 business fields. Daily CDC fields are additional fields in both versions. The simulation has no text encoding problem and no change to `CT_NAME`. Section 3 defines error and schema handling.
+The five data errors use independent stable draws and can occur together in one record. Customer errors apply to initial CMS XML and daily customer rows; rating errors apply to FINWIRE company records. Fee errors apply only to completed trades. The recorder keeps correct business values separate from recorded fields, so settlements and hidden state remain correct.
+
+The local `summary/data_errors.jsonl` audit stores each source identity, field, correct value, and recorded value. It stays outside source delivery and ingestion. Generator validation recomputes error selection, verifies exact audit evidence, and restores only verified values for business replay. Missing, duplicate, unused, or mismatched evidence fails validation; enabling an error rate does not authorize arbitrary corruption.
+
+The trade format changes from 14 to 15 business fields according to the daily delivery date, even when a trade began earlier. The initial load always retains 14 business fields. Daily CDC fields are additional fields in both versions. The simulation has no text encoding problem and no change to `CT_NAME`. Section 3 defines platform error and schema handling.
 
 ### Generation Stage 4: Delivery
 
 The publisher reads one generated dataset and applies a named publisher profile, such as `clean` or `realistic`. It publishes complete files to `upstream` and cash transactions for the daily delivery period to Kafka. Generated files contain no delivery problems. The publisher report compares delivered data with those files and records actual delays, repeats, and corrections.
 
-The clean profile comes first in implementation. The realistic profile adds the configurable defaults below after a clean end-to-end path works.
+The clean profile sends the saved bytes without adding delivery problems. The realistic profile applies the configurable defaults below.
 
 | Problem | Realistic default | Basis |
 | --- | --- | --- |
@@ -257,7 +267,7 @@ Evidence comes from measured runs, not the configured rates alone. The publisher
 
 ### Generator Engineering Rules
 
-- **Bounded memory**: The day-by-day Polars simulation carries account state and processes bounded groups. Account, holding, and unfinished-trade state must have an explicit memory budget.
+- **Bounded memory**: NumPy arrays hold mutable account state and select daily activity over bounded customer groups. Polars builds export batches, hidden-state files, and validation queries. Memory budgets cover account, holding, unfinished-trade, and recent-return state. Ordered execution preserves spending and settlement rules.
 - **Repeatability**: IDs and random draws use stable entity keys and named seeds, not chunk size or worker count. The same semantic settings, seeds, and generator version produce the same source bytes.
 - **Ordered exports**: Sort records in bounded runs and merge them without collecting the entire dataset into one frame. Preserve event and CDC order across groups.
 - **Separate reports**: The local generator summary records settings, per-file bytes and rows, hidden state, data errors, and measured characteristics. Ingestion never reads it. The publisher writes a separate delivery report.
