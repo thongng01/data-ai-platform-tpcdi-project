@@ -145,6 +145,8 @@ Run the documentation, diagram, and generator checks from the repository root in
 ```bash
 .venv/bin/python workflow/tools/check_docs.py
 .venv/bin/python -m pytest data/data_source/generator/tests -q --basetemp=local/tmp/pytest-generator
+.venv/bin/python -m data.data_source.generator run --config data/data_source/generator/configs/small.yaml --output local/runs/small
+.venv/bin/python -m data.data_source.generator validate local/runs/small
 .venv/bin/python -m unittest discover -s workflow/tools/diagrams -p 'test_*.py' -v
 ```
 
