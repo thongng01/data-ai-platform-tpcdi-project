@@ -1,3 +1,5 @@
+"""Check population plans, actual lifetime publication, and personal source fields."""
+
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
@@ -14,12 +16,14 @@ from data.data_source.generator.population import ACCOUNT_DTYPE, CUSTOMER_DTYPE,
 
 
 def short_config(**kwargs):
+    """Check short config."""
     return Config(initial_start="2018-01-01", initial_end="2018-12-31",
                   daily_start="2019-01-01", daily_end="2020-12-31",
                   customers_per_unit=500, companies=2, securities=3, **kwargs)
 
 
 def parse_action(action):
+    """Check parse action."""
     return ET.fromstring(f'<TPCDI:Actions xmlns:TPCDI="http://www.tpc.org/tpc-di">{action}</TPCDI:Actions>')[0]
 
 
@@ -27,6 +31,7 @@ def parse_action(action):
        count=st.integers(min_value=1, max_value=300),
        margin_share=st.sampled_from([0, .2, .75, 1]))
 def test_account_trait_bounds(seed, count, margin_share):
+    """Check account trait bounds."""
     config = short_config(seed=seed, margin_share=margin_share)
     accounts = _account_traits(config, np.arange(1, count + 1))
     assert np.all(accounts["wealth_cents"] >= config.wealth_min * 100)
@@ -42,6 +47,7 @@ def test_account_trait_bounds(seed, count, margin_share):
 
 
 def test_population_is_independent_of_execution_groups(tmp_path):
+    """Check population is independent of execution groups."""
     config = short_config()
     first = build_population(config, tmp_path / "one")
     other = build_population(replace(config, customer_group_size=7, workers=2, threads=1, merge_fan_in=2), tmp_path / "seven")
@@ -54,8 +60,61 @@ def test_population_is_independent_of_execution_groups(tmp_path):
     assert not first.accounts.flags.writeable
 
 
-def test_cutover_target_and_account_lifetimes(tmp_path):
-    config = short_config()
+@pytest.fixture(scope="module")
+def dynamic_run(tmp_path_factory):
+    """Run real market and activity stages before inspecting realized lifetimes."""
+    from data.data_source.generator.activity import generate_activity
+    from data.data_source.generator.generation import Generation
+    from data.data_source.generator.market import Market
+    config = Config(initial_start="2018-01-01", initial_end="2018-12-31", daily_start="2019-01-01", daily_end="2019-12-31",
+                    customers_per_unit=128, companies=2, securities=3, annual_closure=.3, annual_inactivation=.2,
+                    watch_daily_rate=.005, customer_group_size=31)
+    root = tmp_path_factory.mktemp("dynamic-population")
+    generation = Generation(config, root)
+    market = Market.build(config, root, generation)
+    population = build_population(config, root)
+    before = population.accounts.copy()
+    summary = generate_activity(generation, market, population)
+    generation.close()
+    return config, root, population, before, summary
+
+
+def test_runtime_lifetimes_replace_plans_and_preserve_ownership(dynamic_run):
+    """Actual hazards update mmap lifetimes without creating invalid references."""
+    config, root, population, before, summary = dynamic_run
+    customers, accounts = population.customers, population.accounts
+    opened = accounts[accounts["open_day"] < config.total_days]
+    assert np.any(customers["inactivation_day"] < config.total_days)
+    assert np.any(accounts["open_day"] != before["open_day"])
+    assert np.all(opened["open_day"] <= opened["close_day"])
+    owners = customers[opened["customer_id"] - 1]
+    assert np.all(opened["open_day"] >= owners["open_day"])
+    assert np.all(opened["close_day"] <= owners["inactivation_day"])
+    assert np.unique(opened["account_id"]).size == len(opened)
+    for customer in customers[customers["inactivation_day"] < config.total_days]:
+        owned = opened[opened["customer_id"] == customer["customer_id"]]
+        assert np.any(owned["close_day"] == customer["inactivation_day"])
+    hidden = pl.concat([pl.read_parquet(path) for path in sorted((root / "summary/hidden").glob("accounts-*.parquet"))])
+    assert hidden.height == len(opened)
+    assert hidden.schema["open_date"] == hidden.schema["close_date"] == pl.Date
+    assert hidden["account_id"].to_list() == opened["account_id"].tolist()
+    assert summary["closures"] == np.count_nonzero(opened["close_day"] < config.total_days)
+    assert summary["generation_stage"] == 2
+
+
+def test_global_risk_curve_ignores_execution_groups(tmp_path):
+    """Expected normalization depends on joining traits, never future losses."""
+    config = Config(customers_per_unit=64, securities=3, companies=2)
+    first = build_population(config, tmp_path / "first")
+    second = build_population(replace(config, customer_group_size=7, workers=2), tmp_path / "second")
+    np.testing.assert_array_equal(np.load(first.path / "risk_normalizer.npy"), np.load(second.path / "risk_normalizer.npy"))
+    assert np.all(first.customers["inactivation_day"] == config.total_days)
+    assert np.all(first.accounts["close_day"] == config.total_days)
+
+
+def test_static_cutover_target_and_account_lifetimes(tmp_path):
+    """The stage 1 policy retains its exact preplanned cutover count."""
+    config = short_config(attrition_enabled=False)
     population = build_population(config, tmp_path)
     customers, accounts = population.customers, population.accounts
     day = (config.cutover - config.start).days
@@ -70,8 +129,9 @@ def test_cutover_target_and_account_lifetimes(tmp_path):
     assert np.all((accounts["account_id"] - 1) // population.slot_stride + 1 == accounts["customer_id"])
 
 
-def test_customer_inactivation_closes_remaining_accounts_together(tmp_path):
-    config = short_config(annual_closure=0.3, annual_inactivation=0.2)
+def test_static_customer_inactivation_closes_remaining_accounts_together(tmp_path):
+    """Static inactivation closes every remaining owned account."""
+    config = short_config(attrition_enabled=False, annual_closure=0.3, annual_inactivation=0.2)
     population = build_population(config, tmp_path)
     customers, accounts = population.customers, population.accounts
     inactive = customers[customers["inactivation_day"] < config.total_days]
@@ -83,8 +143,9 @@ def test_customer_inactivation_closes_remaining_accounts_together(tmp_path):
         assert np.any(owned["close_day"] == customer["inactivation_day"])
 
 
-def test_full_calendar_rates_and_growth(tmp_path):
-    config = Config(customers_per_unit=10000)
+def test_static_full_calendar_rates_and_growth(tmp_path):
+    """The retained stage 1 model supplies the original rate and growth baseline."""
+    config = Config(customers_per_unit=10000, attrition_enabled=False)
     population = build_population(config, tmp_path)
     customers, accounts = population.customers, population.accounts
     account_exposure = np.sum(accounts["close_day"] - accounts["open_day"]) / 365.25
@@ -103,6 +164,7 @@ def test_full_calendar_rates_and_growth(tmp_path):
 
 
 def test_closures_use_nyse_sessions(tmp_path):
+    """Check closures use nyse sessions."""
     from data.data_source.generator.config import calendar_for
     config = short_config(annual_closure=.5, annual_inactivation=.2)
     population = build_population(config, tmp_path)
@@ -113,6 +175,7 @@ def test_closures_use_nyse_sessions(tmp_path):
 
 
 def test_tiers_rank_complete_cohort_and_break_ties_by_customer_id():
+    """Check tiers rank complete cohort and break ties by customer id."""
     customers = np.zeros(10, dtype=CUSTOMER_DTYPE)
     customers["customer_id"] = np.arange(1, 11)
     accounts = np.zeros(10, dtype=ACCOUNT_DTYPE)
@@ -124,6 +187,7 @@ def test_tiers_rank_complete_cohort_and_break_ties_by_customer_id():
 
 
 def test_tiers_use_monthly_cohorts_not_small_daily_groups():
+    """Check tiers use monthly cohorts not small daily groups."""
     customers = np.zeros(10, dtype=CUSTOMER_DTYPE)
     customers["customer_id"] = np.arange(1, 11)
     customers["open_day"] = np.arange(1, 11)
@@ -136,6 +200,7 @@ def test_tiers_use_monthly_cohorts_not_small_daily_groups():
 
 
 def test_configured_tier_and_tax_shares(tmp_path):
+    """Check configured tier and tax shares."""
     config = short_config(tier_shares=(.2, .5, .3), tax_shares=(0, 1, 0))
     population = build_population(config, tmp_path)
     initial = population.customers[population.customers["open_day"] == 0]
@@ -148,6 +213,7 @@ def test_configured_tier_and_tax_shares(tmp_path):
 
 
 def test_tier_uses_total_joining_wealth_not_replacement_wealth():
+    """Check tier uses total joining wealth not replacement wealth."""
     customers = np.zeros(10, dtype=CUSTOMER_DTYPE)
     customers["customer_id"] = np.arange(1, 11)
     accounts = np.zeros(12, dtype=ACCOUNT_DTYPE)
@@ -159,8 +225,9 @@ def test_tier_uses_total_joining_wealth_not_replacement_wealth():
     assert customers["tier"][-1] == 3
 
 
-def test_hidden_accounts_are_typed_and_have_dates(tmp_path):
-    config = short_config()
+def test_static_hidden_accounts_are_typed_and_have_dates(tmp_path):
+    """Static evidence is typed; dynamic evidence follows business execution."""
+    config = short_config(attrition_enabled=False)
     population = build_population(config, tmp_path)
     paths = sorted((tmp_path / "summary" / "hidden").glob("accounts-*.parquet"))
     frame = pl.concat([pl.read_parquet(path) for path in paths])
@@ -172,6 +239,7 @@ def test_hidden_accounts_are_typed_and_have_dates(tmp_path):
 
 
 def test_xml_preserves_omitted_and_explicit_empty_values():
+    """Check xml preserves omitted and explicit empty values."""
     action = parse_action(xml_action("UPDCUST", "2018-01-01T12:00:00", 7,
                                     {"C_M_NAME": None, "C_EMAIL_2": ""}))
     customer = action.find("Customer")
@@ -184,6 +252,7 @@ def test_xml_preserves_omitted_and_explicit_empty_values():
 
 
 def test_xml_accounts_can_be_partial_and_escaped():
+    """Check xml accounts can be partial and escaped."""
     action = parse_action(xml_action("UPDACCT", "2018-01-01T12:00:00", 7,
                                     account_values=[{"CA_ID": 4, "CA_NAME": "A & B"}, {"CA_ID": 5}]))
     accounts = action.findall("Customer/Account")
@@ -195,6 +264,7 @@ def test_xml_accounts_can_be_partial_and_escaped():
 
 
 def test_new_xml_matches_tpcdi_schema(tmp_path):
+    """Check new xml matches tpcdi schema."""
     etree = pytest.importorskip("lxml.etree")
     config = short_config()
     population = build_population(config, tmp_path)
@@ -208,6 +278,7 @@ def test_new_xml_matches_tpcdi_schema(tmp_path):
 
 @pytest.mark.parametrize("year,expected_birth_year", [(1902, 1884), (2019, 1960), (2100, 1980)])
 def test_birth_year_keeps_prospect_ages_valid_at_calendar_limits(tmp_path, year, expected_birth_year):
+    """Check birth year keeps prospect ages valid at calendar limits."""
     config = Config(initial_start=f"{year}-01-01", initial_end=f"{year}-01-31",
                     daily_start=f"{year}-02-01", daily_end=f"{year}-03-31",
                     customers_per_unit=10, companies=2, securities=3)
@@ -225,11 +296,14 @@ def test_birth_year_keeps_prospect_ages_valid_at_calendar_limits(tmp_path, year,
     for snapshot, rows in generation.snapshots.items():
         assert all(0 <= row["Age"] <= 120 for row in rows)
         for row in rows:
-            identity = int(row["LastName"].removeprefix("Family"))
+            prospect = int(row["AgencyID"].removeprefix("AG"))
+            matched = np.load(population.path / "prospects.npy")[prospect - 1]["customer_id"]
+            identity = int(matched) if matched else len(population.customers) + prospect
             assert row["Age"] == snapshot.year - customer_birth_year(config, identity)
 
 
 def test_prospect_default_birth_year_matches_reference_calendar():
+    """Check prospect default birth year matches reference calendar."""
     default = _prospect_values(1, 1, date(2019, 1, 1), 7)
     explicit = _prospect_values(1, 1, date(2019, 1, 1), 7, 1941)
     assert default == explicit
@@ -239,6 +313,7 @@ def test_prospect_default_birth_year_matches_reference_calendar():
 
 
 def test_reference_calendar_preserves_varied_birth_year_values_and_field_order():
+    """Check reference calendar preserves varied birth year values and field order."""
     config = Config()
     years = set()
     for identity in range(1, 91):
@@ -253,17 +328,21 @@ def test_reference_calendar_preserves_varied_birth_year_values_and_field_order()
 
 
 class ProspectCapture:
+    """Support ProspectCapture."""
     def __init__(self, config):
+        """Collect bounded prospect batches by snapshot date for source checks."""
         self.config = config
         self.snapshots = {}
 
     def emit(self, name, day, rows):
+        """Capture a prospect batch and enforce the batch-size bound."""
         assert name == "Prospect"
         assert len(rows) <= 2048
         self.snapshots.setdefault(day, []).extend(rows)
 
 
 def test_prospects_keep_identity_without_future_customer_status(tmp_path):
+    """Check prospects keep identity without future customer status."""
     config = short_config(annual_growth=.3, export_rows=19)
     population = build_population(config, tmp_path)
     generation = ProspectCapture(config)
@@ -286,7 +365,9 @@ def test_prospects_keep_identity_without_future_customer_status(tmp_path):
     assert len(matched_existing) / len(existing) == pytest.approx(.3, abs=.1)
     assert all("IsCustomer" not in row and "C_TIER" not in row for row in snapshots[0])
     for row in snapshots[0]:
-        identity = int(row["LastName"].removeprefix("Family"))
+        prospect = int(row["AgencyID"].removeprefix("AG"))
+        matched = identities[prospect - 1]["customer_id"]
+        identity = int(matched) if matched else len(population.customers) + prospect
         assert row["Age"] == config.cutover.year - customer_birth_year(config, identity)
     day = (config.cutover - config.start).days
     active_accounts = np.count_nonzero((population.accounts["open_day"] <= day) & (population.accounts["close_day"] > day))

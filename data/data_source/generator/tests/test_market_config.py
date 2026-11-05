@@ -1,3 +1,5 @@
+"""Check strict run settings and shared market and reference contracts."""
+
 from collections import defaultdict
 from dataclasses import FrozenInstanceError, replace
 from datetime import date, timedelta
@@ -15,7 +17,9 @@ from data.data_source.generator.reference import generate_reference
 
 
 class Capture:
+    """Support Capture."""
     def __init__(self, config):
+        """Check   init  ."""
         self.config = config
         self.sources = load_sources()
         self.rows = defaultdict(list)
@@ -23,20 +27,24 @@ class Capture:
         self.max_batch = 0
 
     def emit(self, source, day, rows):
+        """Check emit."""
         self.max_batch = max(self.max_batch, len(rows))
         self.rows[source, day].extend(rows)
 
     def text(self, path, rows):
+        """Check text."""
         self.max_batch = max(self.max_batch, len(rows))
         self.text_rows[path].extend(rows)
 
 
 def short_config(**kwargs):
+    """Check short config."""
     return Config(initial_start="2018-12-20", initial_end="2018-12-31", daily_start="2019-01-01",
                   daily_end="2019-04-30", scale_factor=.01, companies=2, securities=5, **kwargs)
 
 
 def test_defaults_and_frozen_config():
+    """Check defaults and frozen config."""
     config = Config()
     assert (config.start, config.cutover, config.daily_start_date, config.end) == (
         date(2014, 1, 1), date(2018, 12, 31), date(2019, 1, 1), date(2025, 12, 31))
@@ -49,6 +57,7 @@ def test_defaults_and_frozen_config():
 
 @given(st.integers(min_value=1, max_value=100000))
 def test_decimal_population_rounding(half):
+    """Check decimal population rounding."""
     assert rounded_count(f"{half}.5") == half + 1
     assert rounded_count("0.15", 10) == 2
 
@@ -67,15 +76,23 @@ def test_decimal_population_rounding(half):
     {"annual_deposit_rates": [.2, 1, .2, 8, True]}, {"watch_lifetime_min_days": 200},
     {"opening_funding_min": .9}, {"limit_cancel_share": .99}, {"activity_variation_max": .1},
     {"activity_variation_power": 0}, {"disk_limit_mb": 1},
+    {"positions_per_account": -1}, {"positions_per_account": True}, {"positions_per_account": 65},
+    {"attrition_enabled": 1}, {"attrition_warning_share": 1.01}, {"annual_lookalike": True},
+    {"attrition_warning_min_weeks": 9}, {"attrition_liquidation_max_steps": 5},
+    {"lookalike_sale_min": .1}, {"lookalike_sale_max": .6}, {"account_generations": 1},
+    {"customer_tier_error_rate": 1.01}, {"trade_charge_error_rate": True},
+    {"trade_channel_start": date(2019, 7, 1)}, {"trade_channel_start": "2019-02-30"},
 
 ])
 def test_invalid_config(settings):
+    """Check invalid config."""
     with pytest.raises(ConfigError):
         Config(**settings)
 
 
 @pytest.mark.parametrize("content", ["seed: 1\nseed: 2\n", "unknown: 1\n", "[]\n", "1: 2\n", "seed: [\n"])
 def test_strict_yaml(tmp_path, content):
+    """Check strict yaml."""
     path = tmp_path / "config.yaml"
     path.write_text(content)
     with pytest.raises(ConfigError):
@@ -83,11 +100,13 @@ def test_strict_yaml(tmp_path, content):
 
 
 def test_all_examples_load():
+    """Check all examples load."""
     for path in (Path(__file__).parents[1] / "configs").glob("*.yaml"):
         Config.load(path)
 
 
 def test_reference_sessions_and_special_closures():
+    """Check reference sessions and special closures."""
     exchange = calendar_for(date(2013, 1, 1), date(2026, 1, 7))
     sessions = {stamp.date() for stamp in exchange.sessions}
     assert sum(date(2014, 1, 1) <= day <= date(2018, 12, 31) for day in sessions) == 1258
@@ -100,6 +119,7 @@ def test_reference_sessions_and_special_closures():
 
 
 def test_earnings_support_and_release_cadence():
+    """Check earnings support and release cadence."""
     config = Config()
     postings = list(finwire_postings(config))
     assert postings[0] == (date(2012, 10, 1), None)
@@ -113,6 +133,7 @@ def test_earnings_support_and_release_cadence():
 
 
 def test_market_mmap_prices_releases_and_dividends(tmp_path):
+    """Check market mmap prices releases and dividends."""
     config = short_config(dividend_share=1, export_rows=3)
     capture = Capture(config)
     market = Market.build(config, tmp_path, capture)
@@ -141,6 +162,14 @@ def test_market_mmap_prices_releases_and_dividends(tmp_path):
         assert np.all(data["close"] <= data["high"])
     assert market.day(date(2019, 1, 1))["dividends"].sum() == 0
     assert market.day(date(2019, 1, 2))["dividends"][0] == market.annual_dividends(date(2019, 1, 2))[0] // 4
+    from data.data_source.generator.business import MarketDayCache
+    cache = MarketDayCache(market)
+    for day in (config.start, config.start + timedelta(days=40), config.end):
+        cached = cache.day(day)
+        assert type(cached["close"]) is np.ndarray
+        assert not cached["close"].flags.writeable
+        np.testing.assert_array_equal(cached["close"], market.day(day)["close"])
+        assert cache.arrays["close"].shape[0] <= 32
     assert market.fingerprint == Market(tmp_path, config).fingerprint
     assert market.sessions_per_year[2019] == 252
     with pytest.raises(ValueError):
@@ -148,6 +177,7 @@ def test_market_mmap_prices_releases_and_dividends(tmp_path):
 
 
 def test_market_ignores_firm_size_and_execution_settings(tmp_path):
+    """Check market ignores firm size and execution settings."""
     first = short_config(export_rows=3)
     second = replace(first, scale_factor=5, export_rows=64, customer_group_size=2, workers=2, threads=1, merge_fan_in=2)
     captures = [Capture(first), Capture(second)]
@@ -161,6 +191,7 @@ def test_market_ignores_firm_size_and_execution_settings(tmp_path):
 
 
 def test_reference_has_static_hr_and_all_seconds():
+    """Check reference has static hr and all seconds."""
     config = short_config(export_rows=37)
     capture = Capture(config)
     generate_reference(capture)
