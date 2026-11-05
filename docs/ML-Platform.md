@@ -1,12 +1,12 @@
 # Layer 2: Machine Learning Platform
 
-The machine learning platform predicts whether a brokerage account will close within 30 days. A separate tier-based policy creates a broker outreach task from that probability. This target design uses Feast for offline and online features, Kubeflow Pipelines for training, MLflow for tracking and data versioning, KServe for inference, and a document retrieval pipeline for Layer 3 agents.
+The machine learning (ML) platform predicts whether a brokerage account will close within 30 days. A separate tier-based policy creates a broker outreach task from that probability. This target design uses Feast for offline and online features, Kubeflow Pipelines for training, MLflow for tracking and data versioning, KServe for inference, and a document retrieval pipeline for Layer 3 agents.
 
 ---
 
 ## 1. Prediction Task and Outreach Policy
 
-The model predicts account closure within 30 days of the prediction time. The account's broker receives an outreach task when the probability reaches the threshold for the customer's tier. Tier 1, the wealthiest group, has a lower threshold than tier 3. The policy is separate from the model, so changing a threshold needs no retraining.
+The model predicts account closure within 30 days of the prediction time. The account's broker receives an outreach task when the closure probability reaches the customer's tier threshold. Tier 1, the wealthiest group, has a lower threshold than tier 3. The policy is separate from the model, so changing a threshold needs no retraining.
 
 ```text
 closure_probability = model(account_features)
@@ -24,9 +24,9 @@ outreach_required   = closure_probability >= threshold
 
 ### Synthetic Account Behavior in the Generator
 
-The generator separates business behavior, the hidden attrition signal, source recording, and delivery. About 3% of accounts close each year. Closure risk depends on behavior profile, tenure, tier, and recent losses. About 80% of closures follow a hidden leaving period of 1 to 8 weeks: deposits and buys stop, trading slows, holdings are sold in steps, and cash leaves. About 2% of accounts per year show similar outflows but stay. Some closures have no warning.
+Data generation separates business behavior, the hidden attrition signal, source recording, and delivery into four generation stages. About 3% of accounts close each year. Closure risk depends on behavior profile, tenure, tier, and recent losses. About 80% of closures follow a hidden leaving period of 1 to 8 weeks: deposits and buys stop, trading slows, the account sells holdings in steps, and cash leaves. About 2% of accounts per year show similar outflows but stay open. Some closures have no warning.
 
-Hidden profiles, leaving periods, and look-alikes appear only in the generator summary, never in model features. The generator keeps trades, holdings, and cash transactions consistent. Cash withdrawals cannot exceed available cash; margin accounts may borrow within their limit. The publisher adds delivery problems separately. [Data Platform](Data-Platform.md) defines the generation and delivery model.
+Behavior profiles, leaving periods, and look-alikes appear only in the generator summary, never in model features. The generator keeps trades, holdings, and cash transactions consistent. Cash withdrawals cannot exceed available cash; margin accounts may borrow within their limit. The publisher adds delivery problems separately. [Data Platform](Data-Platform.md) defines the generation and delivery model.
 
 ---
 
@@ -42,12 +42,12 @@ Each feature has one definition and one producer. This keeps training and servin
 | **Online features** | Feast | Latest feature values for daily scoring, triggered rescoring, and agent requests |
 | **Training label** | Account closure history | Whether an account open at prediction time closes within the next 30 days |
 
-In the daily delivery period, cash transactions reach the platform only through Kafka. Flink Job 2 therefore produces the cash-flow features; DP3 does not calculate a second version from daily files. Daily scoring uses these features after DP3. The live account view and large-withdrawal trigger also need fresh stream results.
+In the daily delivery period, cash transactions reach the platform only through Kafka. Flink Job 2 therefore produces the cash-flow features; DP3 does not calculate a second version from daily files. Daily scoring uses these features after DP3. The live tables and the large-withdrawal trigger also need fresh stream results.
 
 ### Point-in-Time Correctness and Materialization
 
 - **Time cutoff**: Feast's default point-in-time join filters on `event_timestamp` and returns the newest `created` value. It does not automatically enforce `created <= prediction_time`. The `filter_by_created_timestamp=True` option adds that filter only for offline stores that support it.
-- **Label availability**: A prediction time without a complete 30-day outcome window has no label yet, not a negative label. Hidden generator state and future outcomes are not input features.
+- **Label availability**: A prediction time without a complete 30-day outcome window has no label yet, not a negative label. Hidden state and future outcomes are not input features.
 - **Batch materialization**: An Airflow pipeline incrementally materializes the batch features into the online store after daily processing.
 - **Streaming push**: A separate push job consumes cash-flow feature rows and writes both stores, so a slow Feast call does not block Flink.
 - **Corrections**: A rerun replaces the affected feature rows. MLflow versions each training run's full dataset with its model because mutable feature tables alone cannot reproduce an earlier training run.
@@ -64,7 +64,7 @@ The training workflow runs as a multi-step Kubeflow Pipeline:
 3. **Model training**: Trains the attrition model and compares it with a simple rule. A comparison with and without cash-flow features can measure the value of those inputs.
 4. **Evaluation**: Compares predictions and broker outreach results on held-out outcomes.
 
-Before platform pipelines are built, a small generator sample checks whether the synthetic signal supports the task. A quick model must beat the rule "no deposit and net outflow over 30 days," while the rule's precision stays below about 30%. This is a generator signal check, not a selected production model or deployment threshold.
+Before pipeline work, a small generator sample checks whether the synthetic signal supports the task. A quick model must beat the rule "no deposit and net outflow over 30 days," while the rule's precision stays below about 30%. This is a generator signal check, not a selected production model or deployment threshold.
 
 ### MLflow Tracking and Registry
 
@@ -97,7 +97,7 @@ An Airflow pipeline prepares brokerage documents for retrieval-augmented generat
 
 ## 6. Layer 2 Design Decisions and Rationale
 
-The 30-day horizon assumes routine broker outreach with follow-up, not emergency contact. A 3-day or 7-day horizon risks too little time to act. A 14-day horizon fits a shorter response process but leaves less time for follow-up. The 30-day prediction horizon does not guarantee 30 days of warning: evaluate warning time from the first flag to closure.
+The 30-day horizon assumes routine broker outreach with follow-up, not emergency contact. A 3-day or 7-day horizon can leave too little time to act. A 14-day horizon fits a shorter response process but leaves less time for follow-up. The 30-day horizon does not guarantee 30 days of warning, so evaluation measures warning time from the first outreach task to closure.
 
 - **Business action**: A prediction must support broker outreach before an observed account closure.
 - **Observed label**: Account status supplies the outcome without an invented fraud label or payment obligation.

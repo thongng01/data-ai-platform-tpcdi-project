@@ -1,6 +1,6 @@
 # Brokerage Source Generator POC
 
-This proof of concept generates connected brokerage source files in TPC-DI formats using one local Python worker, bounded Polars calculations, explicit entity histories, and disk-based external sorting. The target generator extends it with a day-by-day simulation in `data/data_source/generator/`; a separate publisher handles delivery. This guide describes the existing POC and its executable commands, not the target contracts. The earlier `datagen` prototype is archived in `local/archive/prototype-v0/`.
+This proof of concept (POC) generates connected brokerage source files in TPC-DI formats using one local Python worker, bounded Polars calculations, explicit entity histories, and disk-based external sorting. The target generator extends it with a day-by-day simulation in `data/data_source/generator/`; a separate publisher handles delivery. This guide describes the existing POC and its executable commands, not the target contracts. The earlier `datagen` prototype is archived in `local/archive/prototype-v0/`.
 
 The source contracts come from [TPC-DI 1.1.0](../../docs/TPC-DI/TPC-DI_v1.1.0.pdf), clause 2.2, and [Data Specification](../../docs/Data-Specification.md). The [Databricks reference](https://github.com/shannon-barrow/databricks-tpc-di/tree/2ac319db6e62927c5d4f772cf5654ad8981f9ec4/src/tools/tpcdi_gen) supplies the dependency pattern, ID-derived values, shared trade calculations, and analytical scheduling approach; see [Data Platform](../../docs/Data-Platform.md#2-data-generation-and-problem-injection) for the design rules and reference corrections.
 
@@ -27,9 +27,9 @@ PYTHONPATH=local/tmp/polars-poc/qa-deps:. .venv/bin/python -m pytest \
   data/generator/tests -q --basetemp=local/tmp/polars-poc/pytest-with-xsd
 ```
 
-Without lxml, pytest skips this one test. The test reads the specification's XSD and changes the typographic quotes around `maxOccurs` to XML quotes in memory. It does not change the source specification.
+Without lxml, pytest skips this one test. The test reads the specification's XML Schema Definition (XSD) and changes the typographic quotes around `maxOccurs` to XML quotes in memory. It does not change the source specification.
 
-Choose a new output path for each run. The runner refuses to overwrite an existing output or partial directory. Tests recreate their dedicated pytest temporary directory; do not use a directory containing work you need to preserve as `--basetemp`.
+Choose a new output path for each run. The runner refuses to overwrite an existing output or partial directory. Tests recreate their dedicated pytest temporary directory; do not pass a directory that holds work you need to keep as `--basetemp`.
 
 The runner first creates `my-run.partial`. A successful run generates and validates the files, writes a manifest, then renames the directory to `my-run`. A failed run retains its log and partial files. Failure does not produce a completed dataset. Automatic resume is not implemented.
 
@@ -38,19 +38,19 @@ The runner first creates `my-run.partial`. A successful run generates and valida
 | `sources/Batch1/` | Contains historical business and reference files. |
 | `sources/Batch2/` and later batches | Contain daily incremental activity, customer and account changes, prospect snapshots, and batch dates. |
 | `config.json` | Records the exact configuration used. |
-| `manifest.json` | Records source counts, byte sizes, hashes, runtime versions, phase times, peak RSS, and validation results. |
+| `manifest.json` | Records source counts, byte sizes, hashes, runtime versions, phase times, peak resident set size (RSS), and validation results. |
 | `validation.json` | Records relationship checks and measured totals. |
 | `supervision.json` | Records sampled process memory, disk usage, and elapsed time. |
 | `worker.log` | Records execution stages and any exception. |
 | `runs/` | Holds intermediate sorted records. Successful export removes these records. |
 
-Only `sources/` holds generated source files. The target publisher delivers files to `upstream`, and DP1 retains pulled versions in `staging`. Reports and intermediate records stay outside `sources/`. Source byte totals exclude metadata and temporary files. Benchmark audit files are not generated.
+Only `sources/` holds generated source files. The target publisher delivers files to `upstream`, and DP1 retains pulled file versions in `staging`. Reports and intermediate records stay outside `sources/`. Source byte totals exclude metadata and temporary files. Benchmark audit files are not generated.
 
 ## Definitions and implementation
 
 The [run configuration](configs/small.yaml) controls population sizes, history length, seed, cash-trade and cancellation probabilities, batch size, merge fan-in, threads, and resource budgets. YAML values cannot contain executable expressions. Unknown keys, duplicate keys, invalid types, and invalid ranges fail before a worker starts.
 
-The [source definitions](definitions/sources.yaml) specify field order, source types, nullability, delimiters, file names, and CDC support. The [FINWIRE definitions](definitions/finwire.yaml) specify field widths and padding. These files describe formats. They do not contain scheduling algorithms or arbitrary expression strings.
+The [source definitions](definitions/sources.yaml) specify field order, source types, nullability, delimiters, file names, and change data capture (CDC) support. The [FINWIRE definitions](definitions/finwire.yaml) specify field widths and padding. These files describe formats. They do not contain scheduling algorithms or arbitrary expression strings.
 
 | Module | Responsibility |
 | --- | --- |
@@ -79,19 +79,19 @@ The source families are covered at small scale, but the workload is deliberately
 
 The cash transaction description (`CT_NAME`) contains `Trade <ID>` for POC reconciliation. This is a project lineage convention, not a TPC-DI transaction identifier. The target adds the accepted `CT_ID` cash transaction identity and replaces this description with fixed `CT_NAME` forms defined in [Data Specification](../../docs/Data-Specification.md).
 
-Population and date settings replace the reference's scale-factor formulas. The POC has no asserted mapping to an official scale factor. The target adds business profiles, an attrition signal, source errors, and schema evolution to the generator. The publisher adds duplicates and late delivery. Dense daily trade cycles in this POC do not establish a useful attrition signal.
+Population and date settings replace the reference's scale-factor formulas. The POC has no asserted mapping to an official scale factor. The target adds behavior profiles, an attrition signal, data errors, and schema evolution to the generator. The publisher adds duplicates and late delivery. Dense daily trade cycles in this POC do not establish a useful attrition signal.
 
 ## Memory and ordering
 
-Activity generation processes one origin day and a bounded customer group at a time. Polars expands only that group's accounts and cycles. The generator derives a cycle's lifecycle and holding changes from stable IDs, so it does not retain a dictionary of every historical trade or holding. All related events for a cycle are computed together, then routed to their historical or incremental outputs.
+Activity generation processes one origin day and a bounded customer group at a time. Polars expands only that group's accounts and cycles. The generator derives a cycle's lifecycle and holding changes from stable IDs, so it does not retain a dictionary of every historical trade or holding. The generator computes all related events for a cycle together, then routes them to their historical or incremental outputs.
 
-This calculation replaces the reference's general schedule with a simpler analytical schedule. It is why history can grow without a corresponding in-memory position ledger. A future model with partial fills, interacting lots, or discretionary actions must introduce and budget the required state explicitly.
+This calculation replaces the reference's general schedule with a simpler analytical schedule. It is why history can grow without a corresponding in-memory holding ledger. A future model with partial fills, interacting lots, or discretionary actions must introduce and budget the required state explicitly.
 
-Each export batch is sorted in memory and written as a temporary run. Runs compact through levels as they arrive. Each level retains fewer paths than `merge_fan_in`; path metadata therefore grows logarithmically with the number of runs per output. A merge opens at most `merge_fan_in` input files. The final merge assigns CDC sequence numbers in event order. Duplicate sort keys fail the export.
+The generator sorts each export batch in memory and writes it as a temporary run. Runs compact through levels as they arrive. Each level retains fewer paths than `merge_fan_in`; path metadata therefore grows logarithmically with the number of runs per output. A merge opens at most `merge_fan_in` input files. The final merge assigns CDC sequence numbers in event order. Duplicate sort keys fail the export.
 
 This trades temporary disk and extra disk I/O for bounded sorting memory. It preserves global ordering across customer groups. The implementation does not collect the complete generated dataset into a Polars DataFrame.
 
-The supervisor samples worker RSS every 0.1 seconds and disk use every two seconds. It stops the worker if a sampled limit or the wall-time limit is exceeded. These checks are not kernel-enforced limits; a rapid allocation can exceed the threshold between samples. Batch bounds and limited concurrency remain necessary. The manifest also records Linux peak RSS, which can capture a peak missed by sampling.
+The supervisor samples worker RSS every 0.1 seconds and disk use every two seconds. It stops the worker if a sample exceeds its limit or the run exceeds the wall-time limit. These checks are not kernel-enforced limits; a rapid allocation can exceed the threshold between samples. Batch bounds and limited concurrency remain necessary. The manifest also records Linux peak RSS, which can capture a peak missed by sampling.
 
 ## Check repeatability and scale
 
@@ -115,6 +115,6 @@ The [medium](configs/medium.yaml) and [medium-wide](configs/medium-wide.yaml) co
   data/generator/configs/large.yaml
 ```
 
-The benchmark writes a summary after every successful run and compares actual source bytes when two configurations describe the same dataset. Source bytes, peak RSS, maximum generation frame rows, retained run paths, merge inputs, and phase times answer different questions. Peak RSS is not inferred from output size. The larger workload can take several minutes because validation reads all records and checks their relationships.
+The benchmark writes a summary after every successful run and compares actual source bytes when two configurations describe the same dataset. Source bytes, peak RSS, maximum generation frame rows, retained run paths, merge inputs, and phase times answer different questions. The benchmark does not infer peak RSS from output size. The larger workload can take several minutes because validation reads all records and checks their relationships.
 
 A successful bounded pilot at 1 GB does not by itself establish that a 100 GB run will finish within a given time or disk budget.

@@ -1,6 +1,6 @@
 # Layer 2: Machine Learning Platform
 
-This directory is the component root for the target Layer 2 account attrition, feature store, serving, and document retrieval system described in [ML Platform](../docs/ML-Platform.md). The model predicts closure within 30 days; a separate tier-based policy supports broker outreach. The components are not implemented yet.
+This directory is the component root for the target Layer 2 account attrition, feature store, serving, and document retrieval system described in [ML Platform](../docs/ML-Platform.md). The model predicts account closure within 30 days; a separate tier-based policy supports broker outreach. The components are not implemented yet.
 
 | Subdirectory | Purpose |
 | --- | --- |

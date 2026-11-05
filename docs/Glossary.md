@@ -12,7 +12,7 @@ _Avoid_: client, user
 A brokerage account that one customer owns and one broker manages. It is a cash account or a margin account.
 
 **Cash account**, **margin account**:
-The two account types. A cash account buys only with its available cash; a margin account can borrow up to a limit set by the customer's wealth.
+The two account types. A cash account buys only with its available cash; a margin account can borrow up to a limit set by the account's wealth.
 
 **Broker**:
 A brokerage employee with job code 314 who manages accounts.
@@ -68,7 +68,7 @@ The simulated part of the firm that owns the source systems and delivers their d
 _Avoid_: provider, vendor, upstream (the bucket)
 
 **Source system**:
-A system of the source department that records business activity: CMS, the trading database, HR, the marketing provider, or FINWIRE.
+A system of the source department that records business activity: the customer management system (CMS), the online transaction processing (OLTP) trading database, human resources (HR), the marketing provider, or FINWIRE.
 
 **Generator**:
 The program that simulates the firm and writes its source data.
@@ -77,8 +77,8 @@ The program that simulates the firm and writes its source data.
 The program that delivers generated data to the platform: offline files to `upstream`, and cash transactions to Kafka.
 
 **Generation stage**:
-One of the four ordered parts of data generation: 1 business behavior, 2 attrition signal, 3 source recording, and 4 delivery. The generator runs stages 1 to 3; the publisher runs stage 4. Write "generation stage" in full, because pipelines also have stages.
-_Avoid_: generation layer, layer
+One of the four ordered parts of data generation: 1 business behavior, 2 attrition signal, 3 source recording, and 4 delivery. The generator runs stages 1 to 3; the publisher runs stage 4.
+_Avoid_: generation layer, layer, stage (alone, because pipelines also have stages)
 
 **Behavior profile**:
 The hidden activity pattern of an account: dormant, long-term investor, retiree, active trader, or day trader.
@@ -99,7 +99,7 @@ _Avoid_: false positive (a model result, not an account type)
 Facts that the generator knows but never writes into source data, such as behavior profiles, wealth, leaving periods, and look-alikes.
 
 **Data error**:
-A wrong value that a source system records, such as an invalid tier, at the rates that TPC-DI defines. The business event behind it stays correct. Duplicates and late files are delivery problems, not data errors.
+A wrong value, such as an invalid tier, that a source system records for a correct business event, at the rates that TPC-DI defines. Duplicates and late files are delivery problems, not data errors.
 _Avoid_: native data error, TPC-DI data error, recording error
 
 **Delivery problem**:
@@ -110,7 +110,7 @@ _Avoid_: injected error
 A named set of delivery problems that the publisher applies, such as `clean` or `realistic`.
 
 **Scale factor**:
-The run setting for firm size. One unit gives about 1 GB of offline files over the reference calendar; factor 100 is the designed firm. It is not the TPC-DI scale factor.
+The project's run setting for firm size, not the TPC-DI scale factor. One unit gives about 1 GB of offline files over the reference calendar, and factor 100 is the designed firm.
 _Avoid_: SF, scale
 
 **Reference calendar**:
@@ -173,10 +173,14 @@ _Avoid_: cash stream, cash events
 One Kafka record that carries one cash transaction. A duplicate message carries the same `CT_ID`.
 _Avoid_: event (for the record), delivery
 
+**Late message**:
+A message delivered well after the time of its cash transaction. Within the allowed lateness it still updates its window; after that, it goes to the late-message table.
+_Avoid_: late event, late arrival
+
 ## Platform
 
 **Platform**:
-The data, ML, and agent system that this project builds, on the other side of the boundary from the source department. The `platform` bucket holds its operational files.
+The data, machine learning (ML), and agent system that this project builds, on the other side of the boundary from the source department. The `platform` bucket holds its operational files.
 
 **Layer 1**, **Layer 2**, **Layer 3**:
 The three parts of the platform: the data platform, the ML platform, and the agent platform.

@@ -1,6 +1,6 @@
 # Layer 1: Data Platform
 
-The data platform pulls TPC-DI brokerage files from a source department, consumes a cash transaction stream, and builds validated tables for analytics and machine learning. Spark processes Bronze and Silver Delta tables, dbt-postgres builds the warehouse in PostgreSQL, Flink processes the cash transaction stream, Airflow schedules pipelines with GX Core checks, and DataHub records lineage and quality results. The [data specification](Data-Specification.md) defines the source formats and integration rules.
+The data platform pulls TPC-DI brokerage files from a source department, consumes a cash transaction stream, and builds validated tables for analytics and machine learning. Spark processes Bronze and Silver Delta tables, dbt-postgres builds the warehouse in PostgreSQL, Flink processes the cash transaction stream, Airflow schedules the pipelines DP1 to DP3 with GX Core checks, and DataHub records lineage and quality results. The [data specification](Data-Specification.md) defines the source formats and integration rules.
 
 This document specifies the target system. The current generator proof of concept (POC) has bounded Polars calculations and source validation; it does not yet implement the full business simulation or publisher. The [Getting Started commands](../README.md#getting-started) use that existing POC.
 
@@ -15,7 +15,7 @@ Warehouse facts, live balance tables, and batch feature tables all use PostgreSQ
 | # | Zone | Purpose | Grain | Storage |
 | --- | --- | --- | --- | --- |
 | 1 | **Staging** | Immutable copy of each file version that DP1 pulls. Cash transactions in the daily delivery period enter through Kafka instead. | One pulled file version | SeaweedFS `staging` bucket |
-| 2 | **Bronze** | Source fields as delivered text, including duplicates and rejected payloads, with provenance. | One source record or stream delivery | Delta tables under `lakehouse/bronze/` |
+| 2 | **Bronze** | Source fields as delivered text, including duplicates and rejected payloads, with provenance. | One source record or message | Delta tables under `lakehouse/bronze/` |
 | 3 | **Silver** | Typed, deduplicated, and conformed records for joins. | One business record or change | Delta tables under `lakehouse/silver/` |
 | 4 | **Gold** | The 19-table warehouse, live balance tables, and feature tables. | Per business entity, event, or window | PostgreSQL `gold` schema |
 
@@ -23,7 +23,7 @@ SeaweedFS exposes an S3 API. Hive Metastore resolves lakehouse table names, sche
 
 ### Versioning Baseline
 
-- **Raw inputs**: `staging` keeps each pulled file version unchanged. Replays use those saved files, not a new source delivery.
+- **Raw inputs**: `staging` keeps each pulled file version unchanged. Reruns use those saved files, not a new source delivery.
 - **Provenance and rejects**: Bronze keeps source provenance and raw rejected payloads. Quarantine tables, quality metadata, GX results in DataHub, and `ops.load_status` replace TPC-DI's `DImessages` load log.
 - **Table history**: Delta records Bronze and Silver table versions.
 - **Business history**: Gold type 2 slowly changing dimensions (SCD2) record effective date ranges. Facts use the surrogate key valid on their event date.
@@ -40,7 +40,7 @@ The generator produces connected records for all 18 TPC-DI business and referenc
 
 Four generation stages separate business behavior from data errors and delivery problems. The generator runs stages 1 to 3. The publisher runs stage 4, so a new publisher profile does not require new business data. Both belong to the simulated source department under `data/data_source/`, in `generator/` and `publisher/`.
 
-Files carry the initial load and daily deliveries. Kafka carries cash transactions for the daily delivery period. The generator's three stages form one day-by-day model, not three separate services or full-dataset rewrites.
+Offline files carry the initial load and daily deliveries. Kafka carries cash transactions for the daily delivery period. The generator's three stages form one day-by-day model, not three separate services or full-dataset rewrites.
 
 | Generation stage | Question | Output |
 | --- | --- | --- |
@@ -58,11 +58,11 @@ profile, wealth   rate, size, trades, holdings,  file formats,     delays,     v
 (visible)                     watches
 ```
 
-Numbers belong in run configuration, rules belong in generator code, and formats belong in source definitions. Volume, skew, and peak rates are measured results, not direct settings. The local generator summary records settings, counts, hidden traits, and the correct values behind data errors. The publisher report records each injected delivery problem. Neither report enters the ingestion path.
+Numbers belong in run configuration, rules belong in generator code, and formats belong in source definitions. Volume, skew, and peak rates are measured results, not direct settings. The local generator summary records settings, counts, hidden state, and the correct values behind data errors. The publisher report records each delivery problem that the publisher adds. Neither report enters the ingestion path.
 
 ### Generation Stage 1: Business Behavior
 
-The generator simulates one retail brokerage day by day. Each account receives a hidden behavior profile and hidden wealth level when it opens. The profile sets activity frequency, the wealth level sets amounts, and the visible cash or margin account type constrains spending. Completed trades move cash and change holdings; deposits, withdrawals, and dividends also move cash. Source records show events, not hidden traits.
+The generator simulates one retail brokerage day by day. Each account receives a hidden behavior profile and hidden wealth level when it opens. The profile sets activity frequency, the wealth level sets amounts, and the visible cash or margin account type constrains spending. Completed trades move cash and change holdings; deposits, withdrawals, and dividends also move cash. Source records show events, not hidden state.
 
 #### The Firm and Calendar
 
@@ -98,7 +98,7 @@ One unit targets about 1 GB of offline files over the reference calendar, 2014-0
 
 These are estimates from the firm model, excluding the fixed 0.4 GB. They do not establish runtime. First measured runs at factors 1 and 5 calibrate the customers per unit, initially about 3,300. The full-calendar large run must measure at least 100 GB of offline source files for rubric row `r5`. If factor 100 falls short, a higher factor, such as 105, supplies the required volume. Stream bytes are counted separately.
 
-Generation size and processed workload are separate. The large dataset is generated once. Each environment processes the largest factor it handles well, and each experiment processes only the dates and volume needed to show its effect. A typical experiment uses the initial load and some daily deliveries. Larger firms use the same partitioned processing principles, without treating unmeasured capacity projections as established limits. Local service groups and resource limits are in [Infrastructure](IaC.md#2-development-environment).
+Generation size and processed workload are separate. The large dataset is generated once. Each environment processes the largest factor it handles well, and each experiment processes only the dates and volume needed to show its effect. A typical experiment uses the initial load and some daily deliveries. Larger firms use the same partitioned processing principles. Unmeasured capacity projections are not established limits. Local service groups and resource limits are in [Infrastructure](IaC.md#2-development-environment).
 
 #### Core Entities
 
@@ -141,7 +141,7 @@ The weighted rates yield about 0.1 trades per account per calendar day, or about
 | Settlement | Cash transaction | Every completed buy removes price times quantity plus fees; a completed sell adds price times quantity minus fees | Business consistency rule |
 | Deposit | Cash transaction | Opening deposit, then profile schedule; retirement contributions increase before the April tax deadline and in December | Simulation assumption |
 | Withdrawal | Cash transaction | Profile schedule and April tax withdrawals; cannot exceed available cash plus permitted margin borrowing | Simulation assumption and spending constraint |
-| Dividend | Cash transaction | About 40% of securities pay, mostly at 1 to 4% yield. Each paying security has a fixed quarterly date moved to the next trading day; that date is also the record date. At 06:00 UTC, start-of-day holders receive one quarter of annual dividend per share times shares held. Dividend per share changes only through FINWIRE `SEC`. | Simulation assumption and simplified dividend calendar |
+| Dividend | Cash transaction | About 40% of securities pay, mostly at 1 to 4% yield. Each paying security has a fixed quarterly date moved to the next trading day; that date is also the record date. At 06:00 UTC, start-of-day holders receive one quarter of the annual dividend per share, times the shares held. Dividend per share changes only through FINWIRE `SEC`. | Simulation assumption and simplified dividend calendar |
 | Holding change | `HoldingHistory.txt` | One per completed trade | Consistency rule |
 | Watch | `WatchHistory.txt` | About 0.1 per customer per day; popular securities receive more watches | TPC-DI SF3 rate; assumed popularity |
 | Daily price | `DailyMarket.txt` | One row per security per trading day; random walk plus market-wide movement | Source grain; assumed price model |
@@ -154,7 +154,7 @@ As a source, “Cash transaction” means `CashTransaction.txt` in the initial l
 - Accounts sell only securities they hold. The simulation has no short selling.
 - Trade prices stay within the security's daily high and low.
 - The top 1% of securities receive about 25 to 35% of trades, an assumed popularity distribution.
-- The source system assigns each cash transaction a `CT_ID` from one global sequence. It is the first field of `CashTransaction.txt` and the event ID in each Kafka message. Duplicate messages keep it.
+- The source system assigns each cash transaction a `CT_ID` from one global sequence. It is the first field of `CashTransaction.txt` and the `ct_id` field of each Kafka message. Duplicate messages keep it.
 - `CT_NAME` uses fixed forms: `Trade settlement 123456`, `Deposit`, `Withdrawal`, and `Dividend SYMBOL`. DP2 and Flink Job 1 use one shared Python function to derive `cash_type` and `trade_id`.
 
 #### Population and Time Patterns
@@ -181,7 +181,7 @@ A long-term investor with a cash account receives a payday deposit and makes occ
 
 If that account enters a leaving period, it stops depositing and buying. It sells holdings in 1 to 4 steps and withdraws the proceeds within a day of each sale. The source records show sales, settlements, withdrawals, watch cancellations, and eventual closure. Only the generator summary says that the account was leaving. A look-alike account can sell part of its holdings and make a large withdrawal but continue deposits and normal trading, so a large outflow alone does not identify closure.
 
-If the publisher resends a withdrawal, both messages carry the same `CT_ID`. Bronze keeps both deliveries; Silver and the live calculations count the cash transaction once. If the source records a wrong fee, the trade retains that bad recorded value with quality metadata, while the settlement's cash transaction still uses the correct fee. These separate cases test recording and delivery handling without changing the business event.
+If the publisher resends a withdrawal, both messages carry the same `CT_ID`. Bronze keeps both messages; Silver and the live calculations count the cash transaction once. If the source records a wrong fee, the trade keeps that wrong value with quality metadata, while the settlement's cash transaction still uses the correct fee. These separate cases test recording and delivery handling without changing the business event.
 
 #### Expected Results at Cutover
 
@@ -205,7 +205,7 @@ Business behavior sets how many accounts close. The attrition signal stage sets 
 | Closure risk | Dormant x2; active and day traders x1.5; retirees x0.5; first-year tenure x2; tier 1 x0.7; value loss above 20% over 3 months x1.5 | Assumed relative risks, calibrated to about 3% annual closure |
 | Warning pattern | 80% of closures have a leaving period; 20% have no warning | Signal assumption |
 | Leaving period | 1 to 8 weeks: deposits and buys stop; holdings sell in 1 to 4 steps; each sale is followed by a withdrawal within a day; cash drains toward zero; watches cancel | Signal assumption |
-| Customer inactivation | All accounts of the customer leave together | Consistent with customer closure semantics |
+| Customer inactivation | All accounts of the customer leave together | Customer inactivation closes all of the customer's accounts |
 | Look-alikes | About 2% of accounts per year sell 20 to 50% of holdings and make one large withdrawal, while deposits and trading continue | Signal assumption to prevent an outflow rule from solving the task alone |
 | Recording | Hidden leaving periods and look-alike flags appear only in the generator summary | Leakage prevention |
 | Signal check | On a small sample, a quick model must beat the rule “no deposit and net outflow over 30 days”; that rule's precision must stay below about 30% | Acceptance check for the synthetic signal, before pipeline work |
@@ -216,18 +216,18 @@ The source recording stage writes TPC-DI formats and data errors. It changes rec
 
 | Rule | Definition | Basis |
 | --- | --- | --- |
-| Formats | Headerless pipe files, CDC fields on daily rows, XML with omitted and empty elements kept distinct, fixed-width FINWIRE | TPC-DI source contract |
+| Formats | Headerless pipe-delimited files, change data capture (CDC) fields on daily rows, XML with omitted and empty elements kept distinct, fixed-width FINWIRE | TPC-DI source contract |
 | Invalid customer tier | About 0.2% of customer records | TPC-DI SF3 |
 | Date of birth out of range | About 0.1% of customer records | TPC-DI SF3 |
 | Invalid credit rating | About 1% of company records | TPC-DI SF3 |
 | Fee or commission above trade value | About 0.1% of completed trades for each error; settlement still uses the correct amount | TPC-DI SF3 rates; consistent settlement rule |
-| Schema change | From configurable date 2019-07-01, `Trade.txt` adds `T_CHANNEL` at the end: `WEB`, `MOBILE`, or `BROKER`. Traders favor web and mobile; retirees use brokers more often. The initial load retains the original format. | Project addition; TPC-DI itself has fixed formats |
+| Schema change | From a configurable date, 2019-07-01 by default, `Trade.txt` adds `T_CHANNEL` at the end: `WEB`, `MOBILE`, or `BROKER`. Traders favor web and mobile; retirees use brokers more often. The initial load keeps the original format. | Project addition; TPC-DI itself has fixed formats |
 
-The trade format changes from 14 to 15 business fields. Daily CDC fields are additional fields in both versions. A text encoding problem and a change to `CT_NAME` were considered but are not part of the simulation. Section 3 defines error and schema handling.
+The trade format changes from 14 to 15 business fields. Daily CDC fields are additional fields in both versions. The simulation has no text encoding problem and no change to `CT_NAME`. Section 3 defines error and schema handling.
 
 ### Generation Stage 4: Delivery
 
-The publisher reads one generated dataset and applies a named profile, such as `clean` or `realistic`. It publishes complete files to `upstream` and cash transactions for the daily delivery period to Kafka. Generated files contain no transport problems. The publisher report compares delivered data with those files and records actual delays, repeats, and corrections.
+The publisher reads one generated dataset and applies a named publisher profile, such as `clean` or `realistic`. It publishes complete files to `upstream` and cash transactions for the daily delivery period to Kafka. Generated files contain no delivery problems. The publisher report compares delivered data with those files and records actual delays, repeats, and corrections.
 
 The clean profile comes first in implementation. The realistic profile adds the configurable defaults below after a clean end-to-end path works.
 
@@ -237,9 +237,9 @@ The clean profile comes first in implementation. The realistic profile adds the 
 | Retried initial extracts | One repeated chunk in each of two large initial files, about 0.5 to 1% of each file | Assumption |
 | Corrected files | A corrected daily file about monthly or more; rerun its date and later dependent dates | Assumption |
 | Late files | About one per month, 1 to 24 hours late; only dependent tables wait | Assumption |
-| Late stream events | About 97.5% within seconds, 2% delayed 1 to 10 minutes, 0.49% delayed 10 minutes to 1 hour, 0.01% delayed more than a day | Assumption |
-| Outages | About 4 per year, holding events for 30 to 60 minutes before releasing them together | Assumption |
-| Duplicate stream events | About 0.2% single resends seconds apart, plus resends of the last 5 to 15 minutes after outages; about 0.25 to 0.3% overall | Assumption; repeated events retain `CT_ID` |
+| Late messages | About 97.5% within seconds, 2% delayed 1 to 10 minutes, 0.49% delayed 10 minutes to 1 hour, 0.01% delayed more than a day | Assumption |
+| Outages | About 4 per year, holding messages for 30 to 60 minutes before releasing them together | Assumption |
+| Duplicate messages | About 0.2% single resends seconds apart, plus resends of the last 5 to 15 minutes after outages; about 0.25 to 0.3% overall | Assumption; repeated messages keep `CT_ID` |
 | Replay | One simulated clock with configurable stream speed; batch pipelines run as fast as they can; bulk mode sends initial data and backfills at maximum speed | Execution rule; demonstration speed follows measurement of one day of DP1 to DP3 |
 
 ### Simulated Data Problems and Required Evidence
@@ -252,8 +252,8 @@ Evidence comes from measured runs, not the configured rates alone. The publisher
 | Account and security skew | Uneven shuffle partitions make a few Spark tasks slow or cause spill | Key distribution; maximum and median task duration and shuffle size; baseline and handled runtime |
 | Trade schema evolution | A fixed reader drops the added channel field without failing | Source versions, non-null channel counts, Delta schema history, and handled output |
 | Offline duplicates | Counts, balances, and SCD2 versions can be wrong | Duplicate keys, actual repeats, and row and metric counts before and after handling |
-| Late stream events | Closed windows omit events without correction handling | Event and delivery times, delay distribution, late-event counts, and baseline and handled results |
-| Stream duplicates | A movement changes balance and windows more than once | `CT_ID`, measured duplicate rates, and corrected counts, sums, and balances |
+| Late messages | Closed windows miss late cash transactions without correction handling | Event and delivery times, delay distribution, late-message counts, and baseline and handled results |
+| Stream duplicates | A cash transaction changes balances and windows more than once | `CT_ID`, measured duplicate rates, and corrected counts, sums, and balances |
 | Event-time windows | Downstream consumers lack cash-flow totals per time window | Window code, explanation, and Flink UI evidence |
 
 ### Generator Engineering Rules
@@ -261,8 +261,8 @@ Evidence comes from measured runs, not the configured rates alone. The publisher
 - **Bounded memory**: The day-by-day Polars simulation carries account state and processes bounded groups. The configuration loader, source definitions, sorting, validation, runner, and tests extend the current POC. Account, holding, and unfinished-trade state must have an explicit memory budget.
 - **Repeatability**: IDs and random draws use stable entity keys and named seeds, not chunk size or worker count. The same semantic settings, seeds, and generator version produce the same source bytes.
 - **Ordered exports**: Sort records in bounded runs and merge them without collecting the entire dataset into one frame. Preserve event and CDC order across groups.
-- **Separate reports**: The local generator summary records settings, per-file bytes and rows, hidden states, errors, and measured characteristics. Ingestion never reads it. The publisher writes a separate delivery report.
-- **Problem measurement**: Count emitted duplicates directly. If each original has `r` extra copies on average, duplicate share among emitted rows is `r / (1 + r)`.
+- **Separate reports**: The local generator summary records settings, per-file bytes and rows, hidden state, data errors, and measured characteristics. Ingestion never reads it. The publisher writes a separate delivery report.
+- **Problem measurement**: Count emitted duplicates directly. If each original has `r` extra copies on average, the duplicate share among emitted rows is `r / (1 + r)`.
 
 <details>
 <summary>Reference Generator Corrections</summary>
@@ -284,7 +284,7 @@ Code adapted from the Databricks reference applies these corrections. They are r
 
 ## 3. Batch Processing and Storage Optimization
 
-Spark pulls and parses source files, builds Silver, and sends the Silver rows needed for a date into PostgreSQL. dbt-postgres then builds Gold from that load schema. dbt executes SQL in PostgreSQL; it does not move rows from Delta itself.
+Spark pulls and parses source files, builds Silver, and sends the Silver rows needed for a date into a PostgreSQL load schema. dbt-postgres then builds Gold from that schema. dbt executes SQL in PostgreSQL; it does not move rows from Delta itself.
 
 | Pipeline | Ingest stage | Validate stage |
 | --- | --- | --- |
@@ -292,11 +292,11 @@ Spark pulls and parses source files, builds Silver, and sends the Silver rows ne
 | **DP2** | Bronze to Silver, Silver rows to PostgreSQL load schema, then dbt Gold models | Duplicates, keys, relationships, SCD2 ranges, reconciliation |
 | **DP3** | Build the batch `feat_*` tables from Gold history | Feature null rates and event-time and availability consistency |
 
-Bronze has one table per source, with source values stored as text and provenance added. Cash transactions have two Bronze tables, one for initial-load file records and one for stream messages. The stream table also retains Kafka partition, offset, and delivery time. Bronze can be rebuilt from `staging` or the raw topic. Silver converts types, handles CDC order, and preserves omitted versus explicitly empty XML values until the SCD2 logic applies them.
+Bronze has one table per source family, with source values stored as text and provenance added. Cash transactions have two Bronze tables, one for initial-load file records and one for stream messages. The stream table also retains Kafka partition, offset, and delivery time. Bronze can be rebuilt from `staging` or the raw topic. Silver converts types, handles CDC order, and keeps omitted and explicitly empty XML values distinct until the SCD2 logic applies them.
 
 ### Dependencies and Late Files
 
-A table builds when its own input and dependent tables are complete for that date. Other tables can proceed. Dates run in order, initially with one active run per pipeline; independent tables can run within a date.
+A table builds when its own input and the tables it depends on are complete for that date. Other tables can proceed. Dates run in order, initially with one active run per pipeline; independent tables can run within a date.
 
 | Source | Depends on | Dependent outputs |
 | --- | --- | --- |
@@ -311,11 +311,11 @@ A table builds when its own input and dependent tables are complete for that dat
 
 The main chains are customers to accounts to trades to holdings and cash transactions, and FINWIRE to securities and financials to market facts. Trades and watches also need securities. A late FINWIRE release can therefore hold the cash transaction and balance facts through the trade dependency.
 
-`ops.load_status` tracks expected inputs, arrival, selected source version, processing progress through each zone, and held or failed work with its reason. A completeness view marks dates complete or partial and lists missing sources. Dashboards use the latest complete date by default and label partial dates. Failed freshness checks raise DataHub incidents. A table held for a missing file builds for the first time when it arrives; it does not need a corrective rerun.
+`ops.load_status` tracks expected inputs, arrival, selected file version, processing progress through each zone, and held or failed work with its reason. A completeness view marks dates complete or partial and lists missing sources. Dashboards use the latest complete date by default and label partial dates. Failed freshness checks raise DataHub incidents. A table held for a missing file builds for the first time when it arrives; it does not need a corrective rerun.
 
 ### Data Errors and Quarantine
 
-Bronze keeps raw values. DP2 repairs a field only when the correct value is certain. It never invents a value or drops a record that other records reference. If the record remains usable, it keeps it with quality metadata; an unusable record goes to quarantine with the rule and reason.
+Bronze keeps raw values. DP2 repairs a field only when the correct value is certain. It never invents a value or drops a record that other records reference. If the record remains usable, DP2 keeps it with quality metadata; an unusable record goes to quarantine with the rule and reason.
 
 | Error | Handling |
 | --- | --- |
@@ -324,9 +324,9 @@ Bronze keeps raw values. DP2 repairs a field only when the correct value is cert
 | Invalid credit rating | Set the rating to NULL and add quality metadata |
 | Fee or commission above trade value | Keep the recorded amount with quality metadata; the settlement's cash transaction uses the correct amount |
 | Unparseable row or unexpected field count | Keep the raw payload in Bronze quarantine |
-| Unparseable stream event | Flink Job 1 writes Bronze quarantine |
+| Unparseable message | Flink Job 1 writes it to Bronze quarantine |
 
-DataHub catalogs quarantine tables, and GX measures rejected records. Quality flags and raw records let users inspect a failed check without relying only on aggregate counts.
+DataHub catalogs quarantine tables, and GX measures rejected records. Quality metadata and raw records let users inspect a failed check without relying only on aggregate counts.
 
 ### Schema Evolution and Duplicate Rules
 
@@ -346,7 +346,7 @@ The comparison baseline uses a fixed version 1 schema. Spark's `PERMISSIVE` CSV 
 | Other daily files | Full row, including `CDC_DSN` | A legitimate second update remains distinct |
 | Initial files | Full row | Repeated extract rows have no CDC sequence |
 
-Rare extract retries still support an experiment. The work to find duplicates depends on the input compared, while the duplicate rate determines how wrong untreated results become.
+Rare extract retries still support an experiment. The work to find duplicates depends on how much input the job compares; the duplicate rate determines how wrong untreated results become.
 
 ### Gold Model and Storage Constraints
 
@@ -370,14 +370,14 @@ The warehouse has 19 tables: TPC-DI's 19 minus `DImessages`, plus `fact_cash_tra
 
 ## 4. Stream Processing (Kafka and Flink)
 
-In the daily delivery period, cash transactions reach the platform only through Kafka. Two Flink 2.2 jobs use the Python DataStream API. Job 1 lands and validates events; Job 2 consumes clean events to build live balances and cash-flow features. A failure in Job 2 does not stop raw landing.
+In the daily delivery period, cash transactions reach the platform only through Kafka. Two Flink 2.2 jobs use the Python DataStream API. Job 1 lands and validates messages; Job 2 consumes the clean topic to build live balances and cash-flow features. A failure in Job 2 does not stop raw landing.
 
 ### Topics and Cash Transaction Contract
 
 | Topic | Contents | Retention scope | Writer | Reader |
 | --- | --- | --- | --- | --- |
-| `brokerage.cash_transaction.raw` | Every delivery, including duplicates | Whole active dataset | Publisher | Job 1 |
-| `brokerage.cash_transaction.clean` | Accepted events with `cash_type` and `trade_id` | Whole active dataset | Job 1 | Job 2 and later consumers |
+| `brokerage.cash_transaction.raw` | Every message, including duplicates | Whole active dataset | Publisher | Job 1 |
+| `brokerage.cash_transaction.clean` | Accepted messages with `cash_type` and `trade_id` | Whole active dataset | Job 1 | Job 2 and later consumers |
 | `brokerage.account_cash.features` | Cash-flow feature rows | 7 days | Job 2 | Feast push job |
 | `brokerage.account.rescore` | Requests to score one account | 7 days | Job 2 | Scoring worker |
 
@@ -400,11 +400,11 @@ Messages use JSON with a JSON Schema contract file in the repository. Amounts us
 
 ### Job 1: Raw Topic to Bronze and Silver
 
-1. Append every delivery to Bronze with partition, offset, and delivery time.
-2. Validate fields and parse `CT_NAME`. Write unusable events to quarantine.
-3. Check `CT_ID` in per-account state for the last 24 hours. Drop and count a repeated event.
-4. Append accepted events to Silver and the clean topic. Delta commits and Kafka transactions use checkpoint recovery so a restart does not repeat committed output.
-5. At checkpoints, write a processing progress marker to `ops.stream_progress`. DP2 waits until progress passes the day's end plus 10 minutes before building the cash transaction and balance facts.
+1. Append every message to Bronze with partition, offset, and delivery time.
+2. Validate fields and parse `CT_NAME`. Write unusable messages to quarantine.
+3. Check `CT_ID` in per-account state for the last 24 hours. Drop and count a repeated message.
+4. Append accepted cash transactions to Silver and the clean topic. Delta commits and Kafka transactions use checkpoint recovery so a restart does not repeat committed output.
+5. At checkpoints, write a progress marker to `ops.stream_progress`. DP2 waits until progress passes the day's end plus 10 minutes before building the cash transaction and balance facts.
 
 The progress marker shows processing progress, not proof that no older event can arrive. Events delayed beyond a closed day still require correction. The permanent cash transaction identity remains `CT_ID`; the 24-hour state is the live deduplication horizon, not a new business identifier.
 
@@ -415,13 +415,13 @@ The progress marker shows processing progress, not proof that no older event can
 | Live balance | Initialize from each account's Gold cash balance at the end of the initial load, then apply accepted cash transactions by natural account ID | Current balance and today's cash transactions |
 | Hourly window | One-hour event-time windows per account: inflow, outflow, net, and count per `cash_type` | Live hourly table and window-processing evidence |
 | Daily window | Keep the last 30 daily totals per account and derive 7- and 30-day sums and days since the last deposit | Daily cash-flow feature rows on the features topic |
-| Rescoring trigger | Check each large withdrawal against configurable policy | One-account request on the rescore topic |
+| Rescoring trigger | Check each large withdrawal against a configurable policy | One-account request on the rescore topic |
 
 - Watermarks run 30 seconds behind the newest observed event time.
-- Allowed lateness is 10 minutes. Events within that limit update windows; later events go to a late-events table.
+- Allowed lateness is 10 minutes. Messages within that limit update windows; later messages go to a late-message table.
 - PostgreSQL upserts write full totals, never increments, so repeating a write after restart does not add the same amount twice.
 - Both jobs checkpoint every 30 seconds and restart from the last checkpoint. Parallelism 2 per job uses the TaskManager's 4 slots.
-- Flink lineage is declared in DataHub at deployment. Flink UI, Kafbat UI, Kafka lag, duplicate counts, late-event counts, and quarantine counts support operation.
+- The deployment declares Flink lineage in DataHub. Flink UI, Kafbat UI, Kafka lag, duplicate counts, late-message counts, and quarantine counts support operation.
 
 The stream produces cash-flow features for Feast's offline and online stores. DP3 produces the batch features. Each feature has one definition and one producer, so training and serving do not use independently calculated versions.
 
@@ -430,26 +430,26 @@ The stream produces cash-flow features for Feast's offline and online stores. DP
 | Stage | Shape and writer | Timing |
 | --- | --- | --- |
 | Initial files | `CashTransaction.txt` with `CT_ID` first; publisher to `upstream`, DP1 to `staging` | Initial load |
-| Bronze | Initial file table from DP1 and delivery table from Job 1 | Initial load, then checkpoints |
+| Bronze | Initial file table from DP1 and message table from Job 1 | Initial load, then checkpoints |
 | Silver | One cash transaction table keyed by `CT_ID`, with `cash_type` and `trade_id`; DP2 writes initial history, then Job 1 writes streamed dates | Before stream startup, then checkpoints |
 | Gold warehouse | `fact_cash_transactions` and `fact_cash_balances`, built by dbt in DP2 | Daily for closed dates |
-| Gold live | Current balance, today's movements, hourly windows from Job 2 | Continuous updates |
+| Gold live | Current balance, today's cash transactions, hourly windows from Job 2 | Continuous updates |
 | Feast | Cash-flow features from a small push job consuming the features topic | Continuous delivery |
 
 For a normal date such as 2019-03-05:
 
 1. Cash transactions arrive on the stream during the day. Job 1 commits Silver at checkpoints, and Job 2 updates live tables.
-2. After the day closes, the processing marker passes the day's end plus 10 minutes.
+2. After the day closes, the progress marker passes the day's end plus 10 minutes.
 3. The publisher delivers the date's offline files. For example, they can arrive at 02:00 UTC on March 6 without changing their March 5 `data_date`.
 4. DP1 and DP2 process the files. DP2 waits for stream progress, pushes the date's Silver cash transactions into PostgreSQL, and runs the cash transaction and balance models.
 5. GX reconciles settlements with completed trades, dividends with start-of-day holdings and dividend per share, and the live end-of-day balance with the warehouse balance.
 6. DP3 builds the batch features, then daily scoring covers all open accounts.
 
-A later March 5 event still reaches Silver. Correcting the March 5 cash transaction facts also rebuilds later balances in date order. Late-window output and warehouse correction are separate paths; the live table is current operational state, not a replacement for corrected warehouse history.
+A late March 5 cash transaction still reaches Silver. Correcting the March 5 cash transaction facts also rebuilds later balances in date order. Late-window output and warehouse correction are separate paths; the live table is current operational state, not a replacement for corrected warehouse history.
 
 | Consumer | Reads | Timing |
 | --- | --- | --- |
-| BI and analysts | Warehouse cash transactions and balances | After daily processing |
+| Business intelligence (BI) and analysts | Warehouse cash transactions and balances | After daily processing |
 | Web API and agent | Live tables | On request |
 | Daily scoring | Feast features | After DP3 |
 | Triggered rescoring | Rescore topic and Feast features | After a large withdrawal |
@@ -458,9 +458,9 @@ A later March 5 event still reaches Silver. Correcting the March 5 cash transact
 
 ### Verification Rules
 
-Use a clean replay before a seeded realistic replay. Measure producer delays and duplicates, then compare Flink outputs with an independent batch calculation of unique movements, window sums, and balances. Compare final state for equality, not the maximum emitted balance, because signed movements can reduce balances. Event-time disorder must not replace newer state with an older snapshot.
+Use a clean replay before a seeded realistic replay. Measure publisher delays and duplicates, then compare Flink outputs with an independent batch calculation of unique cash transactions, window sums, and balances. Compare final state for equality, not the maximum emitted balance, because negative amounts can reduce balances. Event-time disorder must not replace newer state with an older snapshot.
 
-Checkpoint recovery must be checked across Bronze, Silver, Kafka transactions, and PostgreSQL upserts. The target connector set starts with Spark 3.5 and Delta 3.3, Flink 2.2 with the Delta 4.4 connector, Kafka connector 5.0, and JDBC connector 4.1. Before pipeline work, a compatibility test makes Flink write Delta on SeaweedFS and makes Spark and Trino read it. Spark 4 with Delta 4 is the fallback if that test rejects the starting set. Version selection is not evidence that this combination already works.
+Tests must check checkpoint recovery across Bronze, Silver, Kafka transactions, and PostgreSQL upserts. The target connector set starts with Spark 3.5 and Delta 3.3, Flink 2.2 with the Delta 4.4 connector, Kafka connector 5.0, and JDBC connector 4.1. Before pipeline work, a compatibility test makes Flink write Delta on SeaweedFS and makes Spark and Trino read it. Spark 4 with Delta 4 is the fallback if that test rejects the starting set. Version selection is not evidence that this combination already works.
 
 ---
 
@@ -476,7 +476,7 @@ Airflow 3 uses `LocalExecutor` to schedule DP1 to DP3, with shared Connections a
 
 DataHub collects lineage through its Airflow plugin, Spark agent, dbt ingestion, and declared Flink jobs. Its GX plugin publishes check results as assertions. Hive Metastore remains the engine catalog; DataHub does not resolve tables during queries or enforce every engine's permissions.
 
-The platform classifies cross-cutting work by need: rubric requirements include secrets, gateway access, HTTPS, dashboards, tests, CI/CD, Terraform, Ansible, and A/B rollout. Low-cost safeguards include safe reruns, versioning, marking personal-data columns, separate database users per service, and parameterized SQL in the API and MCP tools. [Infrastructure](IaC.md) owns deployment and service controls.
+The platform classifies cross-cutting work by need: rubric requirements include secrets, gateway access, HTTPS, dashboards, tests, CI/CD, Terraform, Ansible, and A/B rollout. Low-cost safeguards include safe reruns, versioning, marking personal-data columns, separate database users per service, and parameterized SQL in the API and Model Context Protocol (MCP) tools. [Infrastructure](IaC.md) owns deployment and service controls.
 
 ---
 
@@ -484,16 +484,16 @@ The platform classifies cross-cutting work by need: rubric requirements include 
 
 ### 6.1 Source Data and Delivery
 
-The source contract uses files and timestamps that a provider can supply. It does not depend on benchmark control files.
+The source contract uses files and timestamps that the source department can supply. It does not depend on benchmark control files.
 
 - **Source boundary**: DP1 pulls from source-owned storage; the source department cannot overwrite platform copies.
 - **Date meaning**: Business date, event time, publication time, and arrival time remain separate.
-- **Repeatability**: Retries and backfills use the same saved inputs; corrections create new input versions.
+- **Repeatability**: Retries and backfills use the same saved inputs; corrections create new file versions.
 - **Scope**: Simulate a behavior when it changes processing or meets a coursework requirement.
 
 | Decision | Selected choice | Main reason |
 | --- | --- | --- |
-| Delivery terms | Initial load and daily delivery | Describe the delivery schedule rather than implying that all initial records share a date |
+| Delivery terms | Initial load and daily delivery | Describes the delivery schedule rather than implying that all initial records share a date |
 | Initial paths | `initial/<Source>` with standard source names | Preserve actual source names and state the coverage in run parameters |
 | Daily paths | `daily/YYYYMMDD/<Source>_YYYYMMDD.ext`; FINWIRE keeps its quarter name | Paths state `data_date` without a control file |
 | Date parameters | Four inclusive dates with adjacent initial and daily periods | Quiet days cannot shift the cutoff; gaps and overlaps are rejected |
@@ -502,7 +502,7 @@ The source contract uses files and timestamps that a provider can supply. It doe
 | Static sources | HR and references load once | Ongoing updates add unused effective-date rules |
 | Prospect | Initial snapshot at `initial_end`, then monthly snapshots | Fixes the snapshot date without guessing from activity |
 | Generator and publisher | Generate locally, then publish to `upstream` and Kafka | Delivery rates and pacing can change without regenerating business events |
-| Completeness | Pipeline-side expected-file list; empty file means no activity | No assumed provider manifest or guessed wait timeout |
+| Completeness | Pipeline-side expected-file list; empty file means no activity | No assumed source manifest or guessed wait timeout |
 | Reports | Generator summary and publisher report stay local | Independent evidence does not become a hidden ingestion input |
 
 <details>
@@ -510,15 +510,15 @@ The source contract uses files and timestamps that a provider can supply. It doe
 
 | Alternative | Why not selected | Revisit condition |
 | --- | --- | --- |
-| TPC-DI `Batch<N>/` and `BatchDate.txt` | Batch sequence needs another file to identify the date | A provider requires the benchmark contract |
+| TPC-DI `Batch<N>/` and `BatchDate.txt` | Batch sequence needs another file to identify the date | A source department requires the benchmark contract |
 | Extraction or arrival date as `data_date` | Delay changes the business date | A separate business-date contract changes |
-| Infer initial bounds from record timestamps | Quiet final days shift snapshot and cutover dates | Source supplies authoritative period metadata |
+| Infer initial bounds from record timestamps | Quiet final days shift snapshot and cutover dates | The source department supplies authoritative period metadata |
 | Local New York clock | Daylight saving time changes day length | Business rules require local-time windows |
 | Initial-only FINWIRE | Company and earnings data become stale | A bounded experiment needs no later reports |
 | Detailed per-company filing calendars | More scheduling rules without a current consumer | A feature needs company-specific release timing |
-| Separate quarterly prefix | Adds a second watched location and ordering dependency | Another provider uses a separate channel |
+| Separate quarterly prefix | Adds a second watched location and ordering dependency | Another source department uses a separate channel |
 | Hive-style raw prefixes | Raw text and XML are read by explicit path, not as partitioned catalog tables | A raw-file query requirement appears |
-| Provider control file or fixed timeout | Assumes unavailable metadata or guesses completion | Provider supplies a reliable manifest |
+| Source control file or fixed timeout | Assumes unavailable metadata or guesses completion | The source department supplies a reliable manifest |
 | Publisher writes `staging` | Source could overwrite the platform's raw copy | The exercise no longer needs a department boundary |
 | Simulated trading database with CDC | Replaces TPC-DI change files and adds generator and ingestion work | A separately accepted extension requires it |
 
@@ -531,11 +531,11 @@ Buckets separate ownership and recovery requirements. Prefixes separate data wit
 | Bucket | Contents | Writer | Recovery and reason for boundary |
 | --- | --- | --- | --- |
 | `upstream` | Source-published initial and daily files | Publisher | Source-side delivery; platform identity has read-only access |
-| `staging` | Every pulled file version | DP1 | Replay input; separate from mutable source objects and table-overwrite jobs |
+| `staging` | Every pulled file version | DP1 | Rerun input; separate from mutable source objects and table-overwrite jobs |
 | `lakehouse` | Bronze and Silver Delta tables | Spark and Flink | Rebuild from staging and raw topic; common storage role |
 | `platform` | Logs, checkpoints, model artifacts | Platform services | Operational state with different recovery requirements |
 
-Staging paths are `initial/<version_id>/<source_filename>` and `daily/YYYYMMDD/<version_id>/<source_filename>`. Each pulled file gets a version ID. Retrying its pull keeps the same ID and path; a corrected source file gets a new ID. Reruns and backfills reuse saved versions rather than creating duplicate inputs.
+Staging paths are `initial/<version_id>/<source_filename>` and `daily/YYYYMMDD/<version_id>/<source_filename>`. Each pulled file gets a version ID. Retrying its pull keeps the same ID and path; a corrected source file gets a new ID. Reruns and backfills reuse saved file versions rather than creating duplicate inputs.
 
 An ingestion record maps the source object key and source version information to the staging path. An object-store ETag can help identify a source version, but it is not guaranteed to be a content hash. The staging version ID identifies the platform's saved file independently of that assumption.
 
@@ -561,7 +561,7 @@ Corrections flow through zones and forward in time because later versions, keys,
 | Reason to run again | Scope |
 | --- | --- |
 | Partial failure | Retry the incomplete work |
-| Corrected provider file | Use the new saved version and rebuild dependent dates |
+| Corrected source file | Use the new saved version and rebuild dependent dates |
 | Late input or event | Complete held work or correct already processed dates |
 | A bug in processing logic | Backfill affected dates and downstream outputs |
 | New feature logic | Build the required history |
@@ -587,13 +587,13 @@ Manual business edits are outside this design.
 | Feature tables | Replace affected feature rows with a new creation time |
 | Flink live tables | Remain current operational state; replay of the clean topic rebuilds them |
 
-Feature rows are replaceable inputs, not a complete record of past training. MLflow versions each training run's full dataset with its model. Delta history answers what Bronze and Silver looked like; Gold history can be rebuilt from Silver. DataHub incidents record rerun context, and lineage shows affected outputs.
+Feature rows are replaceable inputs, not a complete record of past training. MLflow versions each training run's full dataset with its model. Delta history shows earlier versions of Bronze and Silver; dbt can rebuild Gold history from Silver. DataHub incidents record rerun context, and lineage shows affected outputs.
 
 Feast's default point-in-time join filters by `event_timestamp` and can select the newest `created` value. Filtering by creation time requires `filter_by_created_timestamp=True` and offline-store support. A creation timestamp alone does not prevent the use of a later correction in an earlier training snapshot.
 
 ### 6.4 Streaming Source Selection
 
-Cash transactions were selected for the stream because they are additive amounts with second-resolution event time, a defined daily balance reference, and direct use in account attrition features. Streaming supplies cash transactions in the daily delivery period; fresh live views and triggered rescoring, rather than high event volume alone, justify continuous processing.
+The stream carries cash transactions because they are additive amounts with second-resolution event time, a defined daily balance reference, and direct use in account attrition features. Streaming supplies cash transactions in the daily delivery period; live tables and triggered rescoring, rather than high event volume alone, justify continuous processing.
 
 - **Correctness**: Keep stable event identity, recover committed output, and verify against independent balances.
 - **Reviewable logic**: Keep warehouse SQL in dbt and stateful event logic in Flink.
@@ -611,11 +611,11 @@ Cash transactions were selected for the stream because they are additive amounts
 | Stream engine | Flink 2.2 | Shared target of Kafka 5.0, JDBC 4.1, and Delta 4.4 connectors; writes Delta directly |
 | Kafka inspection | Kafbat UI | Apache 2.0 license and one small service |
 | Job split | Landing job, then clean-topic consumer | Landing continues if live processing fails; clean replay does not reappend Bronze |
-| Flink API | Python DataStream | Explicit late-event handling and side outputs |
+| Flink API | Python DataStream | Explicit late-message handling and side outputs |
 | Feature and rescore topics | Requests decouple consumers | Slow Feast or scoring consumers cannot stall the cash transaction stream |
 | Rolling sums | Last 30 daily totals | Avoids 720 overlapping event copies in an hourly sliding 30-day window |
 | Daily cash transaction and balance facts | dbt from Silver | One model for all dates; keys resolve after daily dimensions; live state supplies an independent check |
-| Identity | Source-assigned `CT_ID` in files and events | Same cash transaction identity across channels and retries |
+| Identity | Source-assigned `CT_ID` in files and messages | Same cash transaction identity across channels and retries |
 | Message format | JSON with schema files | Readable contract without another registry service |
 
 <details>
@@ -634,8 +634,8 @@ Cash transactions were selected for the stream because they are additive amounts
 | Soda Core | Open-source results need a custom DataHub path | Its integration support changes |
 | Redpanda Console | Business Source License rather than Apache 2.0 | Licensing requirements change |
 | One Flink job for all zones | A single crash stops landing; replay reappends raw zones | The separation no longer helps recovery |
-| Delta upserts from Flink | Events are immutable; upserts add experimental connector features | Mutable stream records require updates |
-| Flink daily movements plus a balance view | Splits warehouse logic and surrogate-key resolution | Warehouse ownership changes |
+| Delta upserts from Flink | Cash transactions are immutable; upserts add experimental connector features | Mutable stream records require updates |
+| Flink daily cash transaction facts plus a balance view | Splits warehouse logic and surrogate-key resolution | Warehouse ownership changes |
 | Trade stream | Multi-step lifecycle and conditional execution fields | A trade-specific live use case needs it |
 | Watch stream | No monetary measure or direct cash balance link | Watch activity needs live processing |
 | Holding stream | Needs trade joins for timestamp, account, and security; quantity is a post-trade state | A source supplies complete holding events |
