@@ -7,7 +7,7 @@ from .runner import compare, run, worker
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate and validate a bounded Polars TPC-DI POC.")
+    parser = argparse.ArgumentParser(description="Generate and validate bounded brokerage source datasets.")
     commands = parser.add_subparsers(dest="command", required=True)
     for command in ("run", "_worker"):
         subparser = commands.add_parser(command)
@@ -23,11 +23,15 @@ def main():
         worker(Config.load(arguments.config), arguments.output)
     elif arguments.command == "run":
         manifest = run(Config.load(arguments.config), arguments.output)
-        print(json.dumps({"output": str(arguments.output), "source_bytes": manifest["source_bytes"], "peak_rss_bytes": manifest["peak_rss_bytes"]}, indent=2))
+        print(json.dumps({"output": str(arguments.output), "source_bytes": manifest["source_bytes"],
+                          "stream_bytes": manifest["stream_bytes"], "peak_rss_bytes": manifest["peak_rss_bytes"]}, indent=2))
     elif arguments.command == "validate":
         from .validation import validate
         manifest = json.loads((arguments.output / "manifest.json").read_text())
-        print(json.dumps(validate(arguments.output, Config(**manifest["config"]), manifest["files"]), indent=2))
+        result = validate(arguments.output, Config(**manifest["config"]), manifest["files"])
+        from .runner import write_json
+        write_json(arguments.output / "validation.json", result)
+        print(json.dumps(result, indent=2))
     else:
         print(json.dumps(compare(arguments.first, arguments.second), indent=2))
 

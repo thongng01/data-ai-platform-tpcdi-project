@@ -27,8 +27,8 @@ TradeHistory:
 CashTransaction:
   filename: CashTransaction.txt
   separator: "|"
-  cdc: true
   fields:
+    CT_ID: NUM(15)
     CT_CA_ID: IDENT_T
     CT_DTS: DATETIME
     CT_AMT: VALUE_T

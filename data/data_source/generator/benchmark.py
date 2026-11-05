@@ -20,8 +20,10 @@ def benchmark(configurations: list[Path], output: Path):
                 "source_records": manifest["source_records"], "peak_rss_bytes": manifest["peak_rss_bytes"],
                 "generation_seconds": generation_seconds, "validation_seconds": manifest["timings_seconds"]["validation"],
                 "source_mib_per_generation_second": manifest["source_bytes"] / 1024**2 / generation_seconds,
-                "customers": manifest["config"]["customers"], "historical_days": manifest["config"]["historical_days"],
-                "customer_batch_size": manifest["config"]["customer_batch_size"],
+                "scale_factor": manifest["config"]["scale_factor"], "customers_per_unit": manifest["config"]["customers_per_unit"],
+                "customer_group_size": manifest["config"]["customer_group_size"], "workers": manifest["config"]["workers"],
+                "stream_bytes": manifest["stream_bytes"], "stream_records": manifest["stream_records"],
+                "timings_seconds": manifest["timings_seconds"], "supervision": manifest["supervision"],
             }
             identity = manifest["dataset_id"]
             if identity in semantic_runs:
@@ -38,7 +40,7 @@ def benchmark(configurations: list[Path], output: Path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run sequential POC scale and repeatability measurements.")
+    parser = argparse.ArgumentParser(description="Run sequential scale and byte-repeatability measurements.")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--configs", type=Path, nargs="+", required=True)
     arguments = parser.parse_args()
