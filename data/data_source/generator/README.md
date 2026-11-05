@@ -62,7 +62,7 @@ Start with `runner.worker`, which calls the generation phases in order. Then rea
 | Shared market | `market.py`; `Market` | Build prices, exchange sessions, released FINWIRE values, and dividends |
 | Population plan | `population.py`; `Population` | Plan joining groups, account traits, replacement capacity, and expected risk normalization |
 | Daily business execution | `business.py`, `activity.py`; `BusinessDay`, `Intent`, `BusinessSimulation`, `Ledger`, `HoldingBook` | Select account-wide proposals in arrays and execute ordered money and holding changes |
-| Attrition signal | `attrition.py`; `AttritionPlanner`, `ReturnHistory` | Select exits from observed history and add leaving and look-alike behavior to the daily plan |
+| Attrition signal | `attrition.py`; `AttritionPlanner`, `ReturnHistory` | Select exits from observed history, add leaving and partial-outflow intents, and classify observed outcomes |
 | Source recording | `customers.py`, `recording.py`; `SourceRecorder` | Encode CMS actions, customer and account fields, prospect snapshots, data errors, and trade channels |
 | Bounded export | `generation.py`, `sorting.py`, `formats.py`, `definitions/`; `Generation`, `SortedOutput` | Check dated contracts, spool sorted runs, merge bounded inputs, and assign source sequences |
 | Saved-file validation | `validation.py`, `validation_faults.py`; `FaultAudit` | Parse saved bytes, verify exact data-error evidence, and replay business invariants |
@@ -82,7 +82,9 @@ Configuration holds numbers and distribution choices. Source definitions hold fi
 | `positions_per_account` | Repeatable security-selection slots per account; default 4; zero lets buys select from the full market |
 | `account_generations` | Reserved account generations for each joining account slot; default 8; checked capacity prevents ID reuse |
 | `attrition_enabled` | Select the attrition planner; disabling it selects ordinary stage 1 lifetime planning |
-| Attrition settings | Warning share 80%, warning length 1 to 8 weeks, 1 to 4 liquidation steps, and look-alike outflows about 2% per year |
+| Attrition settings | Warning share 80%, warning length 1 to 8 weeks, and 1 to 4 liquidation steps |
+| `annual_lookalike` | Intended confirmed look-alike rate, default 0.02 per account-year; measured outcomes determine the realized rate |
+| `lookalike_opportunity_multiplier` | Proposal-rate calibration factor, default 2.12; multiplies `annual_lookalike` to set the raw opportunity rate |
 | Data-error settings | Five independent rates, listed under Source Recording below |
 | `trade_channel_start` | First daily delivery date with `T_CHANNEL`; default `2019-07-01` |
 | Market settings | Companies, securities, prices, volatility, popularity, shock days, and dividend rules, independent of firm size |
@@ -129,7 +131,21 @@ With valid history at the lookback start, an investment loss that wipes out posi
 
 For a customer-wide exit, the planner takes the mean risk of the customer's active accounts. This prevents account count alone from multiplying customer risk. A deterministic curve of expected account traits normalizes risk across customer groups; it does not use future realized outcomes. The population plan anchors expected cutover size. Actual customer and account counts and annual exit rates come from the realized simulation, not an exact marginal-rate guarantee.
 
-An exit plan stops ordinary deposits and buys, cancels open orders, schedules staged sales, and withdraws sale proceeds within the day. A customer exit gives the customer's active accounts one shared leaving period. Look-alike accounts sell part of their holdings and withdraw proceeds while retaining ordinary behavior. Hidden plans stay under `summary/hidden/`; source records contain only their resulting business events.
+An exit plan stops ordinary deposits and buys, cancels open orders, schedules staged sales, and withdraws sale proceeds within the day. A customer exit gives the customer's active accounts one shared leaving period. Hidden plans stay under `summary/hidden/`; source records contain only their resulting business events.
+
+The planner also proposes partial sales and withdrawals without using future closure labels. A proposal becomes an `outflow_candidate` only after a sale executes and a positive withdrawal follows. The candidate does not suppress later account-closure or customer-inactivation risk. An unexecuted proposal does not count as an observed outflow.
+
+After the business simulation finishes, the planner classifies each candidate from the account's actual lifetime:
+
+| Hidden classification | Condition |
+| --- | --- |
+| `confirmed_lookalike` | The account remains open through the next 30 fully observed calendar days |
+| `closing` | The account closes on or before the end of the candidate's 30-day horizon |
+| `censored` | The run ends before the full horizon is observed, without an observed closure in that horizon |
+
+This classification changes only the hidden report. It does not change business behavior or feed the signal-check features. The signal check derives closure labels from observed account status instead.
+
+The configured raw opportunity rate is `annual_lookalike * lookalike_opportunity_multiplier`, or `0.02 * 2.12 = 0.0424` per account-year with the defaults. The intended confirmed rate remains 0.02. The multiplier controls proposal intensity; it does not guarantee conversion into executed or confirmed outcomes. The summary reports proposal, executed-candidate, and confirmed rates separately. The confirmed rate uses account-day exposure whose next 30 calendar days lie within the run.
 
 ### Source Recording
 
