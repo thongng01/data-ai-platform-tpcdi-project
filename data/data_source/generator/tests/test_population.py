@@ -16,14 +16,14 @@ from data.data_source.generator.population import ACCOUNT_DTYPE, CUSTOMER_DTYPE,
 
 
 def short_config(**kwargs):
-    """Check short config."""
+    """Create a small firm across cutover while preserving strict default policies."""
     return Config(initial_start="2018-01-01", initial_end="2018-12-31",
                   daily_start="2019-01-01", daily_end="2020-12-31",
                   customers_per_unit=500, companies=2, securities=3, **kwargs)
 
 
 def parse_action(action):
-    """Check parse action."""
+    """Parse one CMS action inside the required TPC-DI namespace wrapper."""
     return ET.fromstring(f'<TPCDI:Actions xmlns:TPCDI="http://www.tpc.org/tpc-di">{action}</TPCDI:Actions>')[0]
 
 
@@ -31,7 +31,7 @@ def parse_action(action):
        count=st.integers(min_value=1, max_value=300),
        margin_share=st.sampled_from([0, .2, .75, 1]))
 def test_account_trait_bounds(seed, count, margin_share):
-    """Check account trait bounds."""
+    """Hidden account traits respect wealth, profile, tax, broker, and margin bounds."""
     config = short_config(seed=seed, margin_share=margin_share)
     accounts = _account_traits(config, np.arange(1, count + 1))
     assert np.all(accounts["wealth_cents"] >= config.wealth_min * 100)
@@ -47,7 +47,7 @@ def test_account_trait_bounds(seed, count, margin_share):
 
 
 def test_population_is_independent_of_execution_groups(tmp_path):
-    """Check population is independent of execution groups."""
+    """Worker and group settings cannot change planned identities or account traits."""
     config = short_config()
     first = build_population(config, tmp_path / "one")
     other = build_population(replace(config, customer_group_size=7, workers=2, threads=1, merge_fan_in=2), tmp_path / "seven")
@@ -100,6 +100,14 @@ def test_runtime_lifetimes_replace_plans_and_preserve_ownership(dynamic_run):
     assert hidden["account_id"].to_list() == opened["account_id"].tolist()
     assert summary["closures"] == np.count_nonzero(opened["close_day"] < config.total_days)
     assert summary["generation_stage"] == 2
+    plans = pl.concat([pl.read_parquet(path) for path in sorted((root / "summary/hidden").glob("attrition-*.parquet"))])
+    assert plans.schema["classification"] == pl.String
+    assert plans.schema["final_plan"] == pl.Boolean
+    final_closed = plans.filter(pl.col("classification").is_in(["closed_warning", "closed_no_warning"]))
+    assert final_closed.height == summary["closures"]
+    assert final_closed["final_plan"].all()
+    assert final_closed.filter(pl.col("classification") == "closed_warning").height == summary["warning_closures"]
+    assert plans.filter(pl.col("kind") == "outflow_candidate").height == summary.get("outflow_candidates", 0)
 
 
 def test_global_risk_curve_ignores_execution_groups(tmp_path):
@@ -163,19 +171,20 @@ def test_static_full_calendar_rates_and_growth(tmp_path):
     assert np.mean(~accounts["is_cash"]) == pytest.approx(config.margin_share, abs=.01)
 
 
-def test_closures_use_nyse_sessions(tmp_path):
-    """Check closures use nyse sessions."""
+def test_closures_use_nyse_sessions(dynamic_run):
+    """Every realized liquidation date must belong to a real NYSE session."""
     from data.data_source.generator.config import calendar_for
-    config = short_config(annual_closure=.5, annual_inactivation=.2)
-    population = build_population(config, tmp_path)
+    config, _, population, _, _ = dynamic_run
     sessions = {session.date() for session in calendar_for(config.start, config.end).sessions}
     closes = population.accounts["close_day"]
-    for day in np.unique(closes[closes < config.total_days]):
+    realized = np.unique(closes[closes < config.total_days])
+    assert len(realized) > 0
+    for day in realized:
         assert config.day(int(day)) in sessions
 
 
 def test_tiers_rank_complete_cohort_and_break_ties_by_customer_id():
-    """Check tiers rank complete cohort and break ties by customer id."""
+    """Rank joining wealth across the cohort and resolve equal wealth by customer ID."""
     customers = np.zeros(10, dtype=CUSTOMER_DTYPE)
     customers["customer_id"] = np.arange(1, 11)
     accounts = np.zeros(10, dtype=ACCOUNT_DTYPE)
@@ -187,7 +196,7 @@ def test_tiers_rank_complete_cohort_and_break_ties_by_customer_id():
 
 
 def test_tiers_use_monthly_cohorts_not_small_daily_groups():
-    """Check tiers use monthly cohorts not small daily groups."""
+    """Customers joining in one month share one wealth ranking despite different dates."""
     customers = np.zeros(10, dtype=CUSTOMER_DTYPE)
     customers["customer_id"] = np.arange(1, 11)
     customers["open_day"] = np.arange(1, 11)
@@ -200,7 +209,7 @@ def test_tiers_use_monthly_cohorts_not_small_daily_groups():
 
 
 def test_configured_tier_and_tax_shares(tmp_path):
-    """Check configured tier and tax shares."""
+    """Nondefault tier shares and source tax codes reach the generated population."""
     config = short_config(tier_shares=(.2, .5, .3), tax_shares=(0, 1, 0))
     population = build_population(config, tmp_path)
     initial = population.customers[population.customers["open_day"] == 0]
@@ -213,7 +222,7 @@ def test_configured_tier_and_tax_shares(tmp_path):
 
 
 def test_tier_uses_total_joining_wealth_not_replacement_wealth():
-    """Check tier uses total joining wealth not replacement wealth."""
+    """Later replacement wealth cannot change the tier assigned at customer joining."""
     customers = np.zeros(10, dtype=CUSTOMER_DTYPE)
     customers["customer_id"] = np.arange(1, 11)
     accounts = np.zeros(12, dtype=ACCOUNT_DTYPE)
@@ -239,7 +248,7 @@ def test_static_hidden_accounts_are_typed_and_have_dates(tmp_path):
 
 
 def test_xml_preserves_omitted_and_explicit_empty_values():
-    """Check xml preserves omitted and explicit empty values."""
+    """CMS updates keep omitted fields distinct from fields explicitly cleared."""
     action = parse_action(xml_action("UPDCUST", "2018-01-01T12:00:00", 7,
                                     {"C_M_NAME": None, "C_EMAIL_2": ""}))
     customer = action.find("Customer")
@@ -252,7 +261,7 @@ def test_xml_preserves_omitted_and_explicit_empty_values():
 
 
 def test_xml_accounts_can_be_partial_and_escaped():
-    """Check xml accounts can be partial and escaped."""
+    """Partial account updates omit unchanged fields and escape XML-sensitive text."""
     action = parse_action(xml_action("UPDACCT", "2018-01-01T12:00:00", 7,
                                     account_values=[{"CA_ID": 4, "CA_NAME": "A & B"}, {"CA_ID": 5}]))
     accounts = action.findall("Customer/Account")
@@ -264,7 +273,7 @@ def test_xml_accounts_can_be_partial_and_escaped():
 
 
 def test_new_xml_matches_tpcdi_schema(tmp_path):
-    """Check new xml matches tpcdi schema."""
+    """A generated NEW action satisfies the supplied TPC-DI XML schema."""
     etree = pytest.importorskip("lxml.etree")
     config = short_config()
     population = build_population(config, tmp_path)
@@ -278,7 +287,7 @@ def test_new_xml_matches_tpcdi_schema(tmp_path):
 
 @pytest.mark.parametrize("year,expected_birth_year", [(1902, 1884), (2019, 1960), (2100, 1980)])
 def test_birth_year_keeps_prospect_ages_valid_at_calendar_limits(tmp_path, year, expected_birth_year):
-    """Check birth year keeps prospect ages valid at calendar limits."""
+    """Supported calendar endpoints keep customer births and prospect ages in range."""
     config = Config(initial_start=f"{year}-01-01", initial_end=f"{year}-01-31",
                     daily_start=f"{year}-02-01", daily_end=f"{year}-03-31",
                     customers_per_unit=10, companies=2, securities=3)
@@ -303,7 +312,7 @@ def test_birth_year_keeps_prospect_ages_valid_at_calendar_limits(tmp_path, year,
 
 
 def test_emitted_cms_matches_seeded_prospects_and_preserves_updated_names(tmp_path):
-    """Check real source writes, not only helpers, with a nonzero personal-data seed."""
+    """Emitted CMS, prospect, and account-update fields preserve one seeded identity."""
     from types import SimpleNamespace
     from data.data_source.generator.activity import BusinessSimulation
     config = Config(initial_start="2019-01-01", initial_end="2019-01-31", daily_start="2019-02-01", daily_end="2019-03-03",
@@ -363,7 +372,7 @@ def test_emitted_cms_matches_seeded_prospects_and_preserves_updated_names(tmp_pa
 
 
 def test_prospect_default_birth_year_matches_reference_calendar():
-    """Check prospect default birth year matches reference calendar."""
+    """The prospect helper preserves its explicit and default reference-year behavior."""
     default = _prospect_values(1, 1, date(2019, 1, 1), 7)
     explicit = _prospect_values(1, 1, date(2019, 1, 1), 7, 1941)
     assert default == explicit
@@ -373,7 +382,7 @@ def test_prospect_default_birth_year_matches_reference_calendar():
 
 
 def test_reference_calendar_preserves_varied_birth_year_values_and_field_order():
-    """Check reference calendar preserves varied birth year values and field order."""
+    """Reference dates retain varied birth years and the ordered prospect field contract."""
     config = Config()
     years = set()
     for identity in range(1, 91):
@@ -388,7 +397,7 @@ def test_reference_calendar_preserves_varied_birth_year_values_and_field_order()
 
 
 class ProspectCapture:
-    """Support ProspectCapture."""
+    """Collect prospect batches by snapshot without replacing field generation."""
     def __init__(self, config):
         """Collect bounded prospect batches by snapshot date for source checks."""
         self.config = config
@@ -402,7 +411,7 @@ class ProspectCapture:
 
 
 def test_prospects_keep_identity_without_future_customer_status(tmp_path):
-    """Check prospects keep identity without future customer status."""
+    """Monthly prospects retain personal identity without exposing future customer status."""
     config = short_config(annual_growth=.3, export_rows=19)
     population = build_population(config, tmp_path)
     generation = ProspectCapture(config)

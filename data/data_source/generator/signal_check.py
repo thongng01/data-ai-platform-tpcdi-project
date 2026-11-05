@@ -11,11 +11,11 @@ import numpy as np
 import polars as pl
 
 from .random_values import scalar
+from .business import ATTRITION_HORIZON_DAYS as HORIZON_DAYS
 
 FEATURES = ("deposit_count_7d", "deposit_count_30d", "withdrawal_count_30d",
             "buy_count_7d", "buy_count_30d", "sell_count_7d", "sell_count_30d",
             "net_external_30d", "external_outflow_30d", "tenure_days")
-HORIZON_DAYS = 30
 
 
 @dataclass(frozen=True)

@@ -17,9 +17,9 @@ from data.data_source.generator.reference import generate_reference
 
 
 class Capture:
-    """Support Capture."""
+    """Collect emitted reference and market batches and measure their largest size."""
     def __init__(self, config):
-        """Check   init  ."""
+        """Allocate source-contract lookup and separate row collectors for each output form."""
         self.config = config
         self.sources = load_sources()
         self.rows = defaultdict(list)
@@ -27,24 +27,24 @@ class Capture:
         self.max_batch = 0
 
     def emit(self, source, day, rows):
-        """Check emit."""
+        """Collect a source batch and update the measured largest batch size."""
         self.max_batch = max(self.max_batch, len(rows))
         self.rows[source, day].extend(rows)
 
     def text(self, path, rows):
-        """Check text."""
+        """Collect fixed-width output and retain the measured batch-size bound."""
         self.max_batch = max(self.max_batch, len(rows))
         self.text_rows[path].extend(rows)
 
 
 def short_config(**kwargs):
-    """Check short config."""
+    """Create a small market spanning cutover and the first quarterly release dates."""
     return Config(initial_start="2018-12-20", initial_end="2018-12-31", daily_start="2019-01-01",
                   daily_end="2019-04-30", scale_factor=.01, companies=2, securities=5, **kwargs)
 
 
 def test_defaults_and_frozen_config():
-    """Check defaults and frozen config."""
+    """Default dates and staffing remain stable, and settings cannot mutate after validation."""
     config = Config()
     assert (config.start, config.cutover, config.daily_start_date, config.end) == (
         date(2014, 1, 1), date(2018, 12, 31), date(2019, 1, 1), date(2025, 12, 31))
@@ -57,7 +57,7 @@ def test_defaults_and_frozen_config():
 
 @given(st.integers(min_value=1, max_value=100000))
 def test_decimal_population_rounding(half):
-    """Check decimal population rounding."""
+    """Half-valued population counts round upward using decimal arithmetic."""
     assert rounded_count(f"{half}.5") == half + 1
     assert rounded_count("0.15", 10) == 2
 
@@ -78,6 +78,9 @@ def test_decimal_population_rounding(half):
     {"activity_variation_power": 0}, {"disk_limit_mb": 1},
     {"positions_per_account": -1}, {"positions_per_account": True}, {"positions_per_account": 65},
     {"attrition_enabled": 1}, {"attrition_warning_share": 1.01}, {"annual_lookalike": True},
+    {"lookalike_opportunity_multiplier": 0}, {"lookalike_opportunity_multiplier": -1},
+    {"lookalike_opportunity_multiplier": True}, {"lookalike_opportunity_multiplier": float("inf")},
+    {"lookalike_opportunity_multiplier": float("nan")},
     {"attrition_warning_min_weeks": 9}, {"attrition_liquidation_max_steps": 5},
     {"lookalike_sale_min": .1}, {"lookalike_sale_max": .6}, {"account_generations": 1},
     {"customer_tier_error_rate": 1.01}, {"trade_charge_error_rate": True},
@@ -85,14 +88,14 @@ def test_decimal_population_rounding(half):
 
 ])
 def test_invalid_config(settings):
-    """Check invalid config."""
+    """Reject unsupported types, ranges, calendar periods, and capacity settings."""
     with pytest.raises(ConfigError):
         Config(**settings)
 
 
 @pytest.mark.parametrize("content", ["seed: 1\nseed: 2\n", "unknown: 1\n", "[]\n", "1: 2\n", "seed: [\n"])
 def test_strict_yaml(tmp_path, content):
-    """Check strict yaml."""
+    """Reject duplicate keys, unknown settings, malformed YAML, and nonmapping documents."""
     path = tmp_path / "config.yaml"
     path.write_text(content)
     with pytest.raises(ConfigError):
@@ -100,13 +103,13 @@ def test_strict_yaml(tmp_path, content):
 
 
 def test_all_examples_load():
-    """Check all examples load."""
+    """Every committed example configuration satisfies the strict run contract."""
     for path in (Path(__file__).parents[1] / "configs").glob("*.yaml"):
         Config.load(path)
 
 
 def test_reference_sessions_and_special_closures():
-    """Check reference sessions and special closures."""
+    """The pinned exchange calendar matches trading counts and unscheduled closures."""
     exchange = calendar_for(date(2013, 1, 1), date(2026, 1, 7))
     sessions = {stamp.date() for stamp in exchange.sessions}
     assert sum(date(2014, 1, 1) <= day <= date(2018, 12, 31) for day in sessions) == 1258
@@ -119,7 +122,7 @@ def test_reference_sessions_and_special_closures():
 
 
 def test_earnings_support_and_release_cadence():
-    """Check earnings support and release cadence."""
+    """FINWIRE support quarters precede simulation and reports follow release dates."""
     config = Config()
     postings = list(finwire_postings(config))
     assert postings[0] == (date(2012, 10, 1), None)
@@ -133,7 +136,7 @@ def test_earnings_support_and_release_cadence():
 
 
 def test_market_mmap_prices_releases_and_dividends(tmp_path):
-    """Check market mmap prices releases and dividends."""
+    """Read-only market blocks preserve price bounds, release timing, and dividend amounts."""
     config = short_config(dividend_share=1, export_rows=3)
     capture = Capture(config)
     market = Market.build(config, tmp_path, capture)
@@ -177,7 +180,7 @@ def test_market_mmap_prices_releases_and_dividends(tmp_path):
 
 
 def test_market_ignores_firm_size_and_execution_settings(tmp_path):
-    """Check market ignores firm size and execution settings."""
+    """Changing firm size or worker settings cannot change shared market or FINWIRE bytes."""
     first = short_config(export_rows=3)
     second = replace(first, scale_factor=5, export_rows=64, customer_group_size=2, workers=2, threads=1, merge_fan_in=2)
     captures = [Capture(first), Capture(second)]
@@ -191,7 +194,7 @@ def test_market_ignores_firm_size_and_execution_settings(tmp_path):
 
 
 def test_reference_has_static_hr_and_all_seconds():
-    """Check reference has static hr and all seconds."""
+    """Reference batches cover each clock second and the configured broker staffing."""
     config = short_config(export_rows=37)
     capture = Capture(config)
     generate_reference(capture)

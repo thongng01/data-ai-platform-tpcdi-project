@@ -166,7 +166,7 @@ def _dynamic_population(config, root, path, customers, sentinel):
 
 
 def build_population(config, root):
-    """Plan base-rate closures. Generation stage 2 can replace this selection."""
+    """Plan expected customer joins and reserve stable account slots for execution."""
     root = Path(root)
     path = root / "_work" / "population"
     path.mkdir(parents=True, exist_ok=True)

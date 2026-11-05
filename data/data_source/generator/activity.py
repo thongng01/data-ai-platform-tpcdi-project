@@ -13,7 +13,7 @@ import polars as pl
 from .customers import account_values, customer_birth_year, customer_values, xml_action
 from .random_values import uniform, uniforms
 from .business import (
-    BusinessDay, Intent, IntentKind, MarketDayCache, plan_daily_activity, DAY_KEY_STRIDE,
+    BusinessDay, Intent, IntentKind, MarketDayCache, plan_daily_activity, DAY_KEY_STRIDE, ATTRITION_HORIZON_DAYS,
     DIVIDEND_SECOND, FUNDING_SECOND, MARKET_OPEN_SECOND, ORDER_DUE_SECOND,
     LIQUIDATION_SECOND, REPAYMENT_SECOND, FINAL_WITHDRAWAL_SECOND,
     WATCH_CANCEL_SECOND, WATCH_ADD_SECOND, CLOSE_SECOND,
@@ -22,6 +22,12 @@ from .business import (
 from .recording import SourceRecorder
 
 TRADE_STRIDE = 1_000_000
+ATTRITION_RECORD_SCHEMA = {
+    "account_id": pl.Int64, "start_day": pl.Int64, "close_day": pl.Int64,
+    "steps": pl.List(pl.Int64), "customer_exit": pl.Boolean, "kind": pl.String,
+    "classification": pl.String, "final_plan": pl.Boolean,
+    "actual_close_day": pl.Int64, "outcome_day": pl.Int64,
+}
 
 
 def decimal_cents(cents: int) -> str:
@@ -156,7 +162,7 @@ class Order:
 
 
 class Stage1IntentPlanner:
-    """Generation stage 2 replaces closure selection and intent planning here."""
+    """Supply base-rate intentions through the shared business planner interface."""
 
     def prepare(self, simulation):
         """Attach to a group without changing its base-rate lifetime plan."""
@@ -170,6 +176,9 @@ class Stage1IntentPlanner:
 
     def after_day(self, simulation, day):
         """Observe completed business effects without changing source records."""
+
+    def finish(self, simulation) -> None:
+        """Leave summary outcomes unchanged for the explicit stage 1 policy."""
 
     def numeric_state_bytes(self) -> int:
         """Return the extra numeric storage used by this stateless policy."""
@@ -542,6 +551,8 @@ class BusinessSimulation:
             self.accounts[index]["close_day"] = offset
         active = (self.accounts["open_day"] <= offset) & (self.accounts["close_day"] > offset) & ~self.closed
         self.metrics["account_days"] += int(np.count_nonzero(active)) + len(selected)
+        if offset + ATTRITION_HORIZON_DAYS < self.total_days:
+            self.metrics["fully_observed_lookalike_account_days"] += int(np.count_nonzero(active)) + len(selected)
         customer_active = (self.customers["open_day"] <= offset) & (self.customers["inactivation_day"] > offset)
         self.metrics["customer_days"] += int(np.count_nonzero(customer_active)) + len(inactive[offset])
         if offset == 0 or self.config.day(offset) == self.config.cutover or offset == self.total_days - 1:
@@ -634,17 +645,17 @@ class BusinessSimulation:
         sales = []
         for ordinal, security in enumerate(sorted(self.holdings.by_account[intent.account_id])):
             quantity = int(self.holdings.row(intent.account_id, security)[3])
-            quantity = int(np.ceil(quantity * intent.fraction)) if intent.name != "lookalike" else int(quantity * intent.fraction)
+            quantity = int(np.ceil(quantity * intent.fraction)) if intent.name != "outflow_candidate" else int(quantity * intent.fraction)
             if quantity <= 0:
                 continue
             sales.append(Intent(intent.second + 1 + ordinal, intent.account_id, 30000 + intent.ordinal * 100 + ordinal,
                                 IntentKind.FORCE_SELL, intent.index, amount=quantity, security=security, name=intent.name))
         return sales
 
-    def _execute_withdrawal(self, day: BusinessDay, intent: Intent, lookalike_sales: set) -> None:
+    def _execute_withdrawal(self, day: BusinessDay, intent: Intent, candidate_sales: set) -> None:
         """Limit withdrawals to funds available at this exact point in the day."""
         index, second = intent.index, intent.second
-        if intent.name == "lookalike" and index not in lookalike_sales:
+        if intent.name == "outflow_candidate" and index not in candidate_sales:
             return
         # Attrition drains owned cash, not the unused borrowing allowance.
         available = self.ledger.available(index)
@@ -653,8 +664,8 @@ class BusinessSimulation:
         amount = min(intent.amount, available)
         if amount > 0:
             self.cash(day.date, second, index, -amount, "Withdrawal")
-            if intent.name == "lookalike":
-                self.planner.realize_lookalike(self, index, day.offset)
+            if intent.name == "outflow_candidate":
+                self.planner.record_outflow_candidate(self, index, day.offset)
         else:
             self.metrics["rejected_withdrawal"] += 1
 
@@ -664,14 +675,14 @@ class BusinessSimulation:
         queue = [(intent.sort_key, sequence, intent) for sequence, intent in enumerate(day.intents)]
         heapq.heapify(queue)
         sequence = len(queue)
-        lookalike_sales = set()
+        candidate_sales = set()
         while queue:
             _, _, intent = heapq.heappop(queue)
             index, second = intent.index, intent.second
             if intent.kind == IntentKind.CASH:
                 self.cash(day.date, second, index, intent.amount, intent.name)
             elif intent.kind in (IntentKind.WITHDRAW, IntentKind.DRAIN):
-                self._execute_withdrawal(day, intent, lookalike_sales)
+                self._execute_withdrawal(day, intent, candidate_sales)
             elif intent.kind == IntentKind.SUBMIT:
                 self.submit(index, day.date, day.offset, second, day.prices, intent.ordinal)
             elif intent.kind == IntentKind.LIQUIDATE:
@@ -685,8 +696,8 @@ class BusinessSimulation:
                     before = int(self.ledger.balance[index])
                     self.submit(index, day.date, day.offset, second, day.prices, intent.ordinal,
                                 (intent.security, quantity))
-                    if intent.name == "lookalike" and int(self.ledger.balance[index]) > before:
-                        lookalike_sales.add(index)
+                    if intent.name == "outflow_candidate" and int(self.ledger.balance[index]) > before:
+                        candidate_sales.add(index)
             elif intent.kind == IntentKind.CANCEL:
                 if intent.order.trade_id in self.orders:
                     self.cancel(intent.order, day.date, second)
@@ -762,6 +773,7 @@ class BusinessSimulation:
                 self.close_accounts(day.date, offset, day.closes, day.prices)
             self._update_customers(day)
             self._finish_day(day)
+        self.planner.finish(self)
         return self._summary()
 
     def _summary(self) -> dict:
@@ -814,7 +826,7 @@ def _run_group(config_dict: dict, root_string: str, first_customer: int, last_cu
     hidden.mkdir(parents=True, exist_ok=True)
     frame.write_parquet(hidden / f"accounts-{first_customer:011d}.parquet")
     if hasattr(simulation.planner, "records") and simulation.planner.records:
-        pl.DataFrame(simulation.planner.records).write_parquet(hidden / f"attrition-{first_customer:011d}.parquet")
+        pl.DataFrame(simulation.planner.records, schema=ATTRITION_RECORD_SCHEMA).write_parquet(hidden / f"attrition-{first_customer:011d}.parquet")
     generation.close()
     return str(group_root), result
 
@@ -876,5 +888,10 @@ def generate_activity(generation, market, population, planner_factory=None, reco
         "annual_account_closure_rate": totals["closures"] * 365.2425 / max(1, totals["account_days"]),
         "annual_customer_inactivation_rate": totals["INACT"] * 365.2425 / max(1, totals["customer_days"]),
         "annual_inactivation_account_closure_rate": totals["inactivation_account_closures"] * 365.2425 / max(1, totals["account_days"]),
-        "annual_realized_lookalike_rate": totals["lookalike_periods"] * 365.2425 / max(1, totals["account_days"]),
+        "lookalike_target_annual_rate": config.annual_lookalike,
+        "lookalike_opportunity_multiplier": config.lookalike_opportunity_multiplier,
+        "raw_annual_lookalike_opportunity_rate": config.annual_lookalike * config.lookalike_opportunity_multiplier,
+        "annual_lookalike_proposal_rate": totals["lookalike_proposals"] * 365.2425 / max(1, totals["account_days"]),
+        "annual_outflow_candidate_rate": totals["outflow_candidates"] * 365.2425 / max(1, totals["account_days"]),
+        "annual_confirmed_lookalike_rate": totals["confirmed_lookalikes"] * 365.2425 / max(1, totals["fully_observed_lookalike_account_days"]),
     }

@@ -113,6 +113,10 @@ class Config:
     attrition_liquidation_min_steps: int = 1
     attrition_liquidation_max_steps: int = 4
     annual_lookalike: float = .02
+    # Provisional conversion adjustment: a small-market pilot executed 100 of
+    # 212 opportunities before removal of its former hazard protection. Full-
+    # market measurements report the realized rate rather than assume this fit.
+    lookalike_opportunity_multiplier: float = 2.12
     lookalike_sale_min: float = .2
     lookalike_sale_max: float = .5
     account_generations: int = 8
@@ -240,6 +244,8 @@ class Config:
             raise ConfigError("Attrition warning periods must be ordered within 1 through 8 weeks.")
         if not 1 <= self.attrition_liquidation_min_steps <= self.attrition_liquidation_max_steps <= 4:
             raise ConfigError("Attrition liquidation steps must be ordered within 1 through 4.")
+        if self.lookalike_opportunity_multiplier <= 0:
+            raise ConfigError("lookalike_opportunity_multiplier must be positive and finite.")
         if not .2 <= self.lookalike_sale_min <= self.lookalike_sale_max <= .5:
             raise ConfigError("Look-alike sale fractions must be ordered within .2 through .5.")
         if not 2 <= self.account_generations <= 32:

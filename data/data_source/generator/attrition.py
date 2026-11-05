@@ -1,16 +1,27 @@
 """Risk-based leaving behavior with past account returns and customer-wide exits."""
 
 import calendar
+from collections import Counter
 from dataclasses import dataclass
 
 import numpy as np
 
 from .activity import Stage1IntentPlanner
-from .business import Intent, IntentKind, LIQUIDATION_SECOND, FINAL_WITHDRAWAL_SECOND, MARKET_OPEN_SECOND
+from .business import Intent, IntentKind, LIQUIDATION_SECOND, FINAL_WITHDRAWAL_SECOND, MARKET_OPEN_SECOND, ATTRITION_HORIZON_DAYS
 from .random_values import uniforms
 
 PROFILE_RISKS = np.asarray([2., 1., .5, 1.5, 1.5])
 RETURN_HISTORY_DAYS = 96
+CLASSIFICATION_COUNTS = {
+    "confirmed_lookalike": "confirmed_lookalikes",
+    "closing": "closing_outflow_candidates",
+    "censored": "censored_outflow_candidates",
+    "closed_warning": "closed_warning_plans",
+    "closed_no_warning": "closed_no_warning_plans",
+    "superseded": "superseded_exit_plans",
+    "unclosed": "unclosed_exit_plans",
+    "unmatched_close": "unmatched_closed_plans",
+}
 
 
 def three_months_before(day):
@@ -94,8 +105,8 @@ class AttritionPlanner(Stage1IntentPlanner):
         self.returns = ReturnHistory(count)
         self.external_flow = np.zeros(count, dtype=np.int64)
         self.leaving = {}
-        self.lookalikes = {}
         self.records = []
+        self.final_plan_records = {}
         self.customer_plans = {}
         self.normalizer = getattr(simulation, "risk_normalizer", None)
         self.customer_indices = {int(row["customer_id"]): i for i, row in enumerate(simulation.customers)}
@@ -103,8 +114,6 @@ class AttritionPlanner(Stage1IntentPlanner):
         self.owners = np.searchsorted(simulation.customers["customer_id"], simulation.accounts["customer_id"])
         self.leaving_mask = np.zeros(count, dtype=np.bool_)
         self.customer_leaving = np.zeros(len(simulation.customers), dtype=np.bool_)
-        self.lookalike_day = np.full(count, -1000, dtype=np.int32)
-        self.customer_lookalike_day = np.full(len(simulation.customers), -1000, dtype=np.int32)
         self.risks = np.ones(count)
 
     def numeric_state_bytes(self) -> int:
@@ -144,10 +153,12 @@ class AttritionPlanner(Stage1IntentPlanner):
         self.leaving[index] = period
         self.leaving_mask[index] = True
         simulation.accounts[index]["close_day"] = min(period.close, simulation.total_days)
+        self.final_plan_records[index] = len(self.records)
         self.records.append({"account_id": int(simulation.accounts[index]["account_id"]),
                              "start_day": period.start, "close_day": period.close,
                              "steps": list(period.steps), "customer_exit": period.customer_exit,
-                             "kind": "leaving"})
+                             "kind": "leaving", "classification": None, "final_plan": None,
+                             "actual_close_day": None, "outcome_day": None})
         simulation.metrics["leaving_periods"] += bool(period.steps)
         simulation.metrics["exit_plans"] += 1
 
@@ -172,8 +183,7 @@ class AttritionPlanner(Stage1IntentPlanner):
                                           tier_values[owners[indices]], trailing[indices])
         normalizer = self._risk_curve(simulation, day)
         self._select_customer_exits(simulation, day, indices, owners, normalizer)
-        eligible = (~self.leaving_mask[indices] & ~self.customer_leaving[owners[indices]]
-                    & (day - self.lookalike_day[indices] >= 90))
+        eligible = ~self.leaving_mask[indices] & ~self.customer_leaving[owners[indices]]
         residual = simulation.config.annual_closure - simulation.config.annual_inactivation
         rates = residual * self.risks[indices] / normalizer / 365.2425
         keys = accounts["account_id"][indices].astype(np.uint64) + np.uint64((day + 1) * 1_000_000_000)
@@ -189,7 +199,7 @@ class AttritionPlanner(Stage1IntentPlanner):
         counts = np.bincount(owners[indices], minlength=count)
         means = totals / np.maximum(1, counts)
         eligible = ((counts > 0) & (simulation.customers["open_day"] <= offset)
-                    & ~self.customer_leaving & (offset - self.customer_lookalike_day >= 90))
+                    & ~self.customer_leaving)
         rates = simulation.config.annual_inactivation * means / normalizer / 365.2425
         keys = simulation.customers["customer_id"].astype(np.uint64) + np.uint64((offset + 1) * 1_000_000_000)
         selected = eligible & (uniforms(keys, simulation.config.seed, "inactivation-hazard:0") < -np.expm1(-rates))
@@ -243,7 +253,8 @@ class AttritionPlanner(Stage1IntentPlanner):
                 result.extend(self._sale_intents(account, index, day.offset, 1 / remaining))
             elif simulation.ledger.balance[index] > 0:
                 result.append(Intent(FINAL_WITHDRAWAL_SECOND, account, 40000, IntentKind.DRAIN, index, amount=10**12))
-        rate = simulation.config.annual_lookalike / simulation.market.sessions_per_year[day.date.year]
+        raw_rate = simulation.config.annual_lookalike * simulation.config.lookalike_opportunity_multiplier
+        rate = raw_rate / simulation.market.sessions_per_year[day.date.year]
         keys = simulation.accounts["account_id"][active].astype(np.uint64) + np.uint64((day.offset + 1) * 1_000_000_000)
         proposed = ~self.leaving_mask[active] & (uniforms(keys, simulation.config.seed, "lookalike-hazard:0") < -np.expm1(-rate))
         simulation.metrics["lookalike_proposals"] += int(np.count_nonzero(proposed))
@@ -257,17 +268,16 @@ class AttritionPlanner(Stage1IntentPlanner):
                          for security in simulation.holdings.by_account[account])
             if not viable:
                 continue
-            result.extend(self._sale_intents(account, index, day.offset, fraction, "lookalike"))
+            result.extend(self._sale_intents(account, index, day.offset, fraction, "outflow_candidate"))
         return result
 
-    def realize_lookalike(self, simulation, index: int, offset: int) -> None:
-        """Report a look-alike only after its real sale and withdrawal both occur."""
-        self.lookalikes[index] = offset
-        self.lookalike_day[index] = offset
-        self.customer_lookalike_day[self.owners[index]] = offset
+    def record_outflow_candidate(self, simulation, index: int, offset: int) -> None:
+        """Record an executed sale and withdrawal without changing future hazards."""
         self.records.append({"account_id": int(simulation.accounts[index]["account_id"]), "start_day": offset,
-                             "close_day": None, "steps": [offset], "customer_exit": False, "kind": "lookalike"})
-        simulation.metrics["lookalike_periods"] += 1
+                             "close_day": None, "steps": [offset], "customer_exit": False,
+                             "kind": "outflow_candidate", "classification": None, "final_plan": None,
+                             "actual_close_day": None, "outcome_day": None})
+        simulation.metrics["outflow_candidates"] += 1
 
     def _sale_intents(self, account: int, index: int, ordinal: int, fraction: float, name: str = "leaving") -> list[Intent]:
         """Keep the sale before its withdrawal on the same UTC date."""
@@ -299,6 +309,46 @@ class AttritionPlanner(Stage1IntentPlanner):
             if not candidates:
                 raise ValueError("The checked dynamic replacement-account capacity is exhausted.")
             simulation.accounts[min(candidates)]["open_day"] = day.offset + 1
+
+    def finish(self, simulation) -> None:
+        """Classify outcomes for the summary after all business events are fixed."""
+        counts = Counter()
+        for ordinal, record in enumerate(self.records):
+            index = self.account_indices[record["account_id"]]
+            close = int(simulation.accounts[index]["close_day"])
+            record["actual_close_day"] = close if close < simulation.total_days else None
+            if record["kind"] == "outflow_candidate":
+                self._classify_outflow(record, close, simulation.total_days)
+            else:
+                final = self.final_plan_records[index] == ordinal
+                self._classify_plan(record, final, close, simulation.total_days)
+            counts[record["classification"]] += 1
+        for classification, metric in CLASSIFICATION_COUNTS.items():
+            simulation.metrics[metric] = counts[classification]
+        simulation.metrics["warning_closures"] = counts["closed_warning"]
+
+    def _classify_outflow(self, record: dict, close: int, total_days: int) -> None:
+        """Confirm a negative outcome only after a fully observed 30-day horizon."""
+        maturity = record["start_day"] + ATTRITION_HORIZON_DAYS
+        if close < total_days and close <= maturity:
+            record.update(classification="closing", outcome_day=close)
+        elif maturity >= total_days:
+            record.update(classification="censored", outcome_day=total_days - 1)
+        else:
+            record.update(classification="confirmed_lookalike", outcome_day=maturity)
+
+    def _classify_plan(self, record: dict, final: bool, close: int, total_days: int) -> None:
+        """Separate superseded proposals from the final plan of an actual closure."""
+        record["final_plan"] = final
+        if not final:
+            record["classification"] = "superseded"
+        elif close >= total_days:
+            record["classification"] = "unclosed"
+        elif close != record["close_day"]:
+            record["classification"] = "unmatched_close"
+        else:
+            record["classification"] = "closed_warning" if record["steps"] else "closed_no_warning"
+            record["outcome_day"] = close
 
     def leaving_customers(self, simulation, day) -> set:
         """Cancel the configured watch share once when a warning starts."""

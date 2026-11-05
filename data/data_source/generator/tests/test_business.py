@@ -12,7 +12,7 @@ from data.data_source.generator.random_values import scalar, values
 
 @given(st.lists(st.integers(min_value=1, max_value=1000), min_size=1, max_size=100))
 def test_holding_conservation_and_new_origin(quantities):
-    """Check holding conservation and new origin."""
+    """Buys conserve quantity, and a full sale releases the old position origin."""
     book = HoldingBook(1)
     total = 0
     for ordinal, quantity in enumerate(quantities, 1):
@@ -28,13 +28,13 @@ def test_holding_conservation_and_new_origin(quantities):
 
 @given(st.integers(min_value=0, max_value=2**63 - 1), st.integers(min_value=0, max_value=2**63 - 1))
 def test_scalar_and_vector_random_values_match(identifier, seed):
-    """Check scalar and vector random values match."""
+    """The same identity, seed, and purpose produce identical scalar and array bits."""
     assert scalar(identifier, seed, "unit-test") == int(values([identifier], seed, "unit-test")[0])
 
 
 @given(st.integers(min_value=0, max_value=1_000_000), st.lists(st.integers(min_value=-100000, max_value=100000), max_size=100))
 def test_ledger_spending_invariant(limit, proposals):
-    """Check ledger spending invariant."""
+    """Accepted cash effects never take an account below its borrowing limit."""
     ledger = Ledger(np.array([(limit,)], dtype=[("margin_limit_cents", "i8")]))
     expected = 0
     for amount in proposals:
@@ -49,7 +49,7 @@ def test_ledger_spending_invariant(limit, proposals):
 
 
 def test_reservations_prevent_double_spending():
-    """Check reservations prevent double spending."""
+    """Reserved buy funds cannot fund another order or an earlier withdrawal."""
     ledger = Ledger(np.array([(0,)], dtype=[("margin_limit_cents", "i8")]))
     ledger.apply(0, 10000)
     ledger.reserve(0, 8000)
@@ -64,18 +64,18 @@ def test_reservations_prevent_double_spending():
 
 
 def test_sell_cannot_create_a_holding():
-    """Check sell cannot create a holding."""
+    """Reject a sale when the account does not own the security."""
     with pytest.raises(ValueError):
         HoldingBook().change(1, 1, 3, -1, 0)
 
 
 def test_recording_cannot_mutate_business_fields():
-    """Check recording cannot mutate business fields."""
+    """A recorder may change output fields but cannot change correct business values."""
     emitted = []
     generation = SimpleNamespace(emit=lambda *args: emitted.append(args))
     original = {"T_CHRG": "1.00"}
     def transform(source, day, fields):
-        """Check transform."""
+        """Reject mutation of the immutable input while returning a changed recorded value."""
         with pytest.raises(TypeError):
             fields["T_CHRG"] = "200.00"
         return {**fields, "T_CHRG": "200.00"}
@@ -85,7 +85,7 @@ def test_recording_cannot_mutate_business_fields():
 
 
 def test_intent_planner_controls_cash_trades_and_closure(tmp_path):
-    """Check intent planner controls cash trades and closure."""
+    """Planner restrictions apply to proposals while customer inactivation still forces closure."""
     from data.data_source.generator.config import Config
     from data.data_source.generator.population import ACCOUNT_DTYPE, CUSTOMER_DTYPE
 
@@ -99,17 +99,17 @@ def test_intent_planner_controls_cash_trades_and_closure(tmp_path):
     accounts = np.array([(4, 1, 0, 0, 1, True, 100000, 0, 1, 1)], dtype=ACCOUNT_DTYPE)
     calls = []
     class Planner(Stage1IntentPlanner):
-        """Support Planner."""
+        """Refuse optional business proposals and record which policy hooks execute."""
         def closing(self, account, day):
-            """Check closing."""
+            """Record the closure-policy call and reject its scheduled proposal."""
             calls.append(("close", day))
             return False
         def allow_cash(self, simulation, index, day, name):
-            """Check allow cash."""
+            """Record the cash-policy call and reject the optional cash proposal."""
             calls.append((name, day))
             return False
         def allow_trade(self, simulation, index, day, kind):
-            """Check allow trade."""
+            """Record the trade-policy call and reject the optional trade proposal."""
             calls.append((kind, day))
             return False
     cash = []
@@ -138,9 +138,9 @@ def test_intent_planner_controls_cash_trades_and_closure(tmp_path):
     assert inactive.metrics["closures"] == 1
 
     class RepeatedClosure(Stage1IntentPlanner):
-        """Support RepeatedClosure."""
+        """Propose the same account repeatedly to exercise the duplicate-closure guard."""
         def closures(self, simulation, day, scheduled):
-            """Check closures."""
+            """Return one fixed account index even after that account has already closed."""
             return (0,)
     accounts[0]["close_day"] = 0
     duplicate = BusinessSimulation(generation, market, customers, accounts, planner=RepeatedClosure())
@@ -167,7 +167,7 @@ def test_typed_intents_preserve_equal_time_order():
 
 
 def test_decimal_cent_encoding():
-    """Check decimal cent encoding."""
+    """Format zero and signed cents without dropping the two decimal places."""
     assert decimal_cents(-1) == "-0.01"
     assert decimal_cents(12345) == "123.45"
     assert decimal_cents(0) == "0.00"
@@ -176,7 +176,7 @@ def test_decimal_cent_encoding():
 @settings(max_examples=50)
 @given(st.floats(min_value=0, max_value=20, allow_nan=False, allow_infinity=False), st.floats(min_value=0, max_value=.99999999, allow_nan=False, allow_infinity=False))
 def test_poisson_draw_is_bounded_integer(rate, draw):
-    """Check poisson draw is bounded integer."""
+    """Inverse-CDF event counts remain nonnegative and below the expansion limit."""
     result = poisson(rate, draw)
     assert isinstance(result, int)
     assert 0 <= result < 10000

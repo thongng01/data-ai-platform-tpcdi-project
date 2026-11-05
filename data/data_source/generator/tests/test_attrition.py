@@ -126,6 +126,63 @@ def test_realized_past_loss_changes_both_exit_selections(customer_exit):
     assert outcomes == [False, True]
 
 
+@pytest.mark.parametrize("customer_exit", [True, False])
+def test_prior_outflow_candidate_does_not_suppress_either_hazard(customer_exit):
+    """A recent outflow cannot grant its account or another owned account immunity."""
+    offset = 400
+    purpose = "inactivation-hazard:0" if customer_exit else "closure-hazard:0"
+    rate = .5 if customer_exit else .4
+    key = (offset + 1) * 1_000_000_000 + 1
+    seed = next(seed for seed in range(100000) if uniform(key, seed, purpose) < -np.expm1(-rate / 365.2425))
+    outcomes = []
+    for prior_outflow in (False, True):
+        config = config_for_test(seed=seed, annual_inactivation=.5 if customer_exit else 0,
+                                 annual_closure=.5 if customer_exit else .4, attrition_warning_share=0)
+        planner = AttritionPlanner()
+        simulation, _, _, _ = simulation_for_test(config, planner, 2 if customer_exit else 1)
+        planner.normalizer = np.ones(config.total_days)
+        planner.returns.trailing = lambda config, day: np.zeros(len(simulation.accounts))
+        if prior_outflow:
+            planner.record_outflow_candidate(simulation, 1 if customer_exit else 0, offset - 1)
+        selected = planner.closures(simulation, offset, ())
+        outcomes.append(1 in planner.customer_plans if customer_exit else 0 in selected)
+    assert outcomes == [True, True]
+
+
+def test_summary_classifies_observed_outcomes_without_changing_lifetimes():
+    """Confirm only observed nonclosures; keep observed closures and censoring separate."""
+    config = config_for_test()
+    planner = AttritionPlanner()
+    simulation, _, _, _ = simulation_for_test(config, planner, 4)
+    starts = [10, 10, config.total_days - 20, config.total_days - 20]
+    closes = [40, 41, config.total_days, config.total_days - 10]
+    simulation.accounts["close_day"] = closes
+    for index, start in enumerate(starts):
+        planner.record_outflow_candidate(simulation, index, start)
+    before = simulation.accounts.copy()
+    planner.finish(simulation)
+    assert [row["classification"] for row in planner.records] == ["closing", "confirmed_lookalike", "censored", "closing"]
+    assert simulation.metrics["outflow_candidates"] == 4
+    assert simulation.metrics["confirmed_lookalikes"] == 1
+    assert simulation.metrics["closing_outflow_candidates"] == 2
+    assert simulation.metrics["censored_outflow_candidates"] == 1
+    np.testing.assert_array_equal(simulation.accounts, before)
+
+
+def test_summary_marks_superseded_plans_and_actual_final_warning():
+    """An overridden proposal must not count as a second closure or warning."""
+    planner = AttritionPlanner()
+    simulation, _, _, _ = simulation_for_test(config_for_test(), planner)
+    planner._start(simulation, 0, LeavingPeriod(10, 40, (10, 30)))
+    planner._start(simulation, 0, LeavingPeriod(20, 50, (20, 40), True))
+    planner.finish(simulation)
+    assert [row["classification"] for row in planner.records] == ["superseded", "closed_warning"]
+    assert [row["final_plan"] for row in planner.records] == [False, True]
+    assert planner.records[-1]["actual_close_day"] == 50
+    assert simulation.metrics["warning_closures"] == 1
+    assert simulation.metrics["superseded_exit_plans"] == 1
+
+
 def test_hazard_array_draws_match_scalar_selection():
     """Group size changes neither named draws nor hazard decisions."""
     ids = np.arange(1, 1001, dtype=np.uint64)
@@ -134,6 +191,27 @@ def test_hazard_array_draws_match_scalar_selection():
     expected = [uniform(int(key), 1234, "inactivation-hazard:0") for key in keys]
     np.testing.assert_array_equal(draws, expected)
     np.testing.assert_array_equal(draws, np.concatenate([uniforms(block, 1234, "inactivation-hazard:0") for block in np.array_split(keys, 7)]))
+
+
+def test_opportunity_multiplier_changes_only_outflow_opportunity_frequency():
+    """The calibrated proposal draw does not change closure or ordinary activity settings."""
+    base_probability = -np.expm1(-.02 / 252)
+    calibrated_probability = -np.expm1(-.02 * 2.12 / 252)
+    assert 0 < base_probability < calibrated_probability < 1
+    key = 1_000_000_001
+    seed = next(seed for seed in range(100000) if base_probability <= uniform(key, seed, "lookalike-hazard:0") < calibrated_probability)
+    proposals = []
+    for multiplier in (1., 2.12):
+        config = config_for_test(seed=seed, lookalike_opportunity_multiplier=multiplier)
+        simulation, _, _, prices = simulation_for_test(config, AttritionPlanner())
+        day = BusinessDay(config.start, 0, prices, (), (), (), set(), np.array([0]))
+        simulation.planner.intents(simulation, day)
+        proposals.append(simulation.metrics["lookalike_proposals"])
+        assert config.annual_lookalike == .02
+        assert config.annual_closure == .03 and config.annual_inactivation == .02
+        assert simulation.metrics["outflow_candidates"] == 0
+    assert proposals == [0, 1]
+    assert config_for_test().lookalike_opportunity_multiplier == 2.12
 
 
 def test_position_universe_bounds_holdings_without_changing_market_paying_share():
@@ -152,19 +230,22 @@ def test_lookalike_proposals_require_real_sale_and_withdrawal():
     """Do not count an empty account as a realized outflow look-alike."""
     config = config_for_test(annual_lookalike=1)
     simulation, _, _, prices = simulation_for_test(config, AttritionPlanner())
-    offset = next(day for day in range(config.total_days) if simulation.draw(1, day, "lookalike-hazard") < -np.expm1(-1 / 252))
+    offset = next(day for day in range(config.total_days - 30) if simulation.draw(1, day, "lookalike-hazard") < -np.expm1(-1 / 252))
     day = BusinessDay(config.day(offset), offset, prices, (), (), (), set(), np.array([0]))
     intents = simulation.planner.intents(simulation, day)
     assert simulation.metrics["lookalike_proposals"] == 1
-    assert simulation.metrics["lookalike_periods"] == 0
+    assert simulation.metrics["outflow_candidates"] == 0
     assert not intents
     simulation.holdings.change(1, 0, 100, 100, 1000000)
     day.intents = simulation.planner.intents(simulation, day)
     simulation._execute_intents(day)
-    assert simulation.metrics["lookalike_periods"] == 1
+    assert simulation.metrics["outflow_candidates"] == 1
     assert 50 <= simulation.holdings.row(1, 0)[3] <= 80
     assert simulation.ledger.balance[0] == 0
-    assert simulation.planner.lookalike_day[0] == offset
+    assert simulation.planner.records[-1]["classification"] is None
+    simulation.planner.finish(simulation)
+    assert simulation.planner.records[-1]["classification"] == "confirmed_lookalike"
+    assert simulation.metrics["confirmed_lookalikes"] == 1
 
 
 def test_staged_cancel_precedes_new_sale_in_saved_time():
@@ -230,7 +311,7 @@ def test_observation_windows_exclude_future_and_censored_labels():
     later = observations([lifetime], events + [CashObservation(7, start + timedelta(days=80), 999, "Deposit")], start + timedelta(days=90))
     assert frame.equals(later)
     assert "account_id" not in FEATURES and "label" not in FEATURES
-    assert not any("leaving" in field or "profile" in field or "wealth" in field for field in FEATURES)
+    assert not any(any(hidden in field for hidden in ("leaving", "profile", "wealth", "candidate", "classification")) for field in FEATURES)
 
 
 def test_source_only_lifetimes_include_customer_wide_inactivation(tmp_path):
