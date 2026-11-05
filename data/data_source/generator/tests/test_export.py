@@ -290,13 +290,22 @@ def test_csv_content_changes_definition_hash_and_dataset_identity(tmp_path, file
         compare(tmp_path / "before", tmp_path / "after")
 
 
-def test_tpcdi_format_fixtures_keep_the_original_business_fields():
-    """Check pinned official sample rows against the original source contracts."""
+TPCDI_FIXTURE_PATHS = frozenset({
+    "Batch1/BatchDate.txt", "Batch1/CashTransaction.txt", "Batch1/DailyMarket.txt",
+    "Batch1/HoldingHistory.txt", "Batch1/Industry.txt", "Batch1/StatusType.txt",
+    "Batch1/TaxRate.txt", "Batch1/Trade.txt", "Batch1/TradeHistory.txt",
+    "Batch1/TradeType.txt", "Batch1/WatchHistory.txt",
+    "Batch2/CashTransaction.txt", "Batch2/Trade.txt",
+})
+
+
+def _check_tpcdi_format_fixtures(root):
+    """Require the independent fixture inventory before checking pinned source rows."""
     from pathlib import Path
     from data.data_source.generator.formats import load_sources
 
-    root = Path(__file__).parent / "fixtures"
     manifest = json.loads((root / "manifest.json").read_text())
+    assert set(manifest["files"]) == TPCDI_FIXTURE_PATHS, "TPC-DI fixture inventory must contain all 13 expected paths."
     sources = load_sources()
     for relative, metadata in manifest["files"].items():
         raw = (root / "tpcdi_sf3" / relative).read_bytes()
@@ -315,3 +324,27 @@ def test_tpcdi_format_fixtures_keep_the_original_business_fields():
             if source_name == "CashTransaction":
                 fields = ["1", *fields]
             source.check(fields)
+
+
+def test_tpcdi_format_fixtures_keep_the_original_business_fields():
+    """Check all pinned official sample rows against the original source contracts."""
+    from pathlib import Path
+
+    _check_tpcdi_format_fixtures(Path(__file__).parent / "fixtures")
+
+
+@pytest.mark.parametrize("case", ["empty", "missing_path"])
+def test_tpcdi_fixture_inventory_rejects_empty_or_incomplete_manifest(tmp_path, case):
+    """Reject missing manifest entries before attempting to read any fixture rows."""
+    from pathlib import Path
+
+    manifest = json.loads((Path(__file__).parent / "fixtures/manifest.json").read_text())
+    if case == "empty":
+        manifest["files"] = {}
+    else:
+        del manifest["files"]["Batch1/Trade.txt"]
+    write_json(tmp_path / "manifest.json", manifest)
+    # No fixture files exist here. The inventory check must fail before the row
+    # loop can either skip an empty manifest or try to open a partial fixture.
+    with pytest.raises(AssertionError, match="fixture inventory"):
+        _check_tpcdi_format_fixtures(tmp_path)
