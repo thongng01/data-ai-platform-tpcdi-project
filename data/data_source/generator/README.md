@@ -229,6 +229,7 @@ These runs cover generation stages 1 to 3 over 2014-01-01 through 2025-12-31, wi
 | Factor | Customers per unit | Offline bytes | Stream bytes | Generation seconds | Validation seconds | Peak RSS MiB | Peak temporary GiB |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | 1 | 3,300 | 1,346,693,500 | 307,655,539 | 954.77 | 753.54 | 1,374.79 | 2.426 |
+| 1 | 3,601 | 1,438,704,592 | 339,074,412 | 896.26 | 829.15 | 1,434.32 | 2.585 |
 
 ### Original Stage 1 Reference Measurement
 
@@ -247,6 +248,8 @@ One unit targets 1,000,000,000 variable offline bytes over the full reference ca
 3. Estimate variable bytes per unit as `V = B1 - F`. Set `customers_per_unit` to `old_customers_per_unit * 1,000,000,000 / V`, with decimal half-up rounding.
 4. Repeat factor 1 with the calibrated customer count and unchanged market, behavior, and seed. Measure its variable bytes and report the difference from the one-GB target.
 
-This factor 1 slope is provisional. The projection at factor `s` is `F + s * V`; it does not measure factor 5 or establish factor 100 throughput. Population sampling and staffing rounding can change scaling. Do not change activity rates, duplicate rows, or change market size to force a byte total.
+At the default anchor of 3,601 customers per unit, factor 1 measures 1,008,534,820 variable offline bytes, 0.853482% above the target, plus 430,169,772 fixed bytes. The realized cutover population is 3,597 customers and 6,028 accounts, separate from the expected anchor.
+
+The projection at factor `s` is `F + s * V`, using that measured variable slope rather than forcing it to one GB. At factor 100, this estimates 101,283,651,772 offline bytes and 33,907,441,200 stream bytes. It does not measure factor 5 or establish factor 100 throughput. Population sampling and staffing rounding can change scaling. Do not change activity rates, duplicate rows, or change market size to force a byte total.
 
 The large-dataset evidence requires at least 100,000,000,000 measured offline source bytes. Stream messages, reports, hidden files, and temporary files do not count toward that requirement. A projection does not satisfy it.

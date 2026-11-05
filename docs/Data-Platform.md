@@ -73,7 +73,7 @@ The generator simulates one retail brokerage day by day. Each account receives a
 | Daily delivery period | 2019-01-01 to 2025-12-31: 2,557 daily deliveries and 1,760 trading days | Chosen calendar; NYSE holiday calendar |
 | Run parameters | `initial_start`, `initial_end`, `daily_start`, `daily_end`: four inclusive UTC dates, with `daily_start` exactly one day after `initial_end` | Run contract; invalid or nonadjacent periods are rejected |
 | Clock | UTC without daylight saving time; NYSE holidays apply to dates; trading uses local NYSE session hours on the UTC clock | Deliberate timing simplification |
-| Reference volume | About 28 GB in the initial load and 72 GB in daily offline files at factor 100; daily offline files rise from about 8 GB in 2019 to 13 GB in 2025 | Linear estimate from measured factor 1 bytes, not measured factor 100 output |
+| Reference volume | About 28.5 GB in the initial load and 72.8 GB in daily offline files at factor 100, or 101.3 GB overall; daily offline files rise from about 8 GB in 2019 to 13 GB in 2025 | Linear estimate from measured factor 1 bytes, not measured factor 100 output |
 | Stream volume | About 34 GB of streamed cash transactions at factor 100, separate from offline volume | Linear estimate, not part of the 100 GB offline requirement |
 
 The trading-day counts include the unscheduled NYSE closures on 2018-12-05 and 2025-01-09. Every calendar date has a daily delivery, including weekends and holidays. A zero-record file means no activity; a missing expected file means an incomplete delivery. The initial `Prospect.csv` snapshot represents `initial_end`.
@@ -84,17 +84,17 @@ The trading-day counts include the unscheduled NYSE closures on 2018-12-05 and 2
 
 One unit targets 1,000,000,000 variable offline bytes over the reference calendar, 2014-01-01 to 2025-12-31. Fixed market and reference data add about 0.43 GB at every factor. This factor is not the TPC-DI scale factor. The default `customers_per_unit=3601` sets the expected customer anchor; the account shares give 1.67 accounts per customer on average. Actual populations vary with joining and exit draws.
 
-All byte columns below are estimates, including factor 1. They scale the measured variable bytes of the 3,300-customer-anchor run by `factor * 3601 / 3300`, then add the applicable fixed bytes. The trading-day column averages all 2019 trading dates, including monthly prospect snapshots and quarterly FINWIRE releases. GB and MB use decimal units.
+The byte columns summarize rounded factor 1 measurements and linear estimates at every higher factor. They multiply the calibrated run's measured variable bytes by the factor, then add the applicable fixed bytes. The measured full-calendar slope is 1,008,534,820 variable offline bytes per unit, not an assumed one GB. The trading-day column averages all 2019 trading dates, including monthly prospect snapshots and quarterly FINWIRE releases. GB and MB use decimal units.
 
 | Factor | Expected cutover customers | Expected accounts | Initial load | Mean 2019 trading-day files | 2019 daily offline files | Full-calendar offline files | Streamed cash transactions, 2019 to 2025 | Intended use |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | 3,601 | 6,014 | 0.47 GB | 0.41 MB | 0.11 GB | 1.43 GB | 0.34 GB | First implementation runs and tests |
-| 5 | 18,005 | 30,068 | 1.60 GB | 1.50 MB | 0.43 GB | 5.43 GB | 1.68 GB | Daily development |
-| 10 | 36,010 | 60,137 | 3.01 GB | 2.87 MB | 0.82 GB | 10.43 GB | 3.36 GB | Integration and first stream replays |
-| 15 | 54,015 | 90,205 | 4.42 GB | 4.23 MB | 1.22 GB | 15.43 GB | 5.04 GB | Larger integration runs |
-| 20 | 72,020 | 120,273 | 5.83 GB | 5.60 MB | 1.61 GB | 20.43 GB | 6.71 GB | Tuning with an initial load larger than a 5 GB Spark worker budget |
-| 50 | 180,050 | 300,684 | 14.28 GB | 13.79 MB | 3.98 GB | 50.44 GB | 16.79 GB | Experiment runs and demonstrations |
-| 100 | 360,100 | 601,367 | 28.37 GB | 27.44 MB | 7.93 GB | 100.44 GB | 33.57 GB | Designed firm and offline volume evidence |
+| 1 | 3,601 | 6,014 | 0.47 GB | 0.41 MB | 0.11 GB | 1.44 GB | 0.34 GB | First implementation runs and tests |
+| 5 | 18,005 | 30,068 | 1.61 GB | 1.52 MB | 0.43 GB | 5.47 GB | 1.70 GB | Daily development |
+| 10 | 36,010 | 60,137 | 3.02 GB | 2.91 MB | 0.83 GB | 10.52 GB | 3.39 GB | Integration and first stream replays |
+| 15 | 54,015 | 90,205 | 4.44 GB | 4.30 MB | 1.24 GB | 15.56 GB | 5.09 GB | Larger integration runs |
+| 20 | 72,020 | 120,273 | 5.86 GB | 5.68 MB | 1.64 GB | 20.60 GB | 6.78 GB | Tuning with an initial load larger than a 5 GB Spark worker budget |
+| 50 | 180,050 | 300,684 | 14.36 GB | 14.00 MB | 4.04 GB | 50.86 GB | 16.95 GB | Experiment runs and demonstrations |
+| 100 | 360,100 | 601,367 | 28.53 GB | 27.87 MB | 8.04 GB | 101.28 GB | 33.91 GB | Designed firm and offline volume evidence |
 
 These estimates do not establish runtime. Calibration uses a full-reference-calendar factor 1 run and subtracts measured fixed-family bytes from its offline total. Fixed families are `DailyMarket`, FINWIRE, and the six reference files; HR scales with the firm. The remainder estimates variable bytes per unit. The new anchor is `old_customers_per_unit * 1,000,000,000 / variable_offline_bytes`, rounded with decimal half-up rounding. A second factor 1 run checks that anchor with the market, behavior settings, and seed unchanged.
 
@@ -196,7 +196,7 @@ These are factor 100 expectations, not measured results. Counts and activity vol
 | Account skew | Top 1% make about 20 to 25% of trades; top 10% make about 60% | Profile-model expectation; measure account-key counts |
 | Security skew | Top 1% receive about 25 to 35% of trades | Assumed popularity; measure security-key counts |
 | Trades | About 84,000 per trading day; about 250,000 on a shock day before spending and holding constraints | Expected account count and profile-rate estimate; measure executed activity |
-| Daily offline files | About 27 MB per 2019 trading day on average, including monthly and quarterly sources | Linear estimate from factor 1; measure emitted bytes by source and date |
+| Daily offline files | About 28 MB per 2019 trading day on average, including monthly and quarterly sources | Linear estimate from factor 1; measure emitted bytes by source and date |
 | Cash transaction stream | Every completed trade settles; deposits, withdrawals, and dividends add other messages | Measure transaction types and bytes separately from files; no fixed settlement share |
 | Reference bytes per trade | About 280 source bytes including trade history, cash transactions, and holdings; cash transactions are about 30% | Historical TPC-DI SF3 measurement; the workload table uses measured generator bytes |
 
@@ -207,10 +207,13 @@ These factor 1 measurements use the full reference calendar, seed `20261029`, tw
 | Customers per unit | Cutover customers | Cutover accounts | Offline bytes | Stream bytes | Generation seconds | Validation seconds |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | 3,300 | 3,278 | 5,488 | 1,346,693,500 | 307,655,539 | 954.77 | 753.54 |
+| 3,601 | 3,597 | 6,028 | 1,438,704,592 | 339,074,412 | 896.26 | 829.15 |
 
-The 3,300-customer-anchor run contains 430,169,772 fixed offline bytes and 916,523,728 variable offline bytes. Its combined initial and streamed cash transactions are 68.9982% settlements, 16.3917% deposits, 8.6178% dividends, and 5.9923% withdrawals. Four fixed security-selection slots per account allow repeated buys in the same small universe; the dividend-paying share remains 40%.
+Both runs contain 430,169,772 fixed offline bytes. The first contains 916,523,728 variable offline bytes; the calibrated run contains 1,008,534,820, or 0.853482% above the one-GB variable target. At the default anchor, combined initial and streamed cash transactions are 69.189662% settlements, 16.302305% deposits, 8.572914% dividends, and 5.935119% withdrawals. Four fixed security-selection slots per account allow repeated buys in the same small universe; the dividend-paying share remains 40%.
 
-The measured annual account-closure rate is 2.96528%, customer inactivation is 2.06983%, and confirmed look-alikes are 2.04126%. Candidates receive no closure immunity. On 512 sampled accounts with chronological splits and 30-day label gaps, the signal model's test average precision is 0.157326, compared with 0.005548 for the outflow rule. The rule's precision is 0.9024%. This measures the synthetic signal check, not downstream model quality. The [generator guide](../data/data_source/generator/README.md#full-calendar-measurements) gives resource measurements.
+The calibrated annual account-closure rate is 2.925087%, customer inactivation is 2.027576%, and confirmed look-alikes are 2.021389%. Candidates receive no closure immunity. Of 2,369 actual closed accounts, 1,891 have matched final warning plans (79.82271%). These plans schedule 7 to 56 warning days, with a median of 30; scheduled steps do not prove that sales occurred when an account held no assets. Outflow candidates, unlike warning-plan counts, require an executed sale and a positive withdrawal.
+
+On 512 sampled accounts with chronological splits and 30-day label gaps, the calibrated signal model's test average precision is 0.228498, compared with 0.005527 for the outflow rule. The rule's precision is 0.9052%. This measures the synthetic signal check, not downstream model quality. The [generator guide](../data/data_source/generator/README.md#full-calendar-measurements) gives resource measurements.
 
 ### Generation Stage 2: Attrition Signal
 
