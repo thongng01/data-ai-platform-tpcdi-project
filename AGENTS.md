@@ -29,4 +29,12 @@ Use direct titles and labels. Avoid decorative numbering, zero-padded headings, 
 
 ## Code Structure and Comments
 
-Let code structure explain the normal behavior. Use clear names, functions, and interfaces. Comments should explain non-obvious reasons, constraints, assumptions, or invariants. Put longer teaching explanations and design discussions in documentation. Avoid comments that narrate operations already clear from the code.
+Write code for the owner to learn from and maintain. Use clear names and small, focused functions, supported by useful comments.
+
+Start each source file with a short description of its purpose. Give every function and class a docstring that describes what it does, as required by coursework rubric row 98 (`docs/course/rubric.xlsx`). Add details about inputs, outputs, state changes, and important conditions when they help the reader.
+
+Use comments to explain meaningful blocks, unfamiliar techniques, business rules, assumptions, and reasons for behavior. Explain both what the code achieves and how it works when the owner needs that context. Do not assume that code familiar to an experienced developer is clear to the owner.
+
+Avoid comments that merely repeat individual statements, unnecessary labels for obvious steps, and notes about a particular editing session. Describe lasting behavior and constraints instead.
+
+Keep explanations needed to follow the code beside the code. Put longer tutorials and design discussions in documentation. Update comments and docstrings when the behavior changes.
