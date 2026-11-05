@@ -6,9 +6,28 @@ This document defines the infrastructure, resource naming, storage boundary, and
 
 Run project commands from the repository root in Windows Subsystem for Linux (WSL), where the project filesystem and Docker socket are available. Passing `--project-directory infra` tells Docker Compose to read `infra/.env` and resolve relative paths against `infra/`.
 
+Before the first start, copy the placeholder templates to private configuration files. This command preserves existing local files.
+
+```bash
+umask 077
+for file in infra/.env infra/seaweedfs/s3.json infra/spark/spark-defaults.conf \
+  infra/trino/catalog/hive.properties infra/trino/catalog/postgresql.properties \
+  data/airflow/connections.yaml data/airflow/variables.yaml; do
+  if [ ! -e "$file" ]; then
+    cp "$file.example" "$file"
+  fi
+done
+```
+
+Replace every `CHANGE_ME_*` value in the local copies. Use the same PostgreSQL password in `infra/.env`, the PostgreSQL catalog, and Airflow connections. Use the same S3 access key and secret key in `infra/.env`, SeaweedFS, Spark, the Hive catalog, and both Airflow files. These mounted files do not substitute values from `infra/.env`.
+
+Set `AIRFLOW_FERNET_KEY`, `AIRFLOW_WEBSERVER_SECRET_KEY`, and `DATAHUB_SECRET` in `infra/.env`. Generate each value separately. Use `python3 -c "import secrets; print(secrets.token_hex(32))"` for passwords and signing secrets. Use `python3 -c "import base64, secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"` for the Fernet key. Commit only the `.example` templates, never the populated files.
+
+Changing a configuration file does not rotate an existing database password or re-encrypt stored Airflow connections. For an existing deployment, update the service credentials and its clients together; use Airflow's Fernet key rotation procedure for encrypted data. Do not expose this development stack directly to the internet.
+
 | Command | Effect and Prerequisites |
 |---|---|
-| `docker compose --project-directory infra config` | Prints the merged Compose configuration for the active profiles. |
+| `docker compose --project-directory infra config --quiet` | Validates the merged Compose configuration without printing credentials. |
 | `curl -fsS http://localhost:8082/json/` | Reads the Spark master's workers and applications when that service is running. |
 | `docker compose --project-directory infra stop` | Stops running containers and retains data. |
 | `docker compose --project-directory infra down --remove-orphans` | Removes containers and retains named volumes. Adding `--volumes` removes those volumes and their data. |
@@ -19,7 +38,7 @@ Run project commands from the repository root in Windows Subsystem for Linux (WS
 
 Measurements in these documents come from this machine unless a section states otherwise. Installed versions can change. `C:\Users\XWIND-PC\.wslconfig` caps WSL memory at 24 GiB with 8 GiB of swap. It sets no processor cap. The machine has no NVIDIA GPU and lacks the AVX-512 and AMX CPU instructions that llm-d's reference setups use.
 
-Container image settings are in `infra/.env`. Compose reads that file to substitute variables; a container receives only the values its service passes through. The file contains committed local development defaults, not production credentials. SeaweedFS currently uses the mutable `latest` tag, so a later pull can change behavior without a configuration edit.
+Container image settings are in `infra/.env`. Compose reads that file to substitute variables; a container receives only the values its service passes through. The file is private and Git ignores it. The committed `infra/.env.example` contains non-secret settings and credential placeholders. SeaweedFS currently uses the mutable `latest` tag, so a later pull can change behavior without a configuration edit.
 
 ## 3. The Compose Files
 

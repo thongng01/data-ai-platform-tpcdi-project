@@ -7,4 +7,4 @@
 connector.name=postgresql
 connection-url=jdbc:postgresql://postgres:5432/warehouse
 connection-user=edai
-connection-password=edai_local_dev
+connection-password=CHANGE_ME_POSTGRES_PASSWORD

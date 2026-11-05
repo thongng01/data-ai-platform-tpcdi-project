@@ -314,6 +314,8 @@ Run commands from the repository directory in Ubuntu WSL. The [infrastructure gu
 
 **Runs on:** Ubuntu 24.04 on WSL 2 (Windows 11), Intel Core i7-12700H (20 threads), 24 GiB RAM ([development environment](docs/IaC.md#2-development-environment)).
 
+Before the first start, [create the private configuration files](docs/IaC.md#1-how-to-run-it) from the committed examples and set your own credentials. Git ignores the populated files.
+
 1. Start the core services.
 
    ```bash

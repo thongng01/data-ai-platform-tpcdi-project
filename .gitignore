@@ -19,18 +19,33 @@ __pycache__/
 *.sqlite
 *.sqlite3
 
-# Local overrides and secrets. None committed; this is here so a stray .env
-# cannot land by accident.
+# Local environment files. Commit only placeholder examples.
 .env
 .env.*
 !.env.example
 
-# Exception: infra/.env is the platform's configuration, not a secret file.
-# Every value in it is a local development default, there is no production
-# credential anywhere in this repository, and Docker Compose reads it at parse
-# time, so without it a fresh clone has no port map and no service config. Copy
-# it and edit locally if you need to; do not put a real credential in it.
-!infra/.env
+# Populated service configuration contains credentials.
+/infra/seaweedfs/s3.json
+/infra/spark/spark-defaults.conf
+/infra/trino/catalog/*.properties
+/data/airflow/connections.yaml
+/data/airflow/variables.yaml
+
+# Private keys, credential stores, and infrastructure state.
+*.key
+*.pem
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+.aws/
+.ssh/
+secrets/
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
 
 # Editor and OS noise.
 .DS_Store

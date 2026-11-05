@@ -40,7 +40,7 @@ LANDING_BUCKET = os.environ.get("LANDING_BUCKET", "landing")
 
 PGHOST = os.environ.get("PGHOST", "postgres")
 PGUSER = os.environ.get("PGUSER", "edai")
-PGPASSWORD = os.environ.get("PGPASSWORD", "edai_local_dev")
+PGPASSWORD = os.environ["PGPASSWORD"]
 
 PG_DATABASES = [
     os.environ.get("DB_WAREHOUSE", "warehouse"),

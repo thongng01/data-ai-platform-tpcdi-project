@@ -1,9 +1,8 @@
 # Airflow Connections, seeded at startup.
 #
 # Imported by `airflow-init` with `airflow connections import`. Airflow encrypts
-# them into its metadata database with the fernet key in infra/.env, so nothing
-# here is a secret at rest in a meaningful sense and nothing here is a
-# production credential.
+# its database copy, but this source file stays plaintext. Keep the populated
+# local copy private and commit only this placeholder template.
 #
 # The rubric asks for every connection and variable to live in Airflow so the
 # three pipelines share them. That is what this file and variables.yaml are for:
@@ -14,7 +13,7 @@ postgres_warehouse:
   description: Gold tables. Also the HMS catalog database and Airflow's own.
   host: postgres
   login: edai
-  password: edai_local_dev
+  password: CHANGE_ME_POSTGRES_PASSWORD
   schema: warehouse
   port: 5432
 
@@ -23,7 +22,7 @@ postgres_metastore:
   description: Hive Metastore catalog tables. Never holds business data.
   host: postgres
   login: edai
-  password: edai_local_dev
+  password: CHANGE_ME_POSTGRES_PASSWORD
   schema: metastore
   port: 5432
 
@@ -31,8 +30,8 @@ lakehouse_s3:
   conn_type: aws
   description: SeaweedFS over its S3 API. Landing and lakehouse buckets.
   host: seaweedfs
-  login: edaiaccess
-  password: edaisecret123
+  login: CHANGE_ME_S3_ACCESS_KEY
+  password: CHANGE_ME_S3_SECRET_KEY
   port: 8333
   extra: |
     {"endpoint_url": "http://seaweedfs:8333", "region_name": "us-east-1", "s3_addressing_style": "path"}

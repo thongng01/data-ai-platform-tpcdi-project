@@ -43,8 +43,8 @@ from botocore.config import Config
 LOG = logging.getLogger("smoke")
 
 S3_ENDPOINT = os.environ.get("S3_ENDPOINT", "http://seaweedfs:8333")
-S3_ACCESS_KEY = os.environ.get("S3_ACCESS_KEY", "edaiaccess")
-S3_SECRET_KEY = os.environ.get("S3_SECRET_KEY", "edaisecret123")
+S3_ACCESS_KEY = os.environ["S3_ACCESS_KEY"]
+S3_SECRET_KEY = os.environ["S3_SECRET_KEY"]
 BUCKET = os.environ.get("LAKEHOUSE_BUCKET", "lakehouse")
 
 TRINO_HOST = os.environ.get("TRINO_HOST", "trino")
@@ -53,7 +53,7 @@ TRINO_USER = os.environ.get("TRINO_USER", "smoke")
 
 PGHOST = os.environ.get("PGHOST", "postgres")
 PGUSER = os.environ.get("PGUSER", "edai")
-PGPASSWORD = os.environ.get("PGPASSWORD", "edai_local_dev")
+PGPASSWORD = os.environ["PGPASSWORD"]
 PGDATABASE = os.environ.get("DB_WAREHOUSE", "warehouse")
 
 SPIKE_SCHEMA = "smoke"

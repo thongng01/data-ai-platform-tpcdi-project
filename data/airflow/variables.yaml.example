@@ -8,8 +8,8 @@ lakehouse_bucket: lakehouse
 landing_bucket: landing
 
 s3_endpoint: http://seaweedfs:8333
-s3_access_key: edaiaccess
-s3_secret_key: edaisecret123
+s3_access_key: CHANGE_ME_S3_ACCESS_KEY
+s3_secret_key: CHANGE_ME_S3_SECRET_KEY
 
 hive_metastore_uri: thrift://hive-metastore:9083
 trino_host: trino
