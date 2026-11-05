@@ -231,6 +231,32 @@ def test_corrupted_source_fails_without_hash_evidence(exported, tmp_path, case, 
     assert not list(root.glob("validation-*"))
 
 
+@pytest.mark.parametrize("source_name,partitions", [("CashTransaction", 128), ("DailyMarket", 1024)])
+def test_partition_sink_bounds_aggregate_row_group_buffers(tmp_path, monkeypatch, source_name, partitions):
+    from data.data_source.generator.validation import _Stage, _stage_source
+    from data.data_source.generator.formats import load_sources
+    import polars as pl
+
+    stage = _Stage(tmp_path, 128)
+    stage.date_partitions = 1024
+    source = load_sources()[source_name]
+    row = {"CT_ID": "1", "CT_CA_ID": "1", "CT_DTS": "2019-01-02 08:00:00", "CT_AMT": "10.00", "CT_NAME": "Deposit"} if source_name == "CashTransaction" else {
+        "DM_DATE": "2019-01-02", "DM_S_SYMB": "S0000000001", "DM_CLOSE": "10.00", "DM_HIGH": "11.00", "DM_LOW": "9.00", "DM_VOL": "1"}
+    _stage_source(stage, source, row, "initial", 1 if source_name == "CashTransaction" else "2019-01-02")
+    original = pl.LazyFrame.sink_parquet
+    calls = []
+    def bounded_sink(frame, path, **kwargs):
+        if isinstance(path, pl.PartitionBy):
+            group_rows = kwargs.get("row_group_size")
+            assert group_rows is not None
+            assert group_rows * partitions <= 262144
+            calls.append(group_rows)
+        return original(frame, path, **kwargs)
+    monkeypatch.setattr(pl.LazyFrame, "sink_parquet", bounded_sink)
+    stage.finish()
+    assert calls
+
+
 def test_saved_hash_evidence_detects_unrelated_text_change(exported, tmp_path):
     original, config, inventory = exported
     root = tmp_path / "hash"

@@ -10,7 +10,7 @@ import pytest
 from data.data_source.generator.config import Config
 from data.data_source.generator.formats import Field, Source
 from data.data_source.generator.generation import Generation, expected_file_list, source_path
-from data.data_source.generator.runner import compare, inventory_summary, run, write_json
+from data.data_source.generator.runner import _temporary_disk_bytes, compare, inventory_summary, run, write_json
 from data.data_source.generator.sorting import SortedOutput
 
 
@@ -34,6 +34,16 @@ def test_expected_paths_have_cadence_and_no_benchmark_files():
     assert not any("CashTransaction" in path for path in paths if "/daily/" in path)
     assert not any("TradeHistory" in path for path in paths if "/daily/" in path)
     assert source_path(settings, "Trade", 4) == "offline/daily/20190101/Trade_20190101.txt"
+
+
+def test_temporary_disk_measurement_includes_validation_partitions(tmp_path):
+    for relative, size in (("_work/runs/1.txt", 2), ("validation-one/blocks/trade.parquet", 3),
+                           ("validation-two/partitioned/cash.parquet", 5), ("offline/Trade.txt", 7),
+                           ("validation.json", 11)):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"x" * size)
+    assert _temporary_disk_bytes(tmp_path) == 10
 
 
 def test_aggregate_buffer_and_disk_catalog_bound_paths(tmp_path):

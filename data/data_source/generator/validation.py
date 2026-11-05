@@ -138,12 +138,16 @@ def _typed(source, row):
     return result
 
 
-class _Stage:
-    """Write bounded typed blocks, then let the streaming engine partition them."""
+PARQUET_BUFFER_ROWS = 262144
 
-    def __init__(self, root, partitions):
+
+class _Stage:
+    """Write bounded typed blocks and bound row-group buffers across partitions."""
+
+    def __init__(self, root, partitions, date_partitions=None):
         self.root = root
         self.partitions = partitions
+        self.date_partitions = date_partitions or partitions
         self.buffers = defaultdict(list)
         self.schemas = {}
         self.counter = defaultdict(int)
@@ -169,6 +173,11 @@ class _Stage:
         self.rows -= len(rows)
         rows.clear()
 
+    @staticmethod
+    def _row_group_rows(partitions):
+        _require(0 < partitions <= PARQUET_BUFFER_ROWS, "Partition count exceeds the row-group buffer budget.")
+        return max(1, min(8192, PARQUET_BUFFER_ROWS // partitions))
+
     def finish(self):
         for table in list(self.buffers):
             self.flush(table)
@@ -183,7 +192,8 @@ class _Stage:
             if table == "Trade":
                 day_root = self.root / "trade-days"
                 scan.with_columns(pl.col("T_DTS").str.slice(0, 10).alias("_market_day")).sink_parquet(
-                    pl.PartitionBy(day_root, key="_market_day", max_rows_per_file=65536), mkdir=True, engine="streaming")
+                    pl.PartitionBy(day_root, key="_market_day", max_rows_per_file=65536), mkdir=True, engine="streaming",
+                    row_group_size=self._row_group_rows(self.date_partitions))
                 enriched = self.root / "trade-prices"
                 enriched.mkdir()
                 for day_directory in sorted(day_root.iterdir()):
@@ -195,14 +205,15 @@ class _Stage:
                         prices = market.select(pl.col("DM_S_SYMB").alias("T_S_SYMB"),
                                                pl.col("DM_LOW").alias("_market_low"), pl.col("DM_HIGH").alias("_market_high"))
                     pl.scan_parquet(day_directory / "*.parquet").join(prices.lazy(), on="T_S_SYMB", how="left").sink_parquet(
-                        enriched / f"{day}.parquet", engine="streaming")
+                        enriched / f"{day}.parquet", engine="streaming", row_group_size=8192)
                     for path in day_directory.glob("*.parquet"):
                         path.unlink()
                     day_directory.rmdir()
                 day_root.rmdir()
                 scan = pl.scan_parquet(enriched / "*.parquet")
+            partition_count = self.date_partitions if table == "DailyMarket" else self.partitions
             scan.sink_parquet(pl.PartitionBy(self.root / "partitioned" / table, key="_partition", max_rows_per_file=65536),
-                              mkdir=True, engine="streaming")
+                              mkdir=True, engine="streaming", row_group_size=self._row_group_rows(partition_count))
             for path in directory.glob("*.parquet"):
                 path.unlink()
             directory.rmdir()
@@ -873,7 +884,7 @@ def validate(root: Path, config: Config, inventory=None):
     previous_initial_trade = -1
     previous_history = None
     with tempfile.TemporaryDirectory(prefix="validation-", dir=root) as temporary:
-        stage = _Stage(Path(temporary), partitions)
+        stage = _Stage(Path(temporary), partitions, date_partitions=len(sessions))
         hidden_paths = sorted((root / "summary" / "hidden").glob("accounts-*.parquet"))
         _require(bool(hidden_paths), "Hidden account attributes are required to prove cash and margin constraints.")
         hidden_schema = {"account_id": pl.Int64, "customer_id": pl.Int64, "is_cash": pl.Boolean,

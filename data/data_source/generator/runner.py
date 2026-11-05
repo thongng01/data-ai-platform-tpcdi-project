@@ -36,6 +36,12 @@ def _disk_bytes(root):
     return total
 
 
+def _temporary_disk_bytes(root):
+    return _disk_bytes(root / "_work") + sum(
+        _disk_bytes(path) for path in root.glob("validation-*") if path.is_dir()
+    )
+
+
 def _process_tree_sample(pid):
     try:
         root = psutil.Process(pid)
@@ -124,7 +130,7 @@ def run(config: Config, output: Path):
                 maximum_workers = max(maximum_workers, worker_count)
                 if elapsed >= next_disk_check:
                     maximum_disk = max(maximum_disk, _disk_bytes(partial))
-                    maximum_temporary_disk = max(maximum_temporary_disk, _disk_bytes(partial / "_work"))
+                    maximum_temporary_disk = max(maximum_temporary_disk, _temporary_disk_bytes(partial))
                     next_disk_check = elapsed + 2
                 if maximum_rss > config.memory_limit_mb * 1024**2:
                     failure = "The aggregate process-tree RSS exceeded the memory budget."
@@ -142,7 +148,7 @@ def run(config: Config, output: Path):
                 failure = f"The worker exited with status {process.returncode}. See worker.log."
         supervision = {"elapsed_seconds": time.monotonic() - started, "sampled_peak_rss_bytes": maximum_rss,
                        "sampled_peak_disk_bytes": max(maximum_disk, _disk_bytes(partial)),
-                       "sampled_peak_temporary_disk_bytes": max(maximum_temporary_disk, _disk_bytes(partial / "_work")),
+                       "sampled_peak_temporary_disk_bytes": max(maximum_temporary_disk, _temporary_disk_bytes(partial)),
                        "maximum_worker_processes": maximum_workers, "memory_sampling_seconds": 0.1,
                        "disk_sampling_seconds": 2, "memory_scope": "supervisor and all descendants"}
         if failure:
