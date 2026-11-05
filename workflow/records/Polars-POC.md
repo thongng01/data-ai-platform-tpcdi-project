@@ -1,6 +1,6 @@
 # Polars Generator POC Evidence
 
-The owner authorized an autonomous fresh Polars proof of concept (POC) on 2026-10-29, with code quality and declarative configuration as priorities. The [generator guide](../../data/generator/README.md) explains its rules, implementation, and commands. On 2026-11-04 the owner decided to extend this POC into the production generator ([Data Platform](../../docs/Data-Platform.md#2-data-generation-and-problem-injection)).
+The owner authorized an autonomous fresh Polars proof of concept (POC) on 2026-10-29, with code quality and declarative configuration as priorities. The POC code moved to [`data/data_source/generator/`](../../data/data_source/generator/README.md) on 2026-11-05, where the target generator builds on it. Because that guide now describes the target design, the POC's own rules are kept in [POC Generation Rules](#poc-generation-rules) below. On 2026-11-04 the owner decided to extend this POC into the production generator ([Data Platform](../../docs/Data-Platform.md#2-data-generation-and-problem-injection)).
 
 ## Scope and Acceptance
 
@@ -40,8 +40,27 @@ An independent DuckDB 1.5.6 scan matched the largest run's cash transaction row 
 
 ## Interpretation and Remaining Work
 
-The POC demonstrates a complete connected source-format experiment with bounded Polars work, globally ordered exports, declarative settings, and repeatable output. It does not establish a complete port of the Databricks generator. Its analytical schedule deliberately replaces the general customer scheduler and multi-lot trading behavior. The [generator guide](../../data/generator/README.md#generation-rules) lists the simplified rules and omitted cases.
+The POC demonstrates a complete connected source-format experiment with bounded Polars work, globally ordered exports, declarative settings, and repeatable output. It does not establish a complete port of the Databricks generator. Its analytical schedule deliberately replaces the general customer scheduler and multi-lot trading behavior. [POC Generation Rules](#poc-generation-rules) lists the simplified rules and omitted cases.
 
 Validation took about four times as long as generation and export on the largest run. A 100 GB run therefore needs a separate runtime and disk plan, especially for full relationship validation. No 100 GB run was attempted. No forecast model, predictive behavior assessment, fault injection, or downstream pipeline integration was performed.
 
 The production generator extends this code. It must decide which simplified rules survive, add the business behavior, attrition signal, data errors, and schema versions of the generation model, and keep the memory and repeatability gates. Transport problems, such as duplicates and late delivery, belong to the separate publisher.
+
+## POC Generation Rules
+
+Copied from the POC generator guide on 2026-11-05, before that guide was replaced by the target design.
+
+The source families are covered at small scale, but the workload is deliberately narrower than DIGen. The following rules are POC choices and do not establish the project's final business simulation.
+
+- Each initial customer has two accounts. Selected customers receive a third account or customer and account updates. Other selected accounts close, and selected customers become inactive. The historical XML includes all six action types. Inactivation closes that customer's remaining accounts. Incremental batches introduce new customers and accounts and update selected existing records.
+- Each eligible account starts a configured number of trade cycles per day. A cycle contains a buy and, if that buy completes, a subsequent sell. A buy completes or cancels on the next day. A sell completes one day later. Some trades therefore cross the historical-to-incremental boundary or remain unfinished at the end of the run.
+- Each cycle owns one holding lot. Its buy changes quantity from zero to the bought quantity. Its sell changes that quantity back to zero. The holding origin is the completed buy for the same account and security. The POC does not implement multiple-lot allocation, partial fills, or borrowing.
+- Trades in cash accounts produce signed cash transactions at completion. Buys subtract executed value and fees. Sells add executed value minus fees. The POC uses a 25-cent charge, a 50-cent commission, and zero transaction tax. Margin trades change holdings without producing these cash transactions.
+- An unfinished or canceled trade has empty execution price, charge, commission, and tax fields. Historical snapshots contain only the state known before the batch cutoff. Incremental files contain ordered insert and update transitions.
+- Financial records cover four completed quarters. Companies and securities start before those reports. FINWIRE records use quarterly files ordered by posting timestamp. The generator uses CIK references; it does not exercise company-name references or company and security version changes.
+- Every active customer activates and cancels one watch per day. Daily market prices cover generated execution prices. The POC treats every calendar day as an activity day; it does not model exchange holidays. Fiscal dates equal calendar dates, and holiday flags are zero.
+- Prospect snapshots contain matching identities for current and future customers. The reference vocabulary is intentionally small: one industry and two tax rates. Time covers all 86,400 seconds; Date covers the financial and activity history.
+
+The cash transaction description (`CT_NAME`) contains `Trade <ID>` for POC reconciliation. This is a project lineage convention, not a TPC-DI transaction identifier. The target adds the accepted `CT_ID` cash transaction identity and replaces this description with fixed `CT_NAME` forms defined in [Data Specification](../../docs/Data-Specification.md).
+
+Population and date settings replace the reference's scale-factor formulas. The POC has no asserted mapping to an official scale factor. The target adds behavior profiles, an attrition signal, data errors, and schema evolution to the generator. The publisher adds duplicates and late delivery. Dense daily trade cycles in this POC do not establish a useful attrition signal.
