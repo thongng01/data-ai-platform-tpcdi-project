@@ -63,7 +63,8 @@ Covers the cross-layer data contract and schema design (`rubric.xlsx` rows `34-3
 3. **Medallion Zones and Naming Conventions**: Zone definitions (`upstream` source files, `staging` retained file versions, `bronze.raw_*` 1:1 records with provenance, `silver.stg_*` cleaned and conformed records, `gold.dim_*`, `fact_*`, and `feat_*` warehouse, stream, and feature tables) plus a complete table inventory (grain, keys, partitioning, writer).
 4. **Zone Entity Relationship Diagrams**: ERDs for **Bronze**, **Silver**, and **Gold** (including SCD2 validity columns on dimensions and `event_timestamp` + `created` on `feat_*` tables).
 5. **Core Integration Rules**: Source-to-Gold lineage, SCD2 versioning and propagation, XML omitted versus empty elements, trade lifecycle updates, and batch-to-stream cash balance handoff.
-6. **Physical Structures and Schema Reference**: General parsing rules, collapsed `<details>` field dictionaries for all source files and Gold tables, and PDF edge cases.
+6. **Physical Structures and Schema Reference**: General parsing rules and collapsed `<details>` field dictionaries for all source files and Gold tables.
+7. **Differences from TPC-DI**: One table of every project change and every correction to the specification, each with its reason and a link to the section that explains it.
 
 ### 3.3 `docs/Data-Platform.md` (Layer 1)
 Covers Layer 1 architecture, pipelines, optimizations, and evidence (`rubric.xlsx` rows `5-33`, `39-40`):

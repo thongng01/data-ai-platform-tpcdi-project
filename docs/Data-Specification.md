@@ -123,7 +123,7 @@ The TPC-DI specification does not define a Silver zone. Silver is the project's 
 
 | Source Records | Transformation Logic | Gold Output |
 | --- | --- | --- |
-| `CustomerMgmt.xml` + `Customer.txt` | Apply XML actions, then CDC rows. Add tax rates and prospect data; keep daily SCD2 versions. | `dim_customer` |
+| `CustomerMgmt.xml` + `Customer.txt` | Apply XML actions, then CDC rows. Add tax rates, phone numbers (PDF 4.5.4, 4.6.4), and prospect data; keep daily SCD2 versions. | `dim_customer` |
 | `CustomerMgmt.xml` + `Account.txt` | Same pattern. Resolve customer and broker keys; add a version when the customer changes. | `dim_account` |
 | `HR.csv` | Keep employees with job code 314. | `dim_broker` |
 | FINWIRE (`CMP`, `SEC`) | Parse fixed-width records in posting order; build histories; link securities to companies by CIK or name. | `dim_company`, `dim_security` |
@@ -131,9 +131,9 @@ The TPC-DI specification does not define a Silver zone. Silver is the project's 
 | `Trade.txt` + `TradeHistory.txt` | Insert each trade, then update its status. Keys are set at creation and kept at close. | `dim_trade` |
 | `CashTransaction.txt` and streamed cash transactions in Silver | Deduplicate by `CT_ID`; parse `CT_NAME`; resolve dimension keys. dbt builds the cash transaction fact, then adds each day's net amount to the prior balance. | `fact_cash_transactions`, `fact_cash_balances` |
 | `HoldingHistory.txt` + `dim_trade` | Copy `HH_AFTER_QTY`; take keys, date, time, and price from the changing trade. | `fact_holdings` |
-| `DailyMarket.txt` + `dim_security` + `financial` | Copy prices and volume; calculate 52-week high and low, P/E, and yield. | `fact_market_history` |
+| `DailyMarket.txt` + `dim_security` + `financial` | Copy prices and volume; calculate 52-week high and low, P/E, and yield (PDF 4.5.11, 4.6.10). | `fact_market_history` |
 | `WatchHistory.txt` | Insert a watch on `ACTV`; set its removal date on `CNCL`. | `fact_watches` |
-| `Prospect.csv` + `dim_customer` | Insert or update prospects, calculate tags, and match active customers. | `prospect` |
+| `Prospect.csv` + `dim_customer` | Insert or update prospects, calculate marketing tags (PDF 4.5.15, 4.6.14), and match active customers. | `prospect` |
 
 ## 6. Gold Warehouse
 The Gold warehouse has 19 tables: the 19 TPC-DI tables minus `DImessages`, plus `fact_cash_transactions`. dbt-postgres builds them in PostgreSQL. Dimensions describe business entities; facts record activity. Gold also holds live tables written by Flink Job 2 and feature tables built by DP3. These are separate from the 19-table warehouse inventory.
@@ -224,10 +224,16 @@ Each feature has one definition and one producer. Features have a business time 
 In `CustomerMgmt.xml`, updates are partial and contextual:
 - An **omitted** property retains its existing value.
 - An **explicitly empty** element (for example `<C_M_NAME/>`) sets the value to `NULL`.
+- One action can create or change several accounts of its customer.
 - `INACT` and `CLOSEACCT` add a version with `Status = 'INACTIVE'`. Nothing is deleted, and the new version is current (`IsCurrent = 1`).
 
 ### Trade Lifecycle Updates
 `dim_trade` is updated in place. Historical status events come from `TradeHistory.txt`. Daily updates use `Trade.txt`. Dimension keys are set when the trade is first created; later close updates retain them. TPC-DI calls these keys `SK_CustomerID`, `SK_AccountID`, `SK_BrokerID`, `SK_CompanyID`, and `SK_SecurityID` in the reference dictionary.
+
+### Fact Rules
+- **Cash balances**: No opening balance exists, so each account starts at zero. Carry the balance by the natural account ID, because the account's surrogate key changes with each new version (PDF 4.5.9, 4.6.8).
+- **Holdings**: `HH_AFTER_QTY` is the quantity after the change. Copy it; summing it counts holdings more than once (PDF 4.5.10, 4.6.9).
+- **Watch removal**: A `CNCL` row closes the watch that its `ACTV` row opened, even when the customer or security has a newer version since then (PDF 4.5.12, 4.6.11).
 
 ## 9. Physical Structures & Schema Reference
 The source dictionaries define parsing order and source formats. The Gold dictionaries preserve the TPC-DI fields, types, and restrictions as mapping references, not complete project physical schemas. Destination table labels use snake_case; reference field names remain unchanged. Project changes are stated beside the relevant dictionary.
@@ -237,7 +243,7 @@ The source dictionaries define parsing order and source formats. The Gold dictio
 - **CDC (Change Data Capture)**: Daily OLTP files start with `CDC_FLAG` (`I` insert, `U` update) and `CDC_DSN` (sequence number). Initial files omit both fields.
 - **Date and Time Formats**: Default is `YYYY-MM-DD` and `YYYY-MM-DD HH:MM:SS`. FINWIRE uses `YYYYMMDD` and `YYYYMMDD-HHMMSS`. `CustomerMgmt.xml` uses `YYYY-MM-DDTHH:MM:SS`. Interpret source timestamps without a time zone as UTC; keep their source text formats.
 - **FINWIRE Records**: Characters 1 to 15 are `PTS`; characters 16 to 18 are the record type (`CMP`, `SEC`, `FIN`). Record lengths: `CMP` 543, `SEC` 170 or 220, `FIN` 196 or 246 characters.
-- **XML Null vs. Omitted**: In `CustomerMgmt.xml`, an omitted property retains its previous value. An explicitly empty element, such as `<C_M_NAME/>`, sets the value to `NULL`.
+- **XML Null vs. Omitted**: Parsing keeps an omitted element distinct from an explicitly empty one, such as `<C_M_NAME/>`. [Historical Actions](#historical-actions-xml) defines what each means.
 
 ### 9.2 Source File Schemas
 
@@ -1161,26 +1167,25 @@ Loaded once from `TradeType.txt`.
 
 </details>
 
-## 10. Deferred Information & Edge Cases
+## 10. Differences from TPC-DI
 
-### 10.1 Deferred to Official Spec
-These details stay in the PDF. Their results are still built, except the audit metadata:
-- **Prospect Marketing-Tag Math**: Thresholds for `HighValue`, `Expenses`, `Boomer`, `MoneyAlert`, `Spender`, and `Inherited` (clauses 4.5.15, 4.6.14).
-- **Detailed Calculation Formulas**: 52-week high and low, P/E ratio, and dividend yield in `fact_market_history` (4.5.11, 4.6.10); phone and tax-rate fields in `dim_customer` (4.5.4, 4.6.4).
-- **Benchmark Audit Metadata**: Audit files (`<name>_audit.csv`) and checks used only for official TPC scoring (2.2.2.20, 3.2.19, 7.4, 8.2). The project excludes these.
+The project keeps TPC-DI's business domain, source formats, and warehouse model, and changes the parts below. The last three rows correct mistakes in the specification itself. Clause numbers refer to the [TPC-DI specification](TPC-DI/TPC-DI_v1.1.0.pdf).
 
-### 10.2 Implementation Edge Cases
-When implementing parsers or SCD2 logic, verify these edge cases in the official [PDF](TPC-DI/TPC-DI_v1.1.0.pdf):
-
-| Edge Case | Rule | PDF Clause |
-| --- | --- | --- |
-| FINWIRE company reference | `SEC` and `FIN` end with a 10-digit CIK or a 60-character name. Use the company version valid at `PTS`. | 2.2.2.8, 4.5.6, 4.5.14 |
-| Same-day SCD2 changes | Combine into one version per day. The account rule prints an inclusive `EndDate` check that conflicts with the general rule. | 4.4.1, 4.5.1.3 |
-| XML NULL vs. omitted | Omitted keeps the old value; `<C_M_NAME/>` sets `NULL`. One action can change several accounts. | 2.2.2.5, 4.5.1, 4.5.4 |
-| Trade dimension keys | Use the versions valid on the creation date; keep them when the trade closes. | 4.5.8, 4.6.7 |
-| Cash balance initialization | No opening balances exist; start from zero. Carry the balance by `AccountID`, because the account's `SK` can change. | 4.5.9, 4.6.8 |
-| Holding quantities | `HH_AFTER_QTY` is the quantity after the change. Summing it double-counts. | 4.5.10, 4.6.9 |
-| Watch cancellation | Find the placement even if the customer or security has a newer version. | 4.5.12, 4.6.11 |
-| Trade ID size | Source `T_ID` is `NUM(15)`; the warehouse prints `TradeID` as `NUM(11)`. Store 15 digits. | 2.2.2.17, 3.2.7.1 |
-| Dependency table errors | Table 4.3 names fields that do not exist, such as `fact_cash_balances.SK_TimeID`. Follow clause 3.2. | Table 4.3 |
-| Data errors | The benchmark writes alerts to `DImessages`. The project keeps referenced records, repairs only certain values, and reports problems through quality metadata, quarantine, GX results in DataHub, and `ops.load_status`. It never invents a value. | 4.4.3 |
+| Area | TPC-DI | This project | Reason |
+| --- | --- | --- | --- |
+| Source data | Generated by DIGen at a TPC-DI scale factor | Generated by the project's generator at its own scale factor; the SF3 sample is about factor 0.3 | The generator simulates customer behavior and an attrition signal for Layer 2 ([Data Platform](Data-Platform.md#2-data-generation-and-problem-injection)) |
+| Load cycle | One historical load and two incremental updates (1.2.2) | Initial load from 2014-01-01 to 2018-12-31, then one daily delivery per calendar day to 2025-12-31 | Years of daily processing exercise reruns, late files, and the stream ([Section 2](#2-load-cycle--processing-strategy)) |
+| Delivery layout | `Batch1/` to `Batch3/` folders, each with `BatchDate.txt` (2.3, 2.2.2.2) | `initial/` and `daily/YYYYMMDD/` paths; the path gives the data date | One folder per delivery date ([Section 3](#3-physical-source-files--ingestion-rules)) |
+| Audit data | `<name>_audit.csv` files and the `Audit` table (2.2.2.20, 3.2.19, 7.4, 8.2) | Excluded | They serve only official benchmark scoring |
+| Prospects | A full `Prospect.csv` in every batch (1.2.2.3) | A full snapshot on the first day of each month; the initial snapshot represents `initial_end` | Monthly marketing-list cadence ([Section 2.2](#22-source-cadence)) |
+| FINWIRE | Quarterly files in the historical load only (1.3.5) | Also in daily deliveries: each quarter is released on the last day of the following month | Company and financial changes continue after cutover ([Section 2.2](#22-source-cadence)) |
+| Cash transactions | `CashTransaction.txt` in every batch, with no ID field (2.2.2.3) | `CT_ID` as the first field; in the daily delivery period, cash transactions arrive only through Kafka | The stream needs a stable ID for deduplication ([Section 7.1](#71-cash-transaction-stream-kafka-and-flink)) |
+| `CT_NAME` | Free text, such as "Cash from sale of DuPont stock" (2.2.2.3) | Fixed forms: `Trade settlement <trade_id>`, `Deposit`, `Withdrawal`, and `Dividend <symbol>` | DP2 and Flink derive the transaction type and trade link from it ([Section 9.2](#92-source-file-schemas)) |
+| `Trade.txt` format | One format (2.2.2.17) | `T_CHANNEL` added as a 15th business field from 2019-07-01; the initial load keeps the original format | Evidence for schema evolution handling ([Data Platform](Data-Platform.md#schema-evolution-and-duplicate-rules)) |
+| `T_IS_CASH` | Can differ between trades of one account (2.2.2.17) | The same for all trades of an account | An account is either a cash account or a margin account |
+| Warehouse tables | 19 tables, including `DImessages` (3.2) | 19 tables: `DImessages` removed, `fact_cash_transactions` added, and `fact_cash_balances` built from it; `dim_trade` gains a nullable `channel` | Cash transactions need their own fact for the stream and the cash-flow features ([Section 6](#6-gold-warehouse)) |
+| Data errors | Alerts in `DImessages` (3.2.8, 4.4.3) | Quality metadata, quarantine, GX results in DataHub, and `ops.load_status`; a value is repaired only when the correct value is certain | Bad records stay traceable, and no value is invented ([Data Platform](Data-Platform.md#data-errors-and-quarantine)) |
+| Table names | Mixed case, such as `DimCustomer` (3.2) | snake_case with role prefixes, such as `gold.dim_customer`; field names keep the TPC-DI names | Rubric naming rule; no quoted identifiers in SQL ([Section 4](#4-data-zones-medallion-architecture)) |
+| Warehouse trade ID | `TradeID` is `NUM(11)` (3.2.7.1) | Stored with 15 digits | Mistake in the specification: source `T_ID` is `NUM(15)` (2.2.2.17) |
+| Table 4.3 | Names fields that do not exist, such as `SK_TimeID` in `FactCashBalances` | Follow the table definitions in clause 3.2 | Mistake in the specification |
+| Account version lookup | Clause 4.5.1.3 matches versions with `ActionTS <= EndDate`, an inclusive end date | Follow the general SCD2 rule in clause 4.4.1, where a version ends when the next one starts | Mistake in the specification: an inclusive end date matches two versions on the change date |
