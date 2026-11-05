@@ -53,6 +53,7 @@ DELIMITERS = {
 
 
 def source_root(explicit: str | None) -> Path:
+    """Resolve an explicit reference checkout or require the default local checkout."""
     if explicit:
         return Path(explicit).resolve()
     if DEFAULT_REFERENCE.exists():
@@ -80,6 +81,7 @@ def slice_lines(path: Path, limit: int) -> bytes:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Save byte-exact reference slices and rebuild their format and hash manifest."""
     argv = sys.argv[1:] if argv is None else argv
     root = source_root(argv[0] if argv else None)
     data_root = root / "sf_3" / "output_data"

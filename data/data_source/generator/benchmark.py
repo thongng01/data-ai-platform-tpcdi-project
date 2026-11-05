@@ -1,3 +1,5 @@
+"""Measure sequential generator runs and compare runs with equal dataset identities."""
+
 import argparse
 from pathlib import Path
 
@@ -6,6 +8,11 @@ from .runner import compare, run, write_json
 
 
 def benchmark(configurations: list[Path], output: Path):
+    """Run each configuration in a new directory and save measurements after each run.
+
+    Runs with equal semantic dataset identities also undergo byte comparison.
+    A failed run stays in the summary, then the exception stops the sequence.
+    """
     output.mkdir(parents=True, exist_ok=False)
     results = []
     semantic_runs = {}
@@ -40,6 +47,7 @@ def benchmark(configurations: list[Path], output: Path):
 
 
 def main():
+    """Read configuration paths and the output directory from command-line arguments."""
     parser = argparse.ArgumentParser(description="Run sequential scale and byte-repeatability measurements.")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--configs", type=Path, nargs="+", required=True)
