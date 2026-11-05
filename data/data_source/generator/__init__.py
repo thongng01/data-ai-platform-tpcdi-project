@@ -1,3 +1,3 @@
-"""Generate a bounded TPC-DI source-data proof of concept."""
+"""Generate repeatable brokerage source data with bounded state and export."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

@@ -9,6 +9,10 @@ from .population import rounded, uniform
 from .random_values import uniform as draw
 
 
+def customer_birth_year(config, identifier=20):
+    return max(config.end.year - 120, min(1940 + int(identifier) % 45, config.start.year - 18))
+
+
 def customer_values(identifier: int, tier: int = 3) -> dict:
     identifier = int(identifier)
     return {
@@ -99,8 +103,10 @@ def _snapshot_dates(config):
         current += timedelta(days=1)
 
 
-def _prospect_values(identifier, identity, snapshot, seed):
+def _prospect_values(identifier, identity, snapshot, seed, birth_year=None):
     fields = customer_values(identity)
+    if birth_year is None:
+        birth_year = date.fromisoformat(fields["C_DOB"]).year
     # Prospect values use only a persistent identity and the snapshot date, never a future tier.
     income = 25000 + int(draw(identifier, seed, "prospect-income") * 175000)
     return {
@@ -111,7 +117,7 @@ def _prospect_values(identifier, identity, snapshot, seed):
         "City": fields["C_CITY"], "State": fields["C_STATE_PROV"], "Country": fields["C_CTRY"],
         "Phone": "", "Income": income, "NumberCars": identifier % 3,
         "NumberChildren": identifier % 4, "MaritalStatus": "U",
-        "Age": snapshot.year - date.fromisoformat(fields["C_DOB"]).year,
+        "Age": snapshot.year - birth_year,
         "CreditRating": 550 + identifier % 251, "OwnOrRentFlag": "R" if identifier % 3 else "O",
         "Employer": f"Employer{identifier % 1000}", "NumberCreditCards": 1 + identifier % 4,
         "NetWorth": income * (2 + identifier % 10), "_key": f"{identifier:015d}",
@@ -150,5 +156,5 @@ def generate_prospects(generation, population):
             for row in identities[first:min(first + block_size, count)]:
                 prospect = int(row["prospect_id"])
                 identity = int(row["customer_id"]) or len(customers) + prospect
-                rows.append(_prospect_values(prospect, identity, snapshot, config.seed))
+                rows.append(_prospect_values(prospect, identity, snapshot, config.seed, customer_birth_year(config, identity)))
             generation.emit("Prospect", snapshot, rows)

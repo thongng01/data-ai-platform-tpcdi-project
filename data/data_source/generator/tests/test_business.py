@@ -114,6 +114,24 @@ def test_intent_planner_controls_cash_trades_and_closure(tmp_path):
     assert not simulation.orders
     assert simulation.metrics["rejected_by_intent_planner"] == 1 or simulation.metrics["rejected_no_holding"] == 1
 
+    customers[0]["inactivation_day"] = 1
+    accounts[0]["close_day"] = 0
+    inactive = BusinessSimulation(generation, market, customers, accounts, planner=Planner())
+    inactive.run()
+    assert accounts[0]["close_day"] == 1
+    assert inactive.closed[0]
+    assert inactive.ledger.balance[0] == 0
+    assert inactive.metrics["closures"] == 1
+
+    class RepeatedClosure(Stage1IntentPlanner):
+        def closures(self, simulation, day, scheduled):
+            return (0,)
+    accounts[0]["close_day"] = 0
+    duplicate = BusinessSimulation(generation, market, customers, accounts, planner=RepeatedClosure())
+    with pytest.raises(ValueError, match="existing account"):
+        duplicate.run()
+    assert duplicate.metrics["closures"] == 1
+
 
 def test_decimal_cent_encoding():
     assert decimal_cents(-1) == "-0.01"

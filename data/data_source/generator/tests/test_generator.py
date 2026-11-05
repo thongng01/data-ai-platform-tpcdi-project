@@ -51,6 +51,28 @@ def test_source_bytes_repeat_across_execution_settings(tmp_path, short_config, c
                 assert path.read_bytes() == (output / path.relative_to(complete_run)).read_bytes()
 
 
+@pytest.mark.parametrize("year", [1902, 2100])
+def test_complete_run_supports_calendar_boundary_years(tmp_path, year):
+    from xml.etree import ElementTree as ET
+    from data.data_source.generator.config import read_yaml
+
+    config = Config(initial_start=f"{year}-01-02", initial_end=f"{year}-01-05",
+                    daily_start=f"{year}-01-06", daily_end=f"{year}-01-09",
+                    scale_factor=.001, securities=2, companies=1, workers=1)
+    output = tmp_path / f"year-{year}"
+    run(config, output)
+    for _, element in ET.iterparse(output / "offline/initial/CustomerMgmt.xml"):
+        if element.tag == "Customer" and "C_DOB" in element.attrib:
+            assert 0 <= year - int(element.attrib["C_DOB"][:4]) <= 120
+    layout = read_yaml(Path(__file__).parents[1] / "definitions/finwire.yaml")["CMP"]
+    names = list(layout)
+    offset = sum(layout[name][0] for name in names[:names.index("FoundingDate")])
+    for path in (output / "offline/initial").glob("FINWIRE*"):
+        for line in path.read_text().splitlines():
+            if line[15:18] == "CMP":
+                assert line[offset:offset + 8] <= line[:8]
+
+
 def test_run_refuses_existing_and_partial_directories(tmp_path, short_config):
     output = tmp_path / "occupied"
     output.mkdir()

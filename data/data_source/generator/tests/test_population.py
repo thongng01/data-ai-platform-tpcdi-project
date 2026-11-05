@@ -9,7 +9,7 @@ import pytest
 from hypothesis import given, strategies as st
 
 from data.data_source.generator.config import Config
-from data.data_source.generator.customers import account_values, customer_values, generate_prospects, xml_action
+from data.data_source.generator.customers import _prospect_values, account_values, customer_birth_year, customer_values, generate_prospects, xml_action
 from data.data_source.generator.population import ACCOUNT_DTYPE, CUSTOMER_DTYPE, _account_traits, assign_tiers, build_population
 
 
@@ -206,6 +206,52 @@ def test_new_xml_matches_tpcdi_schema(tmp_path):
     schema.assertValid(root)
 
 
+@pytest.mark.parametrize("year,expected_birth_year", [(1902, 1884), (2019, 1960), (2100, 1980)])
+def test_birth_year_keeps_prospect_ages_valid_at_calendar_limits(tmp_path, year, expected_birth_year):
+    config = Config(initial_start=f"{year}-01-01", initial_end=f"{year}-01-31",
+                    daily_start=f"{year}-02-01", daily_end=f"{year}-03-31",
+                    customers_per_unit=10, companies=2, securities=3)
+    birth_year = customer_birth_year(config)
+    assert birth_year == expected_birth_year
+    for identifier in range(1, 91):
+        birth_date = date(customer_birth_year(config, identifier), 1, 1)
+        assert birth_date < config.start
+        fields = {**customer_values(identifier), "C_DOB": birth_date.isoformat()}
+        action = parse_action(xml_action("NEW", f"{config.start}T00:00:00", identifier, fields))
+        assert date.fromisoformat(action.find("Customer").get("C_DOB")) < config.start
+    population = build_population(config, tmp_path)
+    generation = ProspectCapture(config)
+    generate_prospects(generation, population)
+    for snapshot, rows in generation.snapshots.items():
+        assert all(0 <= row["Age"] <= 120 for row in rows)
+        for row in rows:
+            identity = int(row["LastName"].removeprefix("Family"))
+            assert row["Age"] == snapshot.year - customer_birth_year(config, identity)
+
+
+def test_prospect_default_birth_year_matches_reference_calendar():
+    default = _prospect_values(1, 1, date(2019, 1, 1), 7)
+    explicit = _prospect_values(1, 1, date(2019, 1, 1), 7, 1941)
+    assert default == explicit
+    assert default["Age"] == 78
+    assert _prospect_values(1, 1, date(2019, 1, 1), 7, 1960)["Age"] == 59
+    assert customer_birth_year(Config()) == 1960
+
+
+def test_reference_calendar_preserves_varied_birth_year_values_and_field_order():
+    config = Config()
+    years = set()
+    for identity in range(1, 91):
+        original_birth_year = date.fromisoformat(customer_values(identity)["C_DOB"]).year
+        bounded_birth_year = customer_birth_year(config, identity)
+        assert bounded_birth_year == original_birth_year
+        original = _prospect_values(identity, identity, config.cutover, config.seed)
+        bounded = _prospect_values(identity, identity, config.cutover, config.seed, bounded_birth_year)
+        assert tuple(original.items()) == tuple(bounded.items())
+        years.add(bounded_birth_year)
+    assert years == set(range(1940, 1985))
+
+
 class ProspectCapture:
     def __init__(self, config):
         self.config = config
@@ -240,7 +286,8 @@ def test_prospects_keep_identity_without_future_customer_status(tmp_path):
     assert len(matched_existing) / len(existing) == pytest.approx(.3, abs=.1)
     assert all("IsCustomer" not in row and "C_TIER" not in row for row in snapshots[0])
     for row in snapshots[0]:
-        assert row["Age"] == config.cutover.year - date.fromisoformat(customer_values(int(row["LastName"].removeprefix("Family")))["C_DOB"]).year
+        identity = int(row["LastName"].removeprefix("Family"))
+        assert row["Age"] == config.cutover.year - customer_birth_year(config, identity)
     day = (config.cutover - config.start).days
     active_accounts = np.count_nonzero((population.accounts["open_day"] <= day) & (population.accounts["close_day"] > day))
     assert len(snapshots[0]) == active_accounts * 2

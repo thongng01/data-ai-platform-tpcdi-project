@@ -10,7 +10,7 @@ import math
 import numpy as np
 import polars as pl
 
-from .customers import account_values, customer_values, xml_action
+from .customers import account_values, customer_birth_year, customer_values, xml_action
 from .random_values import uniform, values
 
 TRADE_STRIDE = 1_000_000
@@ -184,6 +184,7 @@ class BusinessSimulation:
         self.cash_ordinals = np.zeros(len(accounts), dtype=np.int64)
         self.trade_ordinals = np.zeros(len(accounts), dtype=np.int64)
         self.account_versions = np.zeros(len(accounts), dtype=np.int64)
+        self.closed = np.zeros(len(accounts), dtype=np.bool_)
         self.customer_versions = Counter()
         self.tiers = {int(c["customer_id"]): int(c["tier"]) for c in customers}
         self.account_indices = {int(a["account_id"]): i for i, a in enumerate(accounts)}
@@ -227,6 +228,7 @@ class BusinessSimulation:
 
     def customer_fields(self, identifier, inactive=False):
         fields = customer_values(identifier, self.tiers[identifier])
+        fields["C_DOB"] = f"{customer_birth_year(self.config, identifier):04d}-01-01"
         if inactive:
             fields["C_ST_ID"] = "INAC"
         return fields
@@ -419,6 +421,7 @@ class BusinessSimulation:
                 self.cash(day, 14 * 3600, index, -int(self.ledger.balance[index]), "Deposit")
             if self.ledger.balance[index] > 0:
                 self.cash(day, 15 * 3600, index, -int(self.ledger.balance[index]), "Withdrawal")
+            self.closed[index] = True
             self.metrics["closures"] += 1
 
     def watch(self, customer, security, day, second, action):
@@ -440,16 +443,18 @@ class BusinessSimulation:
         for offset in range(self.total_days):
             day = config.start + timedelta(days=offset)
             prices = self.market.day(day)
-            scheduled = set(closes[offset])
-            selected = set(self.planner.closures(self, offset, tuple(sorted(scheduled))))
+            scheduled = {index for index in closes[offset] if not self.closed[index]}
+            forced = {index for customer in inactivations[offset] for index in self.customer_accounts[customer]
+                      if not self.closed[index] and int(self.accounts[index]["open_day"]) <= offset}
+            selected = set(self.planner.closures(self, offset, tuple(sorted(scheduled)))) | forced
             for index in scheduled - selected:
                 self.accounts[index]["close_day"] = self.total_days
             for index in selected:
-                if not 0 <= index < len(self.accounts) or int(self.accounts[index]["open_day"]) > offset:
+                if not 0 <= index < len(self.accounts) or self.closed[index] or int(self.accounts[index]["open_day"]) > offset:
                     raise ValueError("A closure intent requires an existing account.")
                 self.accounts[index]["close_day"] = offset
             closes[offset] = sorted(selected)
-            active = (self.accounts["open_day"] <= offset) & (self.accounts["close_day"] > offset)
+            active = (self.accounts["open_day"] <= offset) & (self.accounts["close_day"] > offset) & ~self.closed
             self.metrics["account_days"] += int(np.count_nonzero(active)) + len(closes[offset])
             new_customers = set(joins[offset])
             for customer in joins[offset]:
@@ -587,7 +592,7 @@ class BusinessSimulation:
             "live_holdings": len(self.holdings.index), "peak_live_holdings": self.holdings.high_water,
             "open_trades": len(self.orders), "peak_open_trades": self.maximum_open_orders,
             "active_watches": sum(len(w) for w in self.watches.values()), "peak_active_watches": self.maximum_watches,
-            "numeric_state_buffer_bytes": sum(array.nbytes for array in (self.holdings.data, self.ledger.balance, self.ledger.reserved, self.ledger.limits, self.accounts, self.customers, self.cash_ordinals, self.trade_ordinals, self.account_versions, self.activity_variation)),
+            "numeric_state_buffer_bytes": sum(array.nbytes for array in (self.holdings.data, self.ledger.balance, self.ledger.reserved, self.ledger.limits, self.accounts, self.customers, self.cash_ordinals, self.trade_ordinals, self.account_versions, self.closed, self.activity_variation)),
         }
 
 

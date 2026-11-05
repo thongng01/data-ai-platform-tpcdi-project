@@ -106,7 +106,6 @@ class Market:
                     "sessions_per_year": counts, "initial_sessions": sum(config.start <= day <= config.cutover for day in sessions),
                     "daily_sessions": sum(config.daily_start_date <= day <= config.end for day in sessions),
                     "clock": "UTC fixed NYSE wall-clock hours"}
-        (directory / "calendar.json").write_text(json.dumps(metadata, sort_keys=True, indent=2) + "\n", encoding="utf-8")
         arrays = {name: open_memmap(directory / f"{name}.npy", mode="w+", dtype=np.int64, shape=(days, config.securities))
                   for name in ("close", "high", "low", "dividends")}
         arrays.update({name: open_memmap(directory / f"{name}.npy", mode="w+", dtype=dtype, shape=(days,))
@@ -127,6 +126,8 @@ class Market:
             candidates = sorted(day for day in sessions if day.year == year)
             ranked = sorted(candidates, key=lambda day: int(values([day.toordinal()], config.seed, "market/shock-day")[0]))
             shocks.update(ranked[:config.shock_days_per_year])
+        metadata["shock_dates"] = [day.isoformat() for day in sorted(shocks) if first <= day <= config.end]
+        (directory / "calendar.json").write_text(json.dumps(metadata, sort_keys=True, indent=2) + "\n", encoding="utf-8")
         payment_dates = {}
         for year in counts:
             for month in (1, 4, 7, 10):
@@ -201,7 +202,7 @@ class Market:
 
             for identifier in range(1, config.companies + 1):
                 emit("CMP", identifier, {"CompanyName": f"Company {identifier}", "CIK": identifier,
-                    "Status": "ACTV", "IndustryID": "AA", "SPrating": "AAA", "FoundingDate": "19500101",
+                    "Status": "ACTV", "IndustryID": "AA", "SPrating": "AAA", "FoundingDate": f"{min(1950, initial_posting.year):04d}0101",
                     "AddrLine1": "1 Main Street", "PostalCode": "10001", "City": "New York", "StateProvince": "NY",
                     "Country": "USA", "CEOname": f"Executive {identifier}", "Description": "Publicly traded company."})
             for identifier in range(1, config.securities + 1):
