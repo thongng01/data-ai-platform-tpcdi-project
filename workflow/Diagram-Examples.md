@@ -1,6 +1,6 @@
 # Diagram Examples
 
-These examples apply the [diagram guide](Diagram-Guide.md) to source flows, deployment scopes, and data relationships. The data-integration view is a `small` draw.io page. The deployment is a `large` 1440 x 960 draw.io page, exported as a 2880 x 1920 PNG. The record relationships are a `medium` Mermaid ERD; the [gold layer ERD](../docs/Data-Specification.md#gold-layer-entity-relationships) is a `large` one. Each PNG has its source beside it, with the same file name.
+These examples apply the [diagram guide](Diagram-Guide.md) to source flows, deployment scopes, and data relationships. The data-integration view is a `small` draw.io page. The deployment is a `large` 1440 x 960 draw.io page, exported as a 2880 x 1920 PNG. The record relationships are a `medium` Mermaid ERD; the [gold layer ERD](../docs/Data-Specification.md#gold-entity-relationships) is a `large` one. Each PNG has its source beside it, with the same file name.
 
 ## Data Integration
 

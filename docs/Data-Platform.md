@@ -38,18 +38,18 @@ The generator produces connected records for all 18 TPC-DI business and referenc
 
 ### Generation Model
 
-Four generation layers separate business behavior from recording errors and transport problems. The generator runs layers 1 to 3. The publisher runs layer 4, so a new delivery profile does not require new business data. Both belong to the simulated source department under `data/data_source/`, in `generator/` and `publisher/`.
+Four generation stages separate business behavior from data errors and delivery problems. The generator runs stages 1 to 3. The publisher runs stage 4, so a new publisher profile does not require new business data. Both belong to the simulated source department under `data/data_source/`, in `generator/` and `publisher/`.
 
-Files carry the initial load and daily deliveries. Kafka carries cash transactions for the daily delivery period. The generator's three layers form one day-by-day model, not three separate services or full-dataset rewrites.
+Files carry the initial load and daily deliveries. Kafka carries cash transactions for the daily delivery period. The generator's three stages form one day-by-day model, not three separate services or full-dataset rewrites.
 
-| Generation layer | Question | Output |
+| Generation stage | Question | Output |
 | --- | --- | --- |
 | 1. Business behavior | Who exists, and what do they do? | Customers, accounts, trades, cash transactions, holdings, watches, and market activity |
 | 2. Attrition signal | What hidden state precedes an account closure? | Leaving periods and look-alike outflows within the business activity |
-| 3. Source recording | How do source systems record events? | TPC-DI files, native data errors, and versioned trade formats |
+| 3. Source recording | How do source systems record events? | TPC-DI files, data errors, and versioned trade formats |
 | 4. Delivery | How does data reach the platform? | Files in `upstream`, cash transactions in Kafka, retries, corrections, and delays |
 
-Each layer uses the earlier layer's decisions without replacing them. A recorded fee error does not change the correct trade settlement. A publisher retry does not create a new business event.
+Each stage uses the earlier stage's decisions without replacing them. A recorded fee error does not change the correct trade settlement. A publisher retry does not create a new business event.
 
 ```text
 account traits -> behavior -> business events -> source records -> delivery -> measured results
@@ -58,9 +58,9 @@ profile, wealth   rate, size, trades, holdings,  file formats,     delays,     v
 (visible)                     watches
 ```
 
-Numbers belong in run configuration, rules belong in generator code, and formats belong in source definitions. Volume, skew, and peak rates are measured results, not direct settings. The local generator summary records settings, counts, hidden traits, and the correct values behind recording errors. The publisher report records each injected delivery problem. Neither report enters the ingestion path.
+Numbers belong in run configuration, rules belong in generator code, and formats belong in source definitions. Volume, skew, and peak rates are measured results, not direct settings. The local generator summary records settings, counts, hidden traits, and the correct values behind data errors. The publisher report records each injected delivery problem. Neither report enters the ingestion path.
 
-### Generation Layer 1: Business Behavior
+### Generation Stage 1: Business Behavior
 
 The generator simulates one retail brokerage day by day. Each account receives a hidden behavior profile and hidden wealth level when it opens. The profile sets activity frequency, the wealth level sets amounts, and the visible cash or margin account type constrains spending. Completed trades move cash and change holdings; deposits, withdrawals, and dividends also move cash. Source records show events, not hidden traits.
 
@@ -196,9 +196,9 @@ These are factor 100 expectations, not results from the current POC. Counts and 
 | Cash transaction stream | About 82,000 cash transactions and 8 MB per trading day; about 85% settlements | Firm-model estimate; measure transaction types and bytes separately from files |
 | Bytes per trade | About 280 source bytes including trade history, cash transactions, and holdings; cash transactions are about 30% | TPC-DI SF3 measurement, used for volume estimates |
 
-### Generation Layer 2: Attrition Signal
+### Generation Stage 2: Attrition Signal
 
-Business behavior sets how many accounts close. The attrition layer sets what happens before closure, so observed behavior can support the [30-day account attrition task](ML-Platform.md). Hidden state never enters platform features.
+Business behavior sets how many accounts close. The attrition signal stage sets what happens before closure, so observed behavior can support the [30-day account attrition task](ML-Platform.md). Hidden state never enters platform features.
 
 | Rule | Value | Basis |
 | --- | --- | --- |
@@ -210,9 +210,9 @@ Business behavior sets how many accounts close. The attrition layer sets what ha
 | Recording | Hidden leaving periods and look-alike flags appear only in the generator summary | Leakage prevention |
 | Signal check | On a small sample, a quick model must beat the rule “no deposit and net outflow over 30 days”; that rule's precision must stay below about 30% | Acceptance check for the synthetic signal, before pipeline work |
 
-### Generation Layer 3: Source Recording
+### Generation Stage 3: Source Recording
 
-The source recording layer writes TPC-DI formats and native data errors. It changes recorded values, not the correct business state behind them.
+The source recording stage writes TPC-DI formats and data errors. It changes recorded values, not the correct business state behind them.
 
 | Rule | Definition | Basis |
 | --- | --- | --- |
@@ -225,7 +225,7 @@ The source recording layer writes TPC-DI formats and native data errors. It chan
 
 The trade format changes from 14 to 15 business fields. Daily CDC fields are additional fields in both versions. A text encoding problem and a change to `CT_NAME` were considered but are not part of the simulation. Section 3 defines error and schema handling.
 
-### Generation Layer 4: Delivery
+### Generation Stage 4: Delivery
 
 The publisher reads one generated dataset and applies a named profile, such as `clean` or `realistic`. It publishes complete files to `upstream` and cash transactions for the daily delivery period to Kafka. Generated files contain no transport problems. The publisher report compares delivered data with those files and records actual delays, repeats, and corrections.
 
@@ -274,7 +274,7 @@ Code adapted from the Databricks reference applies these corrections. They are r
 | Non-completed trades retain execution amounts | Price, charge, commission, and tax violate the source contract | Keep those fields NULL unless status is `CMPT` |
 | A sell chooses an arbitrary smaller trade ID as holding origin | Account, security, time, and holding continuity can be wrong | Derive holding changes from ordered completed trades and check before and after quantities |
 | FINWIRE types go to separate, unordered files | Files do not match quarterly mixed-record exports | Write fixed-width quarterly files ordered by `PTS` |
-| Native errors are incomplete | Quality handling is not exercised | Generate native irregularities separately and measure each rate |
+| Data errors are incomplete | Quality handling is not exercised | Generate each data error separately and measure each rate |
 | Audit code can copy saved counts | Counts can describe another run | Measure each produced run directly; do not emit benchmark audit files |
 | Generic writing is unsorted and some seeds depend on runtime state | File bytes can change with execution settings | Sort exports and use stable configured seeds and IDs |
 
@@ -440,7 +440,7 @@ For a normal date such as 2019-03-05:
 
 1. Cash transactions arrive on the stream during the day. Job 1 commits Silver at checkpoints, and Job 2 updates live tables.
 2. After the day closes, the processing marker passes the day's end plus 10 minutes.
-3. The publisher delivers the date's batch files. For example, they can arrive at 02:00 UTC on March 6 without changing their March 5 `data_date`.
+3. The publisher delivers the date's offline files. For example, they can arrive at 02:00 UTC on March 6 without changing their March 5 `data_date`.
 4. DP1 and DP2 process the files. DP2 waits for stream progress, pushes the date's Silver cash transactions into PostgreSQL, and runs the cash transaction and balance models.
 5. GX reconciles settlements with completed trades, dividends with start-of-day holdings and dividend per share, and the live end-of-day balance with the warehouse balance.
 6. DP3 builds the batch features, then daily scoring covers all open accounts.
@@ -486,7 +486,7 @@ The platform classifies cross-cutting work by need: rubric requirements include 
 
 The source contract uses files and timestamps that a provider can supply. It does not depend on benchmark control files.
 
-- **Provider boundary**: DP1 pulls from source-owned storage; the provider cannot overwrite platform copies.
+- **Source boundary**: DP1 pulls from source-owned storage; the source department cannot overwrite platform copies.
 - **Date meaning**: Business date, event time, publication time, and arrival time remain separate.
 - **Repeatability**: Retries and backfills use the same saved inputs; corrections create new input versions.
 - **Scope**: Simulate a behavior when it changes processing or meets a coursework requirement.

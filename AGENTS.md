@@ -12,6 +12,7 @@ Build the data, ML, and agent platform with the owner, and explain the engineeri
 - **Supporting files**: Temporary work in `local/tmp/`, local archives and references in `local/`, and reusable tools in `workflow/tools/`. Follow the [workflow guide](workflow/README.md).
 
 ## Documents
+- **Terms**: Name concepts in documents, code, and configuration with the terms in the [glossary](docs/Glossary.md). When the owner settles a new term or renames one, update the glossary in the same change.
 - **Writing**: Follow the [documentation guide](workflow/Documentation-Guide.md).
 - **Diagrams**: ERDs are Mermaid `.mmd` files with a kind tag per table and no styling directives; other diagrams are editable draw.io files. Both render with the shared tooling. Read the [diagram guide](workflow/Diagram-Guide.md) and the [tool instructions](workflow/tools/diagrams/README.md) first.
 

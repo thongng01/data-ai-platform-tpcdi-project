@@ -89,7 +89,7 @@ The tables and schema headings use the standard source names. The naming rules b
 - **Daily files**: Use `daily/YYYYMMDD/<Source>_YYYYMMDD.<ext>`, for example `daily/20190305/Customer_20190305.txt` and `daily/20190301/Prospect_20190301.csv`. The folder and file name carry the same `data_date`, written as plain `YYYYMMDD`. Delivery delays and retries do not change it.
 - **Quarterly files**: Name `FINWIREyyyyQq` by the year and quarter of `PTS`, not the financial reporting period. For example, Q1 2026 results published April 30 belong in `FINWIRE2026Q2`; their `Year` and `Quarter` fields remain `2026` and `1`. Keep the existing name format without a daily date suffix. Publish only records released by that delivery, never future postings. Each file arrives in the daily folder of its release date, for example `daily/20260430/FINWIRE2026Q2`. That date's delivery applies it before that day's trades and prices.
 - **Generation and delivery**: The generator writes source data locally. The publisher writes files to the source department's `upstream` bucket and cash transactions for the daily delivery period to Kafka. DP1 can only read `upstream`; it pulls new and changed files into `staging` before parsing them into Bronze.
-- **Delivery completeness**: The pipeline keeps an expected-file list for each delivery: the initial set, the daily set, the monthly prospect snapshot, and FINWIRE on release dates. The provider sends no control or manifest file. A file with zero records means no activity; a missing file means the delivery is incomplete. `ops.load_status` and a completeness view show missing inputs. A late file holds back only dependent tables.
+- **Delivery completeness**: The pipeline keeps an expected-file list for each delivery: the initial set, the daily set, the monthly prospect snapshot, and FINWIRE on release dates. The source department sends no control or manifest file. A file with zero records means no activity; a missing file means the delivery is incomplete. `ops.load_status` and a completeness view show missing inputs. A late file holds back only dependent tables.
 - **S3 placement**: The paths above are relative to `upstream` ([bucket rationale](Data-Platform.md#62-object-storage-layout-and-dataset-scope)). DP1 copies each pulled file version to `initial/<version_id>/<source_filename>` or `daily/YYYYMMDD/<version_id>/<source_filename>` in `staging`. S3 groups object keys by prefix, not by directories or tags. The platform holds one active dataset at a time, so keys have no dataset level.
 - **Pulled versions**: Each pulled file has its own `version_id`. A retry reuses that ID and path. A corrected source file gets a new ID; reruns and backfills reuse the selected inputs. An ingestion record maps the source key and version information to its staging path. An object-store ETag is not a guaranteed content hash.
 - **Generator summary**: Keep one reference summary on local disk beside the generated dataset; it is never uploaded. It records generation settings, output counts, and the data characteristics and problems we simulate. Ingestion does not read it ([generator rules](Data-Platform.md#2-data-generation-and-problem-injection)).
@@ -111,8 +111,8 @@ The versioning baseline preserves inputs and business history ([rationale](Data-
 - **Business history**: SCD2 dimensions record what was true on each date (Section 6). Delta table history records changes to Bronze and Silver.
 - **Names**: Tables use `bronze.raw_*`, `silver.stg_*`, `gold.dim_*`, `gold.fact_*`, and `gold.feat_*`. Gold current-state and reference tables use snake_case names such as `prospect` and `status_type`. Platform metadata uses `_snake_case`. Original source field names stay unchanged in the source dictionaries.
 
-### Silver Layer Design
-The TPC-DI specification does not define a silver layer. The Silver layer is the project's own model, with the following traits:
+### Silver Zone Design
+The TPC-DI specification does not define a Silver zone. Silver is the project's own model, with the following traits:
 - **Preserve Change Order**: Keep CDC type, sequence, and delivery date information. SCD2 versioning depends on the order of changes.
 - **Handle XML Nuance**: For `CustomerMgmt.xml`, preserve the distinction between omitted and empty elements until Gold versions are built.
 - **Deduplicate Correctly**: Remove repeated deliveries of the same event, but keep legitimate repeated business changes (such as two updates to one trade).
@@ -164,10 +164,10 @@ The Gold warehouse has 19 tables: the 19 TPC-DI tables minus `DImessages`, plus 
 
 `fact_cash_transactions` links each cash transaction to account, customer, date, and time dimensions. Trade settlements also link to `dim_trade`; dividends link to `dim_security`. It is partitioned by date. `dim_trade.channel` is nullable because older source rows do not record a channel. `fact_market_history` retains P/E, 52-week values, and yield.
 
-### Gold Layer Entity Relationships
+### Gold Entity Relationships
 The ERD shows all 19 warehouse tables in the `gold` schema and their main relationships. Table labels omit the namespace because the whole view belongs to one schema. Existing fields use the TPC-DI reference names. The cash transaction fact shows its identity and dimension relationships, not a full physical schema; `ID` denotes a logical identifier. The `prospect` relationship is a match by name and address, not a key.
 
-![Gold layer ERD with all 19 tables, their keys, and their relationships.](diagrams/data-specification/gold-erd.png)
+![Gold ERD with all 19 tables, their keys, and their relationships.](diagrams/data-specification/gold-erd.png)
 
 *Gold warehouse (`gold` schema), reference model rather than a final physical schema. Header colors: blue for dimensions, orange for facts, green for current-state tables, gray for reference tables.*
 

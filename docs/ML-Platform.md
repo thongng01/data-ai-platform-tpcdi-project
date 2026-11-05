@@ -119,7 +119,7 @@ The 30-day horizon assumes routine broker outreach with follow-up, not emergency
 
 | Candidate | Why Not Selected |
 | --- | --- |
-| **Minimum-cash alert** | A brokerage rejects a withdrawal above available cash. The client sells first, so the forecast has no defined harm for an alert to prevent. |
+| **Minimum-cash alert** | A brokerage rejects a withdrawal above available cash. The customer sells first, so the forecast has no defined harm for an alert to prevent. |
 | **External net flow forecast** | Changes the target but leaves the same weak business action. |
 | **Fraudulent withdrawal** | Requires an invented label that the source data does not supply. |
 | **Margin-call warning** | Covers only margin accounts and needs margin requirements based on holdings value. |

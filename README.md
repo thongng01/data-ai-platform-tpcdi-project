@@ -33,11 +33,11 @@ The target layout groups code into four platform pillars. The source department 
 ├── ml/                    # Layer 2: feature_repo, training, kfp, serving, rag
 ├── agents/                # Layer 3: mcp, coordinator, gateway, prompts, registry
 ├── infra/                 # Containers, cloud IaC, CI/CD, security, observability
-├── docs/                  # Five public system documents and source references
+├── docs/                  # Five system documents, glossary, and source references
 └── workflow/              # Engineering guides, working records, verification tools
 ```
 
-Each main section below maps to one detailed document: [Data Specification](docs/Data-Specification.md), [Data Platform](docs/Data-Platform.md), [ML Platform](docs/ML-Platform.md), [Agent Platform](docs/Agent-Platform.md), and [Infrastructure](docs/IaC.md).
+Each main section below maps to one detailed document: [Data Specification](docs/Data-Specification.md), [Data Platform](docs/Data-Platform.md), [ML Platform](docs/ML-Platform.md), [Agent Platform](docs/Agent-Platform.md), and [Infrastructure](docs/IaC.md). The [Glossary](docs/Glossary.md) defines the terms that all of them use.
 
 ## Business Domain and Data
 
@@ -81,7 +81,7 @@ A pipeline-side expected-file list defines completeness. An empty expected file 
 
 ### Load Cycle & Processing Strategy
 
-TPC-DI defines an initial load of historical data followed by two daily batches. This project extends the daily period to seven years and sends cash transactions through Kafka instead of daily cash transaction files.
+TPC-DI defines an initial load of historical data followed by two daily deliveries. This project extends the daily period to seven years and sends cash transactions through Kafka instead of daily cash transaction files.
 
 | Phase | Path or channel | Reference coverage | Work |
 | --- | --- | --- | --- |
@@ -99,7 +99,7 @@ TPC-DI defines an initial load of historical data followed by two daily batches.
 
 The data platform turns source data into validated tables for analytics and ML. The [Layer 1 design](docs/Data-Platform.md) holds the generation model, processing rules, versioning, and rationale.
 
-### Data Zones and Silver Layer
+### Data Zones
 
 | # | Zone | Purpose | Grain | Storage |
 | --- | --- | --- | --- | --- |
@@ -110,7 +110,7 @@ The data platform turns source data into validated tables for analytics and ML. 
 
 Four buckets separate source ownership and recovery needs: source-owned `upstream`, platform-owned `staging`, analytical `lakehouse`, and operational `platform`. The publisher can write `upstream`; the platform can only read it. DP1 saves files as `initial/<version_id>/<source_filename>` or `daily/YYYYMMDD/<version_id>/<source_filename>` in `staging`. Each pulled file gets a version ID; retries keep it, corrections get a new one, and reruns reuse saved inputs. An ingestion record maps source keys and version information to staging paths. ETag is not guaranteed to be a content hash.
 
-Hive Metastore resolves table names and locations. Trino provides SQL over Delta and PostgreSQL. Silver is a project layer, not a TPC-DI requirement:
+Hive Metastore resolves table names and locations. Trino provides SQL over Delta and PostgreSQL. Silver is the project's own zone, not a TPC-DI requirement:
 
 - **Change order**: Preserve CDC type and sequence and keep business date distinct from event time and arrival time.
 - **XML meaning**: Keep omitted and empty elements distinct until Gold applies them.
@@ -163,7 +163,7 @@ The warehouse contains 19 tables: TPC-DI's 19 minus `DImessages`, plus `fact_cas
 | `dim_date`, `dim_time` | Reference | Calendar and clock | Day; second | Date, time | Loaded once | Static |
 | `industry`, `status_type`, `tax_rate`, `trade_type` | Reference | Lookup codes | Code | Matching source files | Loaded once | Static |
 
-#### Gold Layer Entity Relationships
+#### Gold Entity Relationships
 
 The [data specification](docs/Data-Specification.md) owns Gold relationships and integration rules. Cash transactions link to account, customer, date, and time, to trades for settlements, and to securities for dividends. Prospect matching uses names and addresses rather than a source foreign key.
 
@@ -173,13 +173,13 @@ The [data specification](docs/Data-Specification.md) owns Gold relationships and
 
 ### Data Generation
 
-The source department simulates a mid-size firm day by day. Four generation layers separate business behavior, hidden attrition signal, source recording, and delivery. The generator implements the first three; the publisher implements delivery.
+The source department simulates a mid-size firm day by day. Four generation stages separate business behavior, hidden attrition signal, source recording, and delivery. The generator implements the first three; the publisher implements delivery.
 
 - **Scale**: Factor 100 represents about 330,000 customers and 550,000 accounts at cutover, with about 8% annual net account growth. One unit targets about 1 GB of offline files over the full reference calendar. Market and reference data remain fixed; dates are separate settings.
 - **Volume**: Generate the large dataset once and measure at least 100 GB of offline source files. The estimated 18 GB cash transaction stream is separate. Each experiment processes only the scale and dates needed to show its effect.
 - **Behavior**: Five hidden profiles and wealth levels produce trading and cash-flow patterns. Completed trades reconcile with cash transactions and holdings. About 20% of accounts use margin; no account sells securities it does not hold.
 - **Attrition**: About 3% of accounts close annually. Most closures follow a hidden 1 to 8 week leaving period; look-alike outflows keep a simple rule from solving the task alone.
-- **Source problems**: TPC-DI recording errors remain separate from skew and the added `T_CHANNEL` schema change, effective 2019-07-01 by default.
+- **Source problems**: Data errors stay separate from skew and from the added `T_CHANNEL` schema change, effective 2019-07-01 by default.
 - **Delivery**: The clean publisher comes first. The realistic profile adds retried extract blocks, corrected and late files, and late and duplicate stream messages without regenerating business data.
 - **Measurement**: The local generator summary records settings, output counts, hidden traits, and measured characteristics. A separate publisher report measures delivery problems. Ingestion reads neither report.
 

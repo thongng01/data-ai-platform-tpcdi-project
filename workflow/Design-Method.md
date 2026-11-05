@@ -20,7 +20,7 @@ The steps repeat when needed. Research can expose a missing attribute, and evalu
 - **One question per decision**: Split a broad question into parts that have separate answers. "How do source files arrive?" became date meaning, time zone, calendar, completeness, buckets, dataset isolation, prefixes, and reruns.
 - **Order by dependency**: Answer first the question that constrains the others. The date meaning came before the time zone, and buckets came before prefixes.
 - **Decide now or defer**: Decide now when other work depends on the answer or when reversing it is costly. Defer when nothing depends on it yet, and record what brings it back. Archive and retention policies wait for the lifecycle design; HR and reference updates wait until a feature needs them.
-- **Challenge the framing**: A question can contain a wrong assumption. "Which control file format?" assumed that the provider sends a control file. The better question was how ingestion knows that a delivery is complete. Similarly, "How do we isolate datasets?" assumed that several datasets must coexist; they do not, because every planned comparison uses one timeline.
+- **Challenge the framing**: A question can contain a wrong assumption. "Which control file format?" assumed that the source department sends a control file. The better question was how ingestion knows that a delivery is complete. Similarly, "How do we isolate datasets?" assumed that several datasets must coexist; they do not, because every planned comparison uses one timeline.
 
 ## 3. Map the Problem
 
@@ -28,7 +28,7 @@ List the attributes that decide the design before listing solutions.
 
 | Area | Questions | Example |
 | --- | --- | --- |
-| **Source and delivery** | Who produces the data, in what format, and at what cadence? What does the provider not send? | Providers send data files only, so completeness uses a pipeline-side file list. |
+| **Source and delivery** | Who produces the data, in what format, and at what cadence? What does the provider not send? | The source department sends data files only, so completeness uses a pipeline-side file list. |
 | **Time** | Which clocks exist: event, business date, publication, extraction, arrival, processing? Which time zone and day boundary apply? | A Q1 report has a reporting period, a publication date, and an arrival time. |
 | **Identity** | What identifies an entity, a version, an event, and a delivery? | A repeated cash transaction message keeps its `CT_ID`; a Kafka offset identifies only a delivery position. |
 | **State and order** | Does a step depend on earlier results? | SCD2 versions and cash balances require dates in order. |

@@ -44,4 +44,4 @@ The POC demonstrates a complete connected source-format experiment with bounded 
 
 Validation took about four times as long as generation and export on the largest run. A 100 GB run therefore needs a separate runtime and disk plan, especially for full relationship validation. No 100 GB run was attempted. No forecast model, predictive behavior assessment, fault injection, or downstream pipeline integration was performed.
 
-The production generator extends this code. It must decide which simplified rules survive, add the business behavior, attrition signal, TPC-DI data errors, and schema versions of the generation model, and keep the memory and repeatability gates. Transport problems, such as duplicates and late delivery, belong to the separate publisher.
+The production generator extends this code. It must decide which simplified rules survive, add the business behavior, attrition signal, data errors, and schema versions of the generation model, and keep the memory and repeatability gates. Transport problems, such as duplicates and late delivery, belong to the separate publisher.
