@@ -93,6 +93,30 @@ The first audit contains 5,073 selected field errors: 20 tier errors, 16 date-of
 
 Both signal checks sample 512 accounts, use chronological splits, and leave 30-day label gaps. The first test average precision is 0.157326 for the model and 0.005548 for the outflow rule; rule precision is 0.9024%, with 57,401 observations and 156 positive labels. The calibrated result is 0.228498 for the model and 0.005527 for the rule; rule precision is 0.9052%, with 55,621 observations and 162 positive labels. Both pass the synthetic signal gate. Neither establishes practical deployment precision or downstream model quality.
 
+## Performance Investigation
+
+The owner ended the performance task on 2026-11-06 after profiling and scratch comparisons. No production optimization shipped, and no new full-calendar run occurred. The existing calibrated dataset remains unchanged.
+
+The bounded workload uses factor 1, the 3,601-customer anchor, seed `20261029`, 1,250 companies, 2,000 securities, two workers, and two Polars threads. Initial load covers 2018-10-01 through 2018-12-31; daily delivery covers 2019-01-01 through 2019-07-31. Both unprofiled baselines pass full validation and take 178.79 and 170.68 seconds. All 1,515 source files and the separate error audit match across those runs and the profiled run. The bounded workload has more fixed data and shorter account histories than the full calendar.
+
+Actual child-process profiles identify repeated field checks, schema construction, and per-file SQLite commits as larger costs than merge sorting. Native relational preparation is a small part of validation. The recommended direction is targeted reuse of immutable contracts and schemas, plus fewer catalog commits, rather than a broad engine replacement. This is a recommendation, not an implemented design.
+
+These scratch exporter measurements replay the same captured inputs. They exclude business simulation and full saved-file validation. Each completed replay produces the same 1,515 source files, 2,057,139 rows, and 150,184,502 bytes, with matching hashes.
+
+| Scratch treatment | Command wall seconds | Final-write seconds |
+| --- | ---: | ---: |
+| Stock exporter | 89.86 | 59.03 |
+| Compiled field contracts | 80.26 | 49.27 |
+| Batched output writes | 78.90 | 48.58 |
+| Compiled contracts and deferred cleanup | 42.17 | 14.23 |
+| Compiled contracts, deferred cleanup, and batched writes | 39.27 | 14.01 |
+
+Each treatment has one completed replay, without the planned closing stock repeat. Background development activity and commit latency vary, so these observations do not establish a precise speedup or full-calendar throughput. The combined candidate's sampled total output storage increases from about 200 to 328 MiB because consumed runs remain until close. Sampled temporary storage stays near 198 MiB, peak RSS stays near 160 MiB, and the 8,192-row buffer and 16-input path bounds remain unchanged. The separate captured trace occupies about 411 MiB and is not included in those output-storage figures.
+
+Compiled-check probes compare 476,495 edge and malformed field strings with the original checker. Deferred-cleanup probes cover catalog consistency around commit, deletion, and failed final checks. A separate stage-local schema-cache prototype passes 2,173 differential row cases but has no completed runtime measurement. Polars and DuckDB exporters have small feasibility checks only, not representative performance results. No production code was removed. Further comparisons, production integration, and final full-calendar verification stopped at the owner's request.
+
+Evidence remains in ignored `local/tmp/generator-perf/profile/Report.md`, `local/tmp/generator-perf/export-options/measurements/`, and `local/tmp/generator-perf/validation-options/`. New datasets are under `local/runs/generator-perf/`. The prepared full-calendar wrapper was not executed.
+
 ## Calibration and Remaining Evidence
 
 Calibration subtracts the directly measured fixed families: `DailyMarket`, FINWIRE, `Date`, `Time`, `Industry`, `StatusType`, `TaxRate`, and `TradeType`. HR is variable because staffing scales with the firm. Decimal half-up rounding of `3300 * 1,000,000,000 / 916,523,728` gives the accepted default of 3,601 customers per unit. The repeat keeps the seed, market, and behavior controls unchanged. Its source freeze is `76081d9`, which includes the fixture tool fix and explanatory comments as well as the new default.
