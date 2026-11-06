@@ -252,6 +252,8 @@ The five data errors use independent stable draws and can occur together in one 
 
 The local `summary/data_errors.jsonl` audit stores each source identity, field, correct value, and recorded value. It stays outside source delivery and ingestion. Generator validation recomputes error selection, verifies exact audit evidence, and restores only verified values for business replay. Missing, duplicate, unused, or mismatched evidence fails validation; enabling an error rate does not authorize arbitrary corruption.
 
+Each audit key combines source, day, identity, and field. Daily Customer identity uses `C_ID`, `C_ST_ID`, and `CDC_FLAG`, which separates a same-day insert from an active update. CustomerMgmt identity uses `C_ID`, `ActionType`, and `ActionTS`, plus the XML Account element's `CA_ID` for `ADDACCT`, `UPDACCT`, and `CLOSEACCT`. Completed Trade identity uses `T_ID`, `T_DTS`, and `T_ST_ID`; company identity uses `CIK` and `PTS`. These unchanged source fields let validation derive each identity from saved records alone. Selection draws still use the entity, date, and action kind or status, so related records can receive an error together while retaining separate audit entries.
+
 The trade format changes from 14 to 15 business fields according to the daily delivery date, even when a trade began earlier. The initial load always retains 14 business fields. Daily CDC fields are additional fields in both versions. The simulation has no text encoding problem and no change to `CT_NAME`. Section 3 defines platform error and schema handling.
 
 ### Generation Stage 4: Delivery

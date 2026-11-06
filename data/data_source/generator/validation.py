@@ -391,8 +391,13 @@ def _xml(stage, path, sources, config, audit=None):
         patch = _xml_patch(customer, sources["Customer"])
         _require("C_ID" in patch, "Missing customer XML ID.")
         identifier = int(patch["C_ID"])
+        accounts = customer.findall("Account")
+        if kind in {"ADDACCT", "UPDACCT", "CLOSEACCT"}:
+            _require(len(accounts) == 1 and "CA_ID" in accounts[0].attrib,
+                     "An account-specific CMS action requires exactly one account ID.")
+        account_id = int(accounts[0].attrib["CA_ID"]) if len(accounts) == 1 else None
         if audit is not None:
-            patch = audit.restore("CustomerMgmt", timestamp[:10], patch, kind=kind, timestamp=timestamp)
+            patch = audit.restore("CustomerMgmt", timestamp[:10], patch, kind=kind, timestamp=timestamp, account_id=account_id)
         key = timestamp, identifier
         _require(key >= previous, "Customer actions must be ordered by timestamp and customer ID.")
         previous = key
@@ -407,7 +412,6 @@ def _xml(stage, path, sources, config, audit=None):
             record.update(_present=list(patch), _kind=kind, _timestamp=timestamp, _day=timestamp[:10],
                           _flag="I" if kind == "NEW" else "U", _order=counts[kind], _partition=str(identifier % stage.partitions))
             stage.add("CustomerXML", record, schema)
-        accounts = customer.findall("Account")
         _require(bool(accounts) if kind in {"NEW", "ADDACCT", "UPDACCT", "CLOSEACCT"} else kind == "INACT" or not accounts,
                  "Unexpected number of accounts in XML action.")
         for account in accounts:

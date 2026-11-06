@@ -27,11 +27,17 @@ def _day(config, day) -> date:
     return config.start + timedelta(days=day) if type(day) is int else date.fromisoformat(day) if isinstance(day, str) else day
 
 
-def _identity(source, fields, kind="", timestamp="") -> dict[str, str]:
-    """Build an identity from fields that recording errors never change."""
+def _identity(source, fields, kind="", timestamp="", account_id=None) -> dict[str, str]:
+    """Identify a source record with unchanged fields visible in its saved delivery."""
     if source == "CustomerMgmt":
-        return {"C_ID": str(fields["C_ID"]), "ActionType": kind, "ActionTS": timestamp}
-    names = {"Customer": ("C_ID", "C_ST_ID"), "Trade": ("T_ID", "T_DTS", "T_ST_ID"),
+        identity = {"C_ID": str(fields["C_ID"]), "ActionType": kind, "ActionTS": timestamp}
+        if kind in {"ADDACCT", "UPDACCT", "CLOSEACCT"}:
+            identity["CA_ID"] = str(account_id)
+        return identity
+    if source == "Customer":
+        return {"C_ID": str(fields["C_ID"]), "C_ST_ID": str(fields["C_ST_ID"]),
+                "CDC_FLAG": str(fields["_flag"])}
+    names = {"Trade": ("T_ID", "T_DTS", "T_ST_ID"),
              "FINWIRE:CMP": ("CIK", "PTS")}[source]
     return {name: str(fields[name]) for name in names}
 
@@ -104,7 +110,7 @@ class SourceRecorder:
     def _batch_audit(self, source, correct, field, selected, replacement):
         """Build dictionaries only for selected errors, never for ordinary rows."""
         columns = ["_record_day", field, "T_ID", "T_DTS", "T_ST_ID"] if source == "Trade" else [
-            "_record_day", field, "C_ID", "C_ST_ID"]
+            "_record_day", field, "C_ID", "C_ST_ID", "_flag"]
         evidence = correct.select(columns).with_columns(replacement.alias("_recorded")).filter(pl.Series(selected))
         entries = []
         for row in evidence.iter_rows(named=True):
@@ -113,7 +119,7 @@ class SourceRecorder:
                 identity = {"T_ID": str(row["T_ID"]), "T_DTS": stamp.isoformat(sep=" "),
                             "T_ST_ID": row["T_ST_ID"]}
             else:
-                identity = {"C_ID": str(row["C_ID"]), "C_ST_ID": row["C_ST_ID"]}
+                identity = _identity(source, row)
             day = self.generation.config.start + timedelta(days=int(row["_record_day"]))
             entries.append({"source": source, "day": str(day), "identity": identity, "field": field,
                             "correct": self._audit_value(field, row[field]),
@@ -204,7 +210,11 @@ class SourceRecorder:
 
         correct = {**(customer_fields or {}), "C_ID": customer_id}
         day = date.fromisoformat(str(timestamp)[:10])
-        identity = _identity("CustomerMgmt", correct, kind, str(timestamp))
+        account_fields = list(account_fields or ())
+        account_id = int(account_fields[0]["CA_ID"]) if len(account_fields) == 1 else None
+        if kind in {"ADDACCT", "UPDACCT", "CLOSEACCT"} and account_id is None:
+            raise ValueError("An account-specific CMS action requires exactly one account.")
+        identity = _identity("CustomerMgmt", correct, kind, str(timestamp), account_id)
         recorded = self._recorded("CustomerMgmt", day, correct, identity=identity)
         accounts = [self._recorded("Account", day, fields) for fields in account_fields or ()]
         # A single-account action uses its CA_ID only to break an existing

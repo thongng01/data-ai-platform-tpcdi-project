@@ -189,7 +189,8 @@ def test_default_customer_error_rates_are_independent():
     birth_day = (date(1980, 1, 1) - date(1970, 1, 1)).days
     for first in range(1, 50001, config.export_rows):
         fields = pl.DataFrame({"C_ID": range(first, min(first + config.export_rows, 50001))}).with_columns(
-            pl.lit("ACTV").alias("C_ST_ID"), pl.lit(3, dtype=pl.Int64).alias("C_TIER"),
+            pl.lit("ACTV").alias("C_ST_ID"), pl.lit("U").alias("_flag"),
+            pl.lit(3, dtype=pl.Int64).alias("C_TIER"),
             pl.lit(birth_day, dtype=pl.Int64).alias("C_DOB"),
             pl.lit((date(2019, 7, 1) - config.start).days, dtype=pl.Int64).alias("_record_day"))
         recorded, audit = recorder.apply("Customer", fields)
@@ -240,7 +241,7 @@ def test_mixed_customer_batch_preserves_scalar_selection_and_date_units():
     birth_day = (date(1980, 1, 1) - date(1970, 1, 1)).days
     correct = pl.DataFrame({"C_ID": range(1, 81), "C_ST_ID": ["ACTV", "INAC"] * 40,
                             "C_TIER": [3] * 80, "C_DOB": [birth_day] * 80,
-                            "_record_day": [27, 30] * 40})
+                            "_record_day": [27, 30] * 40, "_flag": ["I", "U"] * 40})
     recorded, audit = SourceRecorder(SimpleNamespace(config=config)).apply("Customer", correct)
     expected = set()
     for row in correct.iter_rows(named=True):

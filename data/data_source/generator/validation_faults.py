@@ -47,14 +47,17 @@ class FaultAudit:
         """Use canonical source identity rather than trusting the export sort key."""
         return json.dumps([source, str(day), identity], sort_keys=True, separators=(",", ":"))
 
-    def restore(self, source, day, fields, *, kind="", timestamp=""):
+    def restore(self, source, day, fields, *, kind="", timestamp="", account_id=None):
         """Require exact configured faults; return a separate correct-value row."""
         row = dict(fields)
         if source == "CustomerMgmt":
             identity = {"C_ID": str(row["C_ID"]), "ActionType": kind, "ActionTS": timestamp}
+            if kind in {"ADDACCT", "UPDACCT", "CLOSEACCT"}:
+                identity["CA_ID"] = str(account_id)
             candidates = ("C_TIER", "C_DOB")
         elif source == "Customer":
             identity = {name: str(row[name]) for name in ("C_ID", "C_ST_ID")}
+            identity["CDC_FLAG"] = row["_flag"]
             candidates = ("C_TIER", "C_DOB")
         elif source == "FINWIRE:CMP":
             identity = {"CIK": str(int(row["CIK"])), "PTS": row["PTS"]}

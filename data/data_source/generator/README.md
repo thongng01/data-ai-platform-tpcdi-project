@@ -178,6 +178,17 @@ The configured raw opportunity rate is `annual_lookalike * lookalike_opportunity
 
 The recorder writes the source identity, field, correct value, and recorded value to `summary/data_errors.jsonl`. This local audit is separate from source delivery. The generator validator recomputes error selection, requires an exact match to the recorded value and supported mutation, and restores only the verified correct value for business replay. Missing, duplicate, extra, or mismatched evidence fails validation. An arbitrary fee mismatch does not become acceptable because data errors are enabled.
 
+Each audit key contains source, day, identity, and field. The identity uses only unchanged fields in the delivered record:
+
+| Audited source | Identity fields | Why records stay distinct |
+| --- | --- | --- |
+| Daily Customer | `C_ID`, `C_ST_ID`, `CDC_FLAG` | The insert uses `I`; an active update uses `U`; inactivation uses `INAC`. Each customer has at most one active update per day. |
+| CustomerMgmt | `C_ID`, `ActionType`, `ActionTS`; also `CA_ID` for `ADDACCT`, `UPDACCT`, and `CLOSEACCT` | Each account-specific action contains one Account element. The other actions occur at most once per customer and timestamp. |
+| Completed Trade | `T_ID`, `T_DTS`, `T_ST_ID` | Each unique trade completes once. |
+| FINWIRE company | `CIK`, `PTS` | Each company appears once per posting. |
+
+Error selection uses the entity ID, source, field, day, and action kind or status. It does not use the added audit discriminators. Same-day active customer versions can share a draw, as can same-kind account actions for one customer. These records receive the selected error together, but each has separate evidence.
+
 The initial trade extract always has 14 business fields. Daily deliveries on or after `trade_channel_start` add `T_CHANNEL` as the 15th business field, after the original fields. Both daily versions also carry the two CDC fields. Channel selection uses stable trade identity and account profile; traders favor direct channels and retirees favor brokers. A later update to an older trade uses its delivery date's contract.
 
 ## Output, Ordering, and Identity
