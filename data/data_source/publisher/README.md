@@ -50,7 +50,7 @@ The first pending daily item starts the replay clock. A resumed command starts a
 
 Preflight finishes before either network client opens. It checks the following conditions:
 
-- `manifest.json` has `status: validated`, a SHA-256 `dataset_id`, the four inclusive run dates, and a `files` list. Each entry has `path`, `rows`, `bytes`, and `sha256`. Unknown generator metadata does not enter the delivery path.
+- `manifest.json` has `status: validated`, a SHA-256 `dataset_id`, the four inclusive run dates, and a `files` list. Each entry has `path`, `rows`, `bytes`, and `sha256`. `check` and `publish` accept `status: generated-unvalidated` only with the explicit `--allow-unvalidated` flag. The flag does not bypass any publisher preflight check. Unknown generator metadata does not enter the delivery path.
 - Manifest and actual source coverage match an independently derived cadence, including empty files, monthly prospect snapshots, quarterly FINWIRE releases, and every calendar date. The supported date range is 1902 to 2100.
 - Every source file matches its saved byte count and SHA-256. Offline contents stay unchanged, including intentional source-recording data errors. The generator validator owns offline business and field validation.
 - Initial cash transaction IDs start at one. Saved stream IDs continue the contiguous sequence. Stream timestamps match their file date, and records follow event-time and ID order.
@@ -73,7 +73,7 @@ Kafka batches contain at most 256 messages and 8 MiB of payload. A WAL transacti
 
 If an uncertain delivery needs a resend, review `report.json` and repeat the same command with `--retry-uncertain`. The retry keeps object keys, source hashes, cash transaction IDs, account keys, and payloads. It can create another object version or duplicate Kafka messages. Reports count explicit uncertain retries and possible duplicate message upper bounds. Kafka producer idempotence limits retries within its producer session; it does not make a new session or the S3 and Kafka combination exactly once.
 
-The report includes acknowledged object and message counts, acknowledged bytes, completed stream files, unresolved identities, clock segment data, and safe error codes. The JSON report lists at most 100 unresolved files; SQLite retains all file checkpoints. It does not store credentials, connection strings, full cash transaction payloads, or hidden state. A hard process or disk failure can leave the JSON report stale. The next command recovers the durable SQLite state before it permits another send.
+The report includes acknowledged object and message counts, acknowledged bytes, completed stream files, unresolved identities, clock segment data, and safe error codes. It records the generator status and the `allow_unvalidated` choice for each clock segment. `unvalidated_delivery_segments` counts earlier segments that accepted an unvalidated dataset, even if a later command uses a validated manifest. The JSON report lists at most 100 unresolved files; SQLite retains all file checkpoints. It does not store credentials, connection strings, full cash transaction payloads, or hidden state. A hard process or disk failure can leave the JSON report stale. The next command recovers the durable SQLite state before it permits another send.
 
 ## Resource Bounds and Code Map
 
