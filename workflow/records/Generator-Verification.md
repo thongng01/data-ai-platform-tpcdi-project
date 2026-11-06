@@ -149,6 +149,53 @@ Item 1 comes first because the activity phase mixes execution with recording, an
 
 Owner decisions: authorize item 1 (full calendar, or the cheaper bounded calendar with different phase shares); choose item 0 timing; set an RSS budget for more worker processes; confirm that scheduling and caching changes keep the validator independent while native lexical checks in the validator stay out; defer item 5.
 
+### Implemented Runtime Work and Larger-Factor Runs
+
+The owner accepted the plan and asked for all items. ChatGPT 6 Sol (`ncdg/gpt-6.1-sol`, xhigh) workers implemented them under the review session, in separate worktrees, with a shared lock for timed runs and an 8 GiB process-tree RSS budget. Scratch evidence is under `local/tmp/generator-next/`; each track has a `report.md`.
+
+| Item | Commits on `perf/generator-whole` | Result |
+| --- | --- | --- |
+| 0, cleanup | `8b80ba3` | Comments, unused parameters, numeric-scale guard, glossary wording, and public-doc comparisons fixed. Bounded output identical to `candidate2`. |
+| 1, attribution | none (scratch) | Instrumented shares only; timers exceeded the 10% overhead gate. Activity: customer-update subtree 31.83% of group CPU, with 160,612,858 watch-loop visits; ordered execution 36.11% without recording. Validation: parsing and per-file checks 69.85% of wall time, account replay 16.55%, staging 9.89%. |
+| 2 and 4, activity | `9e5cb20`, `50fd30e`, merge `62d744b` | Arrays for customer-update and watch-count draws, watch due-day index, order indexes, NumPy holding lookups, and a shared pool of 1 to 8 workers. Defaults: 4 workers, 1,024 customers per group, 8,192 MiB guard. Bounded activity 20.29 s to 8.74 s; identical output at 1, 2, 4, and 8 workers. |
+| 2 and 3, validation | `05509c7`, `21ddefe`, `3b1ccb1`, `5cb02cd`, `5b18ede`, merge `77cc5cd` | Ordered parallel replay waves, stage-local conversion plans, a 1,024-partition ceiling with byte-bounded row groups, file-parallel parsing, and one streaming market-price join that builds only the fixed-size market side. Full-calendar validation of `final-factor1` at 4 workers: 386.11 s versus 831.70 s, with an identical report. The file parser alone saves 203.83 s (29.62%); the join saves 98.19 s. |
+| 5, compiled core | none | Note `local/tmp/generator-next/attribution/compiled-core.md`: deferred. Numba 0.68.1 and Cython 3.3.1 declare support for Python 3.14 and NumPy 2.5.4 according to their primary sources; nothing is installed. |
+| Key fix | `1632206` | Preexisting CustomerMgmt sort-key tie, described below. |
+
+**Combined factor 1 run** (`77cc5cd`, source digest `c12e8f34f2ebbed08f696810a4f57c5a9e667217dfa256820566056372035c27`, 4 workers, groups of 1,024). All 18,051 source files, 5,574 audit rows, canonical typed hidden records, and the business summary match `final-factor1`. Fourteen summary fields are excluded with both values recorded: runtime metadata, eight runtime settings, `numeric_state_buffer_bytes`, `customer_groups`, and three per-group peaks.
+
+| Phase seconds | Previous typed runtime | Combined run |
+| --- | ---: | ---: |
+| Activity | 369.18 | 143.60 |
+| Export | 72.73 | 67.15 |
+| Validation | 831.70 | 404.00 |
+| Command | 1,304.80 | 649.94 |
+
+Command time falls 50.19%. Sampled peak RSS is 2,360.77 MiB for the generator tree and 2,559.74 MiB with the wrapper; sampled peak disk is 4.499 GiB. Evidence: `local/tmp/generator-next/final/report.md` and `factor1-run/`; dataset `local/runs/generator-next/final/factor1`.
+
+**First factor 5 run: failed.** Export stopped after 803.78 seconds with `Nonunique or unordered source key in CustomerMgmt`. Two accounts of customer 6687 received their first update on 2015-10-01, so both `UPDACCT` actions had the key time/customer/1/`UPDACCT`. Base `352fac1` used the same key, so the defect predates this work and was simply unreached at factor 1. Commit `1632206` appends the single-account `CA_ID` as a final tie-breaker; factor 1 and bounded bytes stay identical. A key review of every source family (`order-key-audit.md`) found no other reachable source-key tie. The failed partial remains at `local/runs/generator-next/final/factor5.partial`.
+
+**Factor 5 rerun: passed** (`1632206`, digest `d67a7b9e975e54e8ba0c233574f5be1eb6b1b9e2a786fbdbada5f50cb2d79548`). The public command exits 0 after full validation and renames the dataset to `local/runs/generator-next/final/factor5-rerun`; independent rehashing and coverage checks pass for all 18,051 files.
+
+| Measure | Factor 5 |
+| --- | ---: |
+| Command seconds | 2,566.71 |
+| Activity seconds | 706.47 |
+| Export seconds | 302.18 |
+| Validation seconds | 1,495.56 |
+| Offline bytes | 5,568,776,184 |
+| Offline records | 77,852,914 |
+| Stream bytes | 1,694,595,301 |
+| Stream records | 11,900,035 |
+| Audit rows | 25,077 |
+| Sampled peak RSS with wrapper | about 2,736 MiB |
+
+Offline bytes are 1.75% above the planning projection of 5,472,843,872. Validation is 58% of the factor 5 command. From factor 1 to factor 5, activity grows 4.9 times, export 4.5 times, and validation 3.7 times. A linear extrapolation of these increments to factor 100 gives roughly 13 to 14 hours with validation, about 8 of them in validation; this is an inference, not a measurement, and the 7,200-second default timeout would need a per-run override.
+
+**Open issue found during the key review.** Error-audit identities are not unique in two reachable cases: a daily `NEW` and a same-day `UPDCUST` for one customer, and several initial CMS account actions for one customer at one timestamp. The estimated chance that a run hits the first case is about 0.8% at factor 5 and 14.6% at factor 100. A collision fails the run rather than corrupting data. Evidence: `reachable-audit-tie.json` and `report.md` under `local/tmp/generator-next/final/`.
+
+**Second phase (owner-approved, running).** The audit identity fix and parallel fault restoration during validation (`perf/generator-audit`); validation on by default with an explicit skip and an unvalidated label that the publisher refuses without an override, plus resumable runs with code- and configuration-checked checkpoints (`perf/generator-resume`); then a structural cleanup of `TypedOutput` and duplicated rules; then a factor 100 estimate and a short-calendar factor 100 scale check. The full factor 100 run and a compiled core each wait for the owner.
+
 ## Full-Calendar Factor 1 Runs
 
 Both runs use seed `20261029`, two workers, two Polars threads per worker, 1,250 companies, and 2,000 securities. Their configurations differ only in `customers_per_unit`: 3,300 for `factor1-3300-first` and 3,601 for `factor1-3601-calibrated`. The initial-load period is 2014-01-01 through 2018-12-31; daily delivery covers 2019-01-01 through 2025-12-31. Each runner completes generation and full validation before the final dataset rename.
