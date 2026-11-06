@@ -229,7 +229,7 @@ def test_supervisor_stops_nested_workers_and_retains_budget_failure(tmp_path, mo
 
     monkeypatch.setattr(runner.subprocess, "Popen", nested_worker)
     with pytest.raises(RuntimeError, match="configured worker count"):
-        run(config(), tmp_path / "budget")
+        run(config(workers=1), tmp_path / "budget")
     failure = json.loads((tmp_path / "budget.partial/failure.json").read_text())
     assert failure["maximum_worker_processes"] == 2
     child = int(pid_file.read_text())

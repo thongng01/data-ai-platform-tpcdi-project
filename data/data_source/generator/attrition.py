@@ -1,7 +1,7 @@
 """Risk-based leaving behavior with past account returns and customer-wide exits."""
 
 import calendar
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 
 import numpy as np
@@ -105,12 +105,17 @@ class AttritionPlanner(Stage1IntentPlanner):
         self.returns = ReturnHistory(count)
         self.external_flow = np.zeros(count, dtype=np.int64)
         self.leaving = {}
+        self.warning_accounts = defaultdict(set)
         self.records = []
         self.final_plan_records = {}
         self.customer_plans = {}
         self.normalizer = getattr(simulation, "risk_normalizer", None)
         self.customer_indices = {int(row["customer_id"]): i for i, row in enumerate(simulation.customers)}
         self.account_indices = simulation.account_indices
+        # Holdings keep insertion order. A sorted ID lookup maps their rows to
+        # equity slots without a Python account lookup for every position.
+        self.account_id_order = np.argsort(simulation.accounts["account_id"])
+        self.sorted_account_ids = simulation.accounts["account_id"][self.account_id_order]
         self.owners = np.searchsorted(simulation.customers["customer_id"], simulation.accounts["customer_id"])
         self.leaving_mask = np.zeros(count, dtype=np.bool_)
         self.customer_leaving = np.zeros(len(simulation.customers), dtype=np.bool_)
@@ -150,8 +155,15 @@ class AttritionPlanner(Stage1IntentPlanner):
 
     def _start(self, simulation, index: int, period: LeavingPeriod) -> None:
         """Set a lifetime endpoint and keep the hidden explanation in the summary."""
+        prior = self.leaving.get(index)
+        if prior is not None and prior.steps:
+            self.warning_accounts[prior.start].remove(index)
+            if not self.warning_accounts[prior.start]:
+                del self.warning_accounts[prior.start]
         self.leaving[index] = period
         self.leaving_mask[index] = True
+        if period.steps:
+            self.warning_accounts[period.start].add(index)
         simulation.accounts[index]["close_day"] = min(period.close, simulation.total_days)
         self.final_plan_records[index] = len(self.records)
         self.records.append({"account_id": int(simulation.accounts[index]["account_id"]),
@@ -238,11 +250,11 @@ class AttritionPlanner(Stage1IntentPlanner):
         result = []
         if not day.prices["trading"]:
             return result
-        for order in list(simulation.orders.values()):
-            if self.leaving_mask[order.account_index]:
-                account = int(simulation.accounts[order.account_index]["account_id"])
-                result.append(Intent(MARKET_OPEN_SECOND, account, order.trade_id, IntentKind.CANCEL,
-                                     order.account_index, order=order))
+        leaving_accounts = simulation.orders_by_account.keys() & self.leaving.keys()
+        for order in simulation.orders_for_accounts(leaving_accounts):
+            account = int(simulation.accounts[order.account_index]["account_id"])
+            result.append(Intent(MARKET_OPEN_SECOND, account, order.trade_id, IntentKind.CANCEL,
+                                 order.account_index, order=order))
         active = day.active_indices
         for index in active[self.leaving_mask[active]]:
             index = int(index)
@@ -294,7 +306,7 @@ class AttritionPlanner(Stage1IntentPlanner):
         equity = simulation.ledger.balance.astype(np.float64).copy()
         if simulation.holdings.index:
             rows = simulation.holdings.data[np.fromiter(simulation.holdings.index.values(), dtype=np.int64)]
-            indices = np.asarray([simulation.account_indices[int(account)] for account in rows[:, 0]])
+            indices = self.account_id_order[np.searchsorted(self.sorted_account_ids, rows[:, 0])]
             np.add.at(equity, indices, rows[:, 3] * day.prices["close"][rows[:, 1]])
         self.returns.observe(day.offset, equity, self.external_flow)
         for index in day.closes:
@@ -352,8 +364,7 @@ class AttritionPlanner(Stage1IntentPlanner):
 
     def leaving_customers(self, simulation, day) -> set:
         """Cancel the configured watch share once when a warning starts."""
-        return {int(simulation.accounts[index]["customer_id"]) for index, period in self.leaving.items()
-                if period.start == day and period.steps}
+        return {int(simulation.accounts[index]["customer_id"]) for index in self.warning_accounts.get(day, ())}
 
     def watch_cancel_share(self, simulation, customer, day, default_share) -> float:
         """Use the configured share for leaving watches; inactivation cancels all."""

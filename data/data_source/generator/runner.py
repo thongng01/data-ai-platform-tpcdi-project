@@ -107,8 +107,11 @@ def run(config: Config, output: Path):
     partial = output.with_name(output.name + ".partial")
     if output.exists() or partial.exists() or output.is_symlink() or partial.is_symlink():
         raise FileExistsError("The output or partial directory already exists. Choose a new run directory.")
-    if not 1 <= config.workers <= 2:
-        raise ValueError("A run permits at most two worker processes, including the coordinator.")
+    if not 1 <= config.workers <= 8:
+        raise ValueError("A run permits between one and eight business worker processes.")
+    # One worker executes in the coordinator. Parallel runs keep a separate
+    # coordinator plus at most `workers` pool processes in a parallel phase.
+    process_limit = 1 if config.workers == 1 else config.workers + 1
     partial.mkdir(parents=True)
     config_path = partial / "config.json"
     write_json(config_path, config.as_dict())
@@ -145,7 +148,7 @@ def run(config: Config, output: Path):
                     next_disk_check = elapsed + 2
                 if maximum_rss > config.memory_limit_mb * 1024**2:
                     failure = "The aggregate process-tree RSS exceeded the memory budget."
-                elif maximum_workers > config.workers:
+                elif maximum_workers > process_limit:
                     failure = "The process tree exceeded the configured worker count."
                 elif maximum_disk > config.disk_limit_mb * 1024**2:
                     failure = "The sampled disk usage exceeded the disk budget."
@@ -270,8 +273,8 @@ def worker(config: Config, output: Path):
         result = function(*args)
         timings[name] = time.monotonic() - started
         after = cpu_times()
-        # Activity joins its child before returning, so RUSAGE_CHILDREN includes
-        # that child's work here. CPU totals can exceed elapsed time in parallel.
+        # Each phase joins its children before returning, so RUSAGE_CHILDREN
+        # includes their work. CPU totals can exceed elapsed time in parallel.
         phase_cpu[name] = {key: after[key] - before[key] for key in before}
         print(f"Completed {name} in {timings[name]:.6f} seconds.", flush=True)
         return result
