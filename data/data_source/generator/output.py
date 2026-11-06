@@ -90,16 +90,19 @@ class BinaryWriter:
 class TypedOutput:
     """Hide buffering, part lifecycle, spill sorting, and final encoding from producers."""
 
-    def __init__(self, owner, group_id: int | None):
-        """Allocate one shared scalar row allowance for one coordinator or group."""
+    def __init__(self, owner, group_id: int | None, *, part_name=None, reuse=False):
+        """Allocate one bounded producer buffer or reopen a sealed export input."""
         self.owner, self.config, self.root = owner, owner.config, owner.root
         if group_id is not None and (type(group_id) is not int or group_id < 1):
             raise ValueError("A group ID must be a positive first-customer ordinal.")
         self.group_id = group_id
         self.parts = self.root / "_work" / "source-parts"
-        name = "coordinator" if group_id is None else f"group-{group_id:011d}"
+        if part_name not in (None, "reference", "market", "prospects") or (part_name and group_id is not None):
+            raise ValueError("Invalid named source producer.")
+        name = part_name or ("coordinator" if group_id is None else f"group-{group_id:011d}")
         self.part = self.parts / name
-        self.part.mkdir(parents=True, exist_ok=False)
+        if not reuse:
+            self.part.mkdir(parents=True, exist_ok=False)
         self.schemas = {family: input_schema(family, owner.sources)
                         for family in (*owner.sources, "CustomerMgmt", "FINWIRE", "__audit")}
         self.fields = {family: input_fields(family, owner.sources) for family in self.schemas}
@@ -112,6 +115,10 @@ class TypedOutput:
                         "maximum_stream_batch_rows": 0, "part_fragments": 0,
                         "sealed_bytes": 0, "spool_seconds": 0.0, "seal_seconds": 0.0,
                         "sort_write_seconds": 0.0, "native_batches": 0}
+        if reuse:
+            marker = json.loads((self.part / "complete.json").read_text(encoding="ascii"))
+            self.metrics.update(marker["metrics"])
+            self.closed = True
 
     def _require_open(self):
         """Reject every append after this part has been sealed."""
@@ -247,8 +254,8 @@ class TypedOutput:
         self.metrics["part_fragments"] += 1
         self.metrics["spool_seconds"] += time.monotonic() - started
 
-    def seal(self):
-        """Seal each family natively and publish the completion marker last."""
+    def seal(self, *, completion=None):
+        """Seal families and commit context and business results in the last marker."""
         self._require_open()
         self.flush()
         # Recording a flushed batch can append bounded audit records. Drain those
@@ -271,7 +278,8 @@ class TypedOutput:
                 fragment.unlink()
             directory.rmdir()
         self.metrics["seal_seconds"] += time.monotonic() - started
-        marker = {"group_id": self.group_id, "families": files, "metrics": dict(self.metrics)}
+        marker = {"group_id": self.group_id, "families": files, "metrics": dict(self.metrics),
+                  **(completion or {})}
         temporary = self.part / "complete.json.partial"
         temporary.write_text(json.dumps(marker, sort_keys=True) + "\n", encoding="ascii")
         temporary.replace(self.part / "complete.json")
@@ -294,6 +302,17 @@ class TypedOutput:
         if set(directories) != expected:
             raise ValueError("The completed source groups differ from their schedule.")
         parts = [self.part]
+        # Each named phase has its own seal, so a resumed run need not append to
+        # an earlier phase's buffers. Legacy single-coordinator runs use none.
+        for name in ("reference", "market", "prospects"):
+            part = self.parts / name
+            if part.exists():
+                marker_path = part / "complete.json"
+                if not marker_path.exists():
+                    raise ValueError(f"Unfinished source producer: {name}")
+                marker = json.loads(marker_path.read_text(encoding="ascii"))
+                self._aggregate(marker["metrics"])
+                parts.append(part)
         for name in sorted(expected):
             part = directories[name]
             marker_path = part / "complete.json"
