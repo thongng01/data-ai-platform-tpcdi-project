@@ -201,6 +201,17 @@ The configured raw opportunity rate is `annual_lookalike * lookalike_opportunity
 
 The recorder writes the source identity, field, correct value, and recorded value to `summary/data_errors.jsonl`. This local audit is separate from source delivery. The generator validator recomputes error selection, requires an exact match to the recorded value and supported mutation, and restores only the verified correct value for business replay. Missing, duplicate, extra, or mismatched evidence fails validation. An arbitrary fee mismatch does not become acceptable because data errors are enabled.
 
+Each audit key contains source, day, identity, and field. The identity uses only unchanged fields in the delivered record:
+
+| Audited source | Identity fields | Why records stay distinct |
+| --- | --- | --- |
+| Daily Customer | `C_ID`, `C_ST_ID`, `CDC_FLAG` | The insert uses `I`; an active update uses `U`; inactivation uses `INAC`. Each customer has at most one active update per day. |
+| CustomerMgmt | `C_ID`, `ActionType`, `ActionTS`; also `CA_ID` for `ADDACCT`, `UPDACCT`, and `CLOSEACCT` | Each account-specific action contains one Account element. The other actions occur at most once per customer and timestamp. |
+| Completed Trade | `T_ID`, `T_DTS`, `T_ST_ID` | Each unique trade completes once. |
+| FINWIRE company | `CIK`, `PTS` | Each company appears once per posting. |
+
+Error selection uses the entity ID, source, field, day, and action kind or status. It does not use the added audit discriminators. Same-day active customer versions can share a draw, as can same-kind account actions for one customer. These records receive the selected error together, but each has separate evidence.
+
 The initial trade extract always has 14 business fields. Daily deliveries on or after `trade_channel_start` add `T_CHANNEL` as the 15th business field, after the original fields. Both daily versions also carry the two CDC fields. Channel selection uses stable trade identity and account profile; traders favor direct channels and retirees favor brokers. A later update to an older trade uses its delivery date's contract.
 
 ## Output, Ordering, and Identity
@@ -253,7 +264,9 @@ The semantic dataset identity includes business settings, seed, format version, 
 
 Validation reads the saved files and stream messages, derives its own expected-file list, and checks coverage, cadence, field widths, encoding, hashes, and identities. It stages typed records into bounded Parquet blocks, partitions replay by account and customer, and joins market prices by date.
 
-The `workers` setting also controls validation parsing and replay processes. Independent files parse into separate staged blocks. The coordinator checks their first and last cash and market keys in file order, so global sequences and order remain exact. It accepts file hashes and counts in that same order and reports an earlier boundary failure before a later row failure. XML, FINWIRE, Customer, and Trade stay in the coordinator because one `FaultAudit` connection owns fault restoration and one-time audit consumption.
+The `workers` setting also controls validation parsing and replay processes. FINWIRE runs first in one ordered parser because its company and report checks span files and its security versions supply later checks. XML, Customer, Trade, and the other independent files then parse into separate staged blocks. One worker runs inline; multiple workers use spawned processes. The coordinator accepts file results in source-file order, including any FINWIRE failure found in the first wave. It checks the first and last cash and market keys before any later row failure, so global sequences and order remain exact.
+
+Each parser reads a private copy of the sparse fault evidence, recomputes selection, verifies the mutation, and restores correct fields. It returns consumed audit keys and integer measurement counts, not source rows. The coordinator rejects a key consumed in two files, sums every field and delivery count exactly, and requires complete audit consumption. A parser also rejects repeated consumption inside its own file. Audit memory grows with the number of error entries and parser workers; the process-tree RSS guard covers these copies.
 
 Trade pricing uses one streaming left join on market date and symbol. The join builds its hash state from only the market date, symbol, low price, and high price. This state grows with securities and sessions, not with customer scale. Missing market rows leave null prices for the coverage and replay checks. Market metadata cannot replace a trade's account partition, delivery day, or source order.
 
