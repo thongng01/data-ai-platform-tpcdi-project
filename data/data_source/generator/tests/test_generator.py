@@ -32,6 +32,9 @@ def test_complete_dataset_has_only_expected_paths(complete_run):
     """Require the source delivery layout and upgraded daily Trade row widths."""
     manifest = json.loads((complete_run / "manifest.json").read_text())
     assert manifest["status"] == "validated"
+    assert manifest["export"]["backend"] == "polars"
+    assert manifest["export"]["ignored_legacy_settings"] == {"merge_fan_in": manifest["config"]["merge_fan_in"]}
+    assert "maximum_merge_inputs" not in manifest
     assert (complete_run / "offline/initial/CashTransaction.txt").exists()
     assert not list((complete_run / "offline/daily").rglob("CashTransaction*"))
     assert len(list((complete_run / "stream/cash_transactions").glob("*.jsonl"))) == 8

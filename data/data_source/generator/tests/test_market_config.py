@@ -13,7 +13,8 @@ import pytest
 from data.data_source.generator.config import Config, ConfigError, calendar_for, rounded_count
 from data.data_source.generator.formats import load_sources
 from data.data_source.generator.market import Market, finwire_postings, prior_year, report_release
-from data.data_source.generator.reference import generate_reference
+from data.data_source.generator.recording import SourceRecorder
+from data.data_source.generator.reference import _time_columns, generate_reference
 
 
 class Capture:
@@ -24,17 +25,35 @@ class Capture:
         self.sources = load_sources()
         self.rows = defaultdict(list)
         self.text_rows = defaultdict(list)
+        self.faults = []
+        self.recorder = SourceRecorder(self)
         self.max_batch = 0
 
-    def emit(self, source, day, rows):
-        """Collect a source batch and update the measured largest batch size."""
-        self.max_batch = max(self.max_batch, len(rows))
-        self.rows[source, day].extend(rows)
+    def record_batch(self, source, day, columns, *, order=None, flag="I"):
+        """Consume typed columns, broadcasting constants without retaining views."""
+        assert isinstance(day, int)
+        assert tuple(columns) == tuple(self.sources[source].columns)
+        arrays = {name: np.asarray(column) for name, column in columns.items()}
+        size = next(len(column) for column in arrays.values() if column.ndim)
+        assert all(column.ndim == 0 or column.shape == (size,) for column in arrays.values())
+        self.max_batch = max(self.max_batch, size)
+        rows = [{name: (column[index] if column.ndim else column[()]).item()
+                 for name, column in arrays.items()} for index in range(size)]
+        self.rows[source, self.config.day(day)].extend(rows)
 
-    def text(self, path, rows):
-        """Collect fixed-width output and retain the measured batch-size bound."""
-        self.max_batch = max(self.max_batch, len(rows))
-        self.text_rows[path].extend(rows)
+    def record(self, family, day, values, *, order=(), flag="I", profile=None):
+        """Capture exact FINWIRE payloads through the scalar recording seam."""
+        assert family == "FINWIRE"
+        posting, rank, identifier = order
+        calendar_day = self.config.day(day)
+        filename = f"FINWIRE{calendar_day.year}Q{(calendar_day.month - 1) // 3 + 1}"
+        folder = "offline/initial" if calendar_day <= self.config.cutover else f"offline/daily/{calendar_day:%Y%m%d}"
+        self.text_rows[f"{folder}/{filename}"].append((f"{posting}/{rank}/{identifier:015d}", values[0]))
+        self.max_batch = max(self.max_batch, 1)
+
+    def _record_fault(self, entry):
+        """Keep selected scalar errors separate from captured source payloads."""
+        self.faults.append(entry)
 
 
 def short_config(**kwargs):
@@ -174,6 +193,15 @@ def test_market_mmap_prices_releases_and_dividends(tmp_path):
         assert not cached["close"].flags.writeable
         np.testing.assert_array_equal(cached["close"], market.day(day)["close"])
         assert cache.arrays["close"].shape[0] <= 32
+    for day in (market.first, config.start, date(2019, 1, 2)):
+        prices = market.day(day)
+        for row in capture.rows["DailyMarket", day]:
+            security = row["DM_S_SYMB"] - 1
+            assert all(type(value) is int for value in row.values())
+            assert row["DM_DATE"] == (day - date(1970, 1, 1)).days
+            assert row["DM_CLOSE"] == prices["close"][security]
+            assert row["DM_HIGH"] == prices["high"][security]
+            assert row["DM_LOW"] == prices["low"][security]
     assert market.fingerprint == Market(tmp_path, config).fingerprint
     assert market.sessions_per_year[2019] == 252
     with pytest.raises(ValueError):
@@ -192,6 +220,39 @@ def test_market_ignores_firm_size_and_execution_settings(tmp_path):
         assert sorted(captures[0].text_rows[path]) == sorted(captures[1].text_rows[path])
     for name in markets[0]._arrays:
         np.testing.assert_array_equal(markets[0]._arrays[name], markets[1]._arrays[name])
+
+
+def test_time_columns_keep_original_labels_at_clock_boundaries():
+    """Array clock fields match source text at minute, hour, and flag boundaries."""
+    seconds = np.asarray([0, 59, 60, 3599, 3600, 28799, 28800, 34199, 34200,
+                          57599, 57600, 61199, 61200, 86399], dtype=np.int64)
+    columns = _time_columns(seconds)
+    assert tuple(columns) == tuple(load_sources()["Time"].columns)
+    for index, second in enumerate(seconds):
+        row = {name: column[index].item() for name, column in columns.items()}
+        assert tuple(row.values()) == (
+            int(second), f"{second // 3600:02d}:{second // 60 % 60:02d}:{second % 60:02d}",
+            int(second // 3600), f"{second // 3600:02d}", int(second // 60 % 60),
+            f"{second // 3600:02d}:{second // 60 % 60:02d}", int(second % 60),
+            f"{second // 3600:02d}:{second // 60 % 60:02d}:{second % 60:02d}",
+            int(34200 <= second < 57600), int(28800 <= second < 61200),
+        )
+
+
+def test_finwire_scalar_errors_use_the_same_typed_storage_seam(tmp_path):
+    """Each company error has one audit entry and one exact fixed-width payload."""
+    config = short_config(company_rating_error_rate=1.0)
+    capture = Capture(config)
+    Market.build(config, tmp_path, capture)
+    company_rows = [payload for rows in capture.text_rows.values() for _, payload in rows
+                    if payload[15:18] == "CMP"]
+    assert len(capture.faults) == len(company_rows)
+    assert all(len(payload) == 543 and payload[94:98] == "BAD " for payload in company_rows)
+    for entry in capture.faults:
+        assert entry["source"] == "FINWIRE:CMP"
+        assert (entry["field"], entry["correct"], entry["recorded"]) == ("SPrating", "AAA", "BAD")
+        stamp = entry["identity"]["PTS"]
+        assert entry["day"] == f"{stamp[:4]}-{stamp[4:6]}-{stamp[6:8]}"
 
 
 def test_reference_has_static_hr_and_all_seconds():

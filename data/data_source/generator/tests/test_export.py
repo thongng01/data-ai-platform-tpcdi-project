@@ -14,7 +14,6 @@ from data.data_source.generator.config import Config
 from data.data_source.generator.formats import Field, Source
 from data.data_source.generator.generation import Generation, expected_file_list, source_path
 from data.data_source.generator.runner import _temporary_disk_bytes, compare, implementation_hashes, inventory_summary, run, semantic_dataset_id, write_json
-from data.data_source.generator.sorting import SortedOutput
 
 
 def config(**kwargs):
@@ -52,76 +51,81 @@ def test_temporary_disk_measurement_includes_validation_partitions(tmp_path):
     assert _temporary_disk_bytes(tmp_path) == 10
 
 
-def test_aggregate_buffer_and_disk_catalog_bound_paths(tmp_path):
-    """Keep the shared row buffer and retained Python path lists within their bounds."""
-    output = SortedOutput(tmp_path, fan_in=3, export_rows=7)
+def test_aggregate_buffer_and_sealed_family_bounds(tmp_path):
+    """Bound pending rows and replace fragment catalogs with one sealed family file."""
+    generation = Generation(config(export_rows=7), tmp_path)
     for i in range(200):
-        output.add(f"offline/{i}.txt", [{"_key": "1", "_payload": "value"}])
-        assert len(output.buffer) <= 7
-    output.flush()
-    assert output.maximum_buffer_rows == 7
-    assert output.maximum_frame_rows == 7
-    assert not hasattr(output, "runs")
-    assert output.catalog.execute("SELECT COUNT(DISTINCT relative) FROM runs").fetchone()[0] == 200
-    assert output.maximum_retained_run_paths <= 3
-    result = output.write("offline/12.txt")
-    assert result["rows"] == 1
-    assert (tmp_path / result["path"]).read_bytes() == b"value\n"
-    output.close()
+        generation.record("StatusType", 0, (f"{i:04d}", "value"))
+        assert generation.output.buffer_rows <= 7
+    inventory = generation.finish()
+    metrics = generation.output.metrics
+    assert metrics["maximum_buffer_rows"] == 7
+    assert metrics["maximum_frame_rows"] <= 7
+    assert metrics["maximum_stream_batch_rows"] <= 7
+    assert not hasattr(generation.output, "catalog")
+    assert len(list((tmp_path / "_work/source-parts/coordinator").glob("*.parquet"))) == 1
+    result = next(item for item in inventory if item["path"].endswith("StatusType.txt"))
+    assert result["rows"] == 200
+    assert (tmp_path / result["path"]).read_text().splitlines() == [f"{i:04d}|value" for i in range(200)]
 
 
-def test_multilevel_merge_and_cdc_sequence(tmp_path):
-    """Merge many runs and assign one consecutive CDC sequence at final write."""
-    output = SortedOutput(tmp_path, 2, 2)
-    for i in reversed(range(101)):
-        output.add("offline/daily/test.txt", [{"_key": f"{i:05d}", "_payload": f"I|{i}"}])
-    result = output.write("offline/daily/test.txt", cdc=True)
+def test_native_order_and_cdc_sequence(tmp_path):
+    """Sort typed fragments and retain one consecutive CDC sequence across batches."""
+    generation = Generation(config(securities=101, export_rows=2), tmp_path)
+    epoch_day = (date(2019, 1, 1) - date(1970, 1, 1)).days
+    for i in reversed(range(1, 102)):
+        generation.record("DailyMarket", 4, (epoch_day, i, 100, 200, 50, i))
+    inventory = generation.finish()
+    result = next(item for item in inventory if "DailyMarket_20190101" in item["path"])
     assert result["rows"] == 101
-    assert (tmp_path / result["path"]).read_text().splitlines() == [f"I|{i + 1}|{i}" for i in range(101)]
-    assert output.maximum_merge_inputs <= 2
-    assert output.maximum_retained_run_paths <= 2
-    assert output.catalog.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 0
-    assert not list((tmp_path / "_work/runs").glob("*.txt"))
-    output.close()
+    assert (tmp_path / result["path"]).read_text().splitlines() == [
+        f"I|{i}|2019-01-01|S{i:010d}|1.00|2.00|0.50|{i}" for i in range(1, 102)]
+    assert generation.output.metrics["maximum_stream_batch_rows"] <= 2
 
 
 @pytest.mark.parametrize("across_runs", [False, True])
 def test_duplicate_complete_keys_fail(tmp_path, across_runs):
-    """Reject duplicate complete keys both inside a buffer and across runs."""
-    output = SortedOutput(tmp_path, 2, 3)
-    output.add("offline/file.txt", [{"_key": "same", "_payload": "first"}])
-    if across_runs:
-        output.flush()
-    with pytest.raises(ValueError, match="[Dd]uplicate|Nonunique"):
-        output.add("offline/file.txt", [{"_key": "same", "_payload": "second"}])
-        output.write("offline/file.txt")
-
-
-def test_final_writer_checks_widths_even_for_raw_text(tmp_path):
-    """Reject raw text that bypasses early formatting but violates the final contract."""
+    """Reject duplicate complete keys inside a batch and across typed fragments."""
     generation = Generation(config(), tmp_path)
-    generation.text("offline/initial/StatusType.txt", [("1", "LONGER|bad")])
-    with pytest.raises(ValueError, match="exceeds"):
+    generation.record("StatusType", 0, ("SAME", "first"))
+    if across_runs:
+        generation.output.flush()
+    generation.record("StatusType", 0, ("SAME", "second"))
+    with pytest.raises(ValueError, match="Nonunique"):
+        generation.finish()
+
+
+def test_final_writer_checks_widths(tmp_path):
+    """Reject a source field that violates the final contract after typed recording."""
+    generation = Generation(config(), tmp_path)
+    generation.record("StatusType", 0, ("LONGER", "bad"))
+    with pytest.raises(ValueError, match="Invalid source value"):
         generation.finish()
 
 
 def test_raw_delimiter_and_control_character_fail(tmp_path):
-    """Reject delimiters and control separators before they corrupt the spool format."""
-    output = SortedOutput(tmp_path, 2, 2)
-    source = Source("Example", "example.txt", "|", (Field("value", "CHAR(20)"),))
-    with pytest.raises(ValueError, match="Delimiter"):
-        output.add("offline/example.txt", [{"_key": "1", "value": "a|b"}], source)
-    with pytest.raises(ValueError, match="separator"):
-        output.add("offline/example.txt", [{"_key": "1", "_payload": "a\nb"}])
-    output.close()
+    """Reject source delimiters and raw controls before final bytes can be published."""
+    generation = Generation(config(), tmp_path / "delimiter")
+    generation.record("StatusType", 0, ("ID", "a|b"))
+    with pytest.raises(ValueError, match="Invalid source value"):
+        generation.finish()
+    generation = Generation(config(), tmp_path / "control")
+    generation.record("CustomerMgmt", 0, ("a\nb",), order=(0, 1, 0, "NEW"))
+    with pytest.raises(ValueError, match="Invalid encoded"):
+        generation.finish()
 
 
 def add_cash(generation):
-    """Queue cash events in a different order from their required final identity order."""
-    generation.cash(date(2019, 1, 1), "2019-01-01 08:00:00", 2, 1, 200, "Deposit")
-    generation.cash(date(2018, 12, 31), "2018-12-31 08:00:00", 1, 2, -300, "Withdrawal")
-    generation.cash(date(2018, 12, 31), "2018-12-31 08:00:00", 1, 1, 500, "Deposit")
-    generation.cash(date(2019, 1, 1), "2019-01-01 08:00:00", 1, 1, 100, "Dividend SYM")
+    """Queue typed cash transactions out of order to test final global identity."""
+    for day, account, ordinal, amount, name in (
+        (date(2019, 1, 1), 2, 1, 200, "Deposit"),
+        (date(2018, 12, 31), 1, 2, -300, "Withdrawal"),
+        (date(2018, 12, 31), 1, 1, 500, "Deposit"),
+        (date(2019, 1, 1), 1, 1, 100, "Dividend SYM"),
+    ):
+        timestamp = (day - date(1970, 1, 1)).days * 86400 + 8 * 3600
+        generation.record("CashTransaction", (day - generation.config.start).days,
+                          (account, timestamp, amount, name), order=(ordinal,))
 
 
 def test_global_cash_sequence_crosses_cutover_and_uses_event_order(tmp_path):
@@ -153,22 +157,23 @@ def test_global_cash_sequence_crosses_cutover_and_uses_event_order(tmp_path):
 def test_cash_name_is_fixed(tmp_path, name):
     """Reject descriptions outside the shared cash transaction naming contract."""
     generation = Generation(config(), tmp_path)
+    timestamp = (date(2019, 1, 1) - date(1970, 1, 1)).days * 86400 + 8 * 3600
+    generation.record("CashTransaction", 4, (1, timestamp, 100, name), order=(1,))
     with pytest.raises(ValueError, match="CT_NAME"):
-        generation.cash(date(2019, 1, 1), "2019-01-01 08:00:00", 1, 1, 100, name)
-    generation.close()
+        generation.finish()
 
 
 def test_adopted_group_runs_repeat_bytes_across_bounds(tmp_path):
-    """Preserve final bytes when a coordinator adopts differently buffered group runs."""
+    """Preserve final bytes across sealed groups and different buffer allowances."""
     first = Generation(config(), tmp_path / "first")
     add_cash(first)
     first_files = first.finish()
     settings = config(export_rows=1, merge_fan_in=3)
-    group = Generation(settings, tmp_path / "group")
-    add_cash(group)
-    group.close()
     second = Generation(settings, tmp_path / "second")
-    second.adopt(tmp_path / "group")
+    group = Generation(settings, tmp_path / "second", group_id=1)
+    write_json(second.root / "_work/source-parts/scheduled-groups.json", [1])
+    add_cash(group)
+    group.finish()
     second_files = second.finish()
     assert first_files == second_files
     for path in expected_file_list(settings):

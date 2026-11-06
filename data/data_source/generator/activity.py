@@ -4,13 +4,14 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+import json
 import math
 import heapq
 
 import numpy as np
 import polars as pl
 
-from .customers import account_values, customer_birth_year, customer_values, xml_action
+from .customers import account_values, customer_birth_year, customer_values
 from .random_values import uniform, uniforms
 from .business import (
     BusinessDay, Intent, IntentKind, MarketDayCache, plan_daily_activity, DAY_KEY_STRIDE, ATTRITION_HORIZON_DAYS,
@@ -28,12 +29,6 @@ ATTRITION_RECORD_SCHEMA = {
     "classification": pl.String, "final_plan": pl.Boolean,
     "actual_close_day": pl.Int64, "outcome_day": pl.Int64,
 }
-
-
-def decimal_cents(cents: int) -> str:
-    """Format signed integer cents without binary floating-point rounding."""
-    cents = int(cents)
-    return f"{'-' if cents < 0 else ''}{abs(cents) // 100}.{abs(cents) % 100:02d}"
 
 
 def timestamp(day: date, seconds: int) -> str:
@@ -218,7 +213,7 @@ class Stage1IntentPlanner:
 
 class BusinessSimulation:
     """Plan brokerage days and execute money and holdings in time order."""
-    def __init__(self, generation, market, customers, accounts, planner=None, recorder=None):
+    def __init__(self, generation, market, customers, accounts, planner=None):
         """Attach planners and recorders and allocate bounded per-group state."""
         self.generation = generation
         self.config = generation.config
@@ -229,7 +224,9 @@ class BusinessSimulation:
             from .attrition import AttritionPlanner
             planner = AttritionPlanner()
         self.planner = planner or Stage1IntentPlanner()
-        self.recorder = recorder or SourceRecorder(generation)
+        self.recorder = getattr(generation, "recorder", None) or SourceRecorder(generation)
+        self.start_epoch_day = (self.config.start - date(1970, 1, 1)).days
+        self.start_epoch_second = self.start_epoch_day * 86400
         self.ledger = Ledger(accounts)
         self.holdings = HoldingBook()
         self.orders = {}
@@ -265,16 +262,19 @@ class BusinessSimulation:
         key = (day + 1) * DAY_KEY_STRIDE + int(identity)
         return uniform(key, self.config.seed, f"{purpose}:{ordinal}")
 
-    def cash(self, day: date, second: int, index: int, amount: int, name: str) -> None:
-        """Apply correct money first, then emit its source cash transaction."""
+    def cash(self, day: date, second: int, index: int, amount: int, name: str, *, reference: int = 0) -> None:
+        """Apply correct money, then capture its kind and numeric source reference."""
         if not amount:
             return
         self.ledger.apply(index, amount)
         self.planner.observe_cash(self, index, amount, name)
         self.cash_ordinals[index] += 1
         account = int(self.accounts[index]["account_id"])
-        self.generation.cash(day, timestamp(day, second), account, int(self.cash_ordinals[index]), int(amount), name)
-        kind = "Settlement" if name.startswith("Trade settlement ") else "Dividend" if name.startswith("Dividend ") else name
+        offset = (day - self.config.start).days
+        self.generation.record("CashTransaction", offset,
+                               (account, self.start_epoch_second + offset * 86400 + second, int(amount), name),
+                               order=(int(self.cash_ordinals[index]), int(reference)))
+        kind = "Settlement" if name == "Trade settlement" else name
         self.cash_type_counts[kind] += 1
 
     def account_fields(self, index: int, inactive: bool = False) -> dict:
@@ -298,62 +298,56 @@ class BusinessSimulation:
 
     def action(self, kind: str, day: date, second: int, customer: int, indices=(), ordinal: int = 0) -> None:
         """Record one customer-management action in the dated source form."""
-        ts = timestamp(day, second)
         inactive = kind in ("INACT", "CLOSEACCT")
         cv = self.customer_fields(customer, kind == "INACT")
         av = [self.account_fields(i, inactive) for i in indices]
-        key = f"{ts}/{customer:011d}/{ordinal:08d}/{kind}"
+        offset = (day - self.config.start).days
+        epoch_second = self.start_epoch_second + offset * 86400 + second
         if day <= self.config.cutover:
-            if hasattr(self.recorder, "xml_action"):
-                self.recorder.xml_action(kind, ts.replace(" ", "T"), customer, cv, av, key)
-            else:
-                payload = xml_action(kind, ts.replace(" ", "T"), customer, cv, av)
-                self.generation.text("offline/initial/CustomerMgmt.xml", [(key, payload)])
+            # XML is the small, exact scalar encoder exception. Ordinary daily
+            # customer and account records enter the same typed export buffers.
+            self.recorder.xml_action(kind, timestamp(day, second).replace(" ", "T"), customer,
+                                     cv, av, ordinal=ordinal)
         else:
             if kind in ("NEW", "UPDCUST", "INACT"):
-                self.recorder.record("Customer", day, cv, key, "I" if kind == "NEW" else "U")
+                values = tuple((date.fromisoformat(cv[field.name]) - date(1970, 1, 1)).days
+                               if field.name == "C_DOB" else cv[field.name]
+                               for field in self.generation.sources["Customer"].fields)
+                self.generation.record("Customer", offset, values,
+                                       order=(epoch_second, ordinal, kind), flag="I" if kind == "NEW" else "U")
             if kind != "UPDCUST":
-                for i, fields in zip(indices, av):
-                    self.recorder.record("Account", day, fields, f"{ts}/{fields['CA_ID']:011d}/{ordinal:08d}", "I" if kind in ("NEW", "ADDACCT") else "U")
+                for fields in av:
+                    values = tuple(fields[field.name] for field in self.generation.sources["Account"].fields)
+                    self.generation.record("Account", offset, values, order=(epoch_second, ordinal),
+                                           flag="I" if kind in ("NEW", "ADDACCT") else "U")
         self.metrics[kind] += 1
 
-    def trade_fields(self, order: Order, day: date, seconds: int, status: str, price: int | None = None) -> dict:
-        """Build correct trade fields, leaving unfinished execution amounts empty."""
+    def record_trade(self, order: Order, offset: int, seconds: int, status: str,
+                     price: int | None = None, flag: str = "I", *, value_day: int | None = None) -> None:
+        """Capture one typed trade version before its mutable order can change."""
         account = self.accounts[order.account_index]
         charge, commission = self.fees(order.quantity, price) if price is not None else (None, None)
-        return {
-            "T_ID": order.trade_id, "T_DTS": timestamp(day, seconds), "T_ST_ID": status,
-            "T_TT_ID": order.kind, "T_IS_CASH": int(account["is_cash"]),
-            "T_S_SYMB": f"S{order.security + 1:010d}", "T_QTY": order.quantity,
-            "T_BID_PRICE": decimal_cents(order.bid), "T_CA_ID": int(account["account_id"]),
-            "T_EXEC_NAME": "Alex Broker", "T_TRADE_PRICE": decimal_cents(price) if price is not None else "",
-            "T_CHRG": decimal_cents(charge) if charge is not None else "",
-            "T_COMM": decimal_cents(commission) if commission is not None else "",
-            "T_TAX": "0.00" if price is not None else "",
-        }
-
-    def record_trade(self, order: Order, day: date, fields: dict, key: str, flag: str = "I") -> None:
-        """Give source recording explicit observable identity and profile context."""
-        if isinstance(self.recorder, SourceRecorder):
-            account = self.accounts[order.account_index]
-            context = {"profile": int(account["profile"]), "account_id": int(account["account_id"]),
-                       "customer_id": int(account["customer_id"])}
-            self.recorder.record("Trade", day, fields, key, flag, context=context)
-        else:
-            self.recorder.record("Trade", day, fields, key, flag)
+        epoch_second = self.start_epoch_second + (offset if value_day is None else value_day) * 86400 + seconds
+        values = (order.trade_id, epoch_second, status, order.kind, int(account["is_cash"]),
+                  order.security + 1, order.quantity, order.bid, int(account["account_id"]),
+                  "Alex Broker", price, charge, commission, 0 if price is not None else None)
+        self.generation.record("Trade", offset, values, order=(order.transition,), flag=flag,
+                               profile=int(account["profile"]))
 
     def transition(self, order: Order, day: date, seconds: int, status: str, price: int | None = None, creation: bool = False) -> None:
         """Record one legal status change and its stable equal-time ordinal."""
         order.status = status
         order.seconds = seconds
-        fields = self.trade_fields(order, day, seconds, status, price)
         order.transition += 1
+        offset = (day - self.config.start).days
         if day <= self.config.cutover:
-            self.recorder.record("TradeHistory", day, {"TH_T_ID": order.trade_id, "TH_DTS": fields["T_DTS"], "TH_ST_ID": status}, f"{order.trade_id:015d}/{fields['T_DTS']}/{order.transition:08d}")
+            epoch_second = self.start_epoch_second + offset * 86400 + seconds
+            self.generation.record("TradeHistory", offset, (order.trade_id, epoch_second, status),
+                                   order=(order.transition,))
             if status in ("CMPT", "CNCL"):
-                self.record_trade(order, day, fields, f"{order.trade_id:015d}")
+                self.record_trade(order, offset, seconds, status, price)
         else:
-            self.record_trade(order, day, fields, f"{fields['T_DTS']}/{order.trade_id:015d}/{order.transition:08d}", "I" if creation else "U")
+            self.record_trade(order, offset, seconds, status, price, "I" if creation else "U")
         if status in ("CMPT", "CNCL"):
             self.metrics[status] += 1
 
@@ -396,11 +390,14 @@ class BusinessSimulation:
         delta = amount - charge - commission if order.sell else -amount - charge - commission
         if order.sell and delta <= 0:
             raise ValueError("Sell proceeds must cover the configured fees.")
-        self.cash(day, second, order.account_index, delta, f"Trade settlement {order.trade_id}")
+        self.cash(day, second, order.account_index, delta, "Trade settlement", reference=order.trade_id)
         account = int(self.accounts[order.account_index]["account_id"])
         origin, before, after = self.holdings.change(account, order.security, order.trade_id, -order.quantity if order.sell else order.quantity, amount + charge + commission)
         self.transition(order, day, second, "CMPT", price)
-        self.recorder.record("HoldingHistory", day, {"HH_H_T_ID": origin, "HH_T_ID": order.trade_id, "HH_BEFORE_QTY": before, "HH_AFTER_QTY": after}, f"{timestamp(day, second)}/{account:011d}/{int(self.cash_ordinals[order.account_index]):012d}")
+        offset = (day - self.config.start).days
+        self.generation.record("HoldingHistory", offset, (origin, order.trade_id, before, after),
+                               order=(self.start_epoch_second + offset * 86400 + second,
+                                      account, int(self.cash_ordinals[order.account_index])))
         self.orders.pop(order.trade_id, None)
         return True
 
@@ -515,7 +512,9 @@ class BusinessSimulation:
 
     def watch(self, customer: int, security: int, day: date, second: int, action: str) -> None:
         """Record a watch change with a stable customer and security identity."""
-        self.recorder.record("WatchHistory", day, {"W_C_ID": customer, "W_S_SYMB": f"S{security + 1:010d}", "W_DTS": timestamp(day, second), "W_ACTION": action}, f"{timestamp(day, second)}/{customer:011d}/{security:010d}/{action}")
+        offset = (day - self.config.start).days
+        self.generation.record("WatchHistory", offset,
+                               (customer, security + 1, self.start_epoch_second + offset * 86400 + second, action))
         self.metrics[f"watch_{action}"] += 1
 
     def _schedule_lifetimes(self) -> tuple:
@@ -590,7 +589,7 @@ class BusinessSimulation:
         for position in np.flatnonzero(dividends):
             account, security, _, quantity = rows[position, :4]
             self.cash(day.date, DIVIDEND_SECOND, self.account_indices[int(account)],
-                      int(dividends[position]) * int(quantity), f"Dividend S{security + 1:010d}")
+                      int(dividends[position]) * int(quantity), "Dividend", reference=int(security) + 1)
 
     def _plan_cash(self, day: BusinessDay, index: int, deposit: bool, withdrawal: bool) -> None:
         """Apply profile amounts and planner restrictions to ordinary cash proposals."""
@@ -750,7 +749,9 @@ class BusinessSimulation:
         """Save the cutover trade snapshot and record peak live state."""
         if day.date == self.config.cutover:
             for order in self.orders.values():
-                self.record_trade(order, day.date, self.trade_fields(order, self.config.day(order.created_day), order.seconds, order.status), f"{order.trade_id:015d}")
+                # The initial pending snapshot keeps the original creation date
+                # with the order's last recorded second and status, as before.
+                self.record_trade(order, day.offset, order.seconds, order.status, value_day=order.created_day)
         self.maximum_open_orders = max(self.maximum_open_orders, len(self.orders))
         self.maximum_watches = max(self.maximum_watches, sum(len(w) for w in self.watches.values()))
         self.planner.after_day(self, day)
@@ -789,7 +790,7 @@ class BusinessSimulation:
         }
 
 
-def _run_group(config_dict: dict, root_string: str, first_customer: int, last_customer: int, planner_factory=None, recorder_factory=SourceRecorder) -> tuple[str, dict]:
+def _run_group(config_dict: dict, root_string: str, first_customer: int, last_customer: int, planner_factory=None, recorder_factory=SourceRecorder) -> dict:
     """Execute one disjoint customer group and publish its actual lifetimes."""
     from .config import Config
     from .generation import Generation
@@ -802,10 +803,11 @@ def _run_group(config_dict: dict, root_string: str, first_customer: int, last_cu
     left, right = np.searchsorted(accounts["customer_id"], [first_customer, last_customer])
     group_customers = customers[first_customer - 1:last_customer - 1].copy()
     group_accounts = accounts[left:right].copy()
-    group_root = root / "_work/groups" / f"{first_customer:011d}"
-    generation = Generation(config, group_root)
+    generation = Generation(config, root, group_id=first_customer)
+    if recorder_factory is not SourceRecorder:
+        generation.recorder = recorder_factory(generation)
     simulation = BusinessSimulation(generation, Market(root, config), group_customers, group_accounts,
-                                    planner=planner_factory() if planner_factory else None, recorder=recorder_factory(generation))
+                                    planner=planner_factory() if planner_factory else None)
     if config.attrition_enabled and hasattr(simulation.planner, "normalizer"):
         simulation.planner.normalizer = np.load(root / "_work/population/risk_normalizer.npy", mmap_mode="r")
     result = simulation.run()
@@ -827,12 +829,12 @@ def _run_group(config_dict: dict, root_string: str, first_customer: int, last_cu
     frame.write_parquet(hidden / f"accounts-{first_customer:011d}.parquet")
     if hasattr(simulation.planner, "records") and simulation.planner.records:
         pl.DataFrame(simulation.planner.records, schema=ATTRITION_RECORD_SCHEMA).write_parquet(hidden / f"attrition-{first_customer:011d}.parquet")
-    generation.close()
-    return str(group_root), result
+    generation.finish()
+    return result
 
 
 def generate_activity(generation, market, population, planner_factory=None, recorder_factory=SourceRecorder) -> dict:
-    """Run bounded groups, adopt their sorted output, and combine measured counts."""
+    """Seal bounded customer groups and combine counts without moving their typed parts."""
     from concurrent.futures import ProcessPoolExecutor
     from multiprocessing import get_context
 
@@ -842,12 +844,16 @@ def generate_activity(generation, market, population, planner_factory=None, reco
         path.unlink()
     maximum_customer = int(population.customers["customer_id"].max())
     groups = [(first, min(maximum_customer + 1, first + config.customer_group_size)) for first in range(1, maximum_customer + 1, config.customer_group_size)]
+    parts = root / "_work" / "source-parts"
+    parts.mkdir(parents=True, exist_ok=True)
+    schedule = parts / "scheduled-groups.json"
+    temporary_schedule = schedule.with_suffix(".json.tmp")
+    temporary_schedule.write_text(json.dumps([first for first, _ in groups]) + "\n", encoding="ascii")
+    temporary_schedule.replace(schedule)
     summaries = []
     if config.workers == 1:
         for first, last in groups:
-            path, summary = _run_group(config.as_dict(), str(root), first, last, planner_factory, recorder_factory)
-            generation.adopt(Path(path))
-            summaries.append(summary)
+            summaries.append(_run_group(config.as_dict(), str(root), first, last, planner_factory, recorder_factory))
     else:
         # The coordinator also simulates groups. Only one additional worker runs.
         with ProcessPoolExecutor(max_workers=1, mp_context=get_context("spawn")) as executor:
@@ -856,12 +862,8 @@ def generate_activity(generation, market, population, planner_factory=None, reco
                 future = executor.submit(_run_group, config.as_dict(), str(root), first, last, planner_factory, recorder_factory)
                 if offset + 1 < len(groups):
                     a, b = groups[offset + 1]
-                    path, summary = _run_group(config.as_dict(), str(root), a, b, planner_factory, recorder_factory)
-                    generation.adopt(Path(path))
-                    summaries.append(summary)
-                path, summary = future.result()
-                generation.adopt(Path(path))
-                summaries.append(summary)
+                    summaries.append(_run_group(config.as_dict(), str(root), a, b, planner_factory, recorder_factory))
+                summaries.append(future.result())
     counters = {name: Counter() for name in ("account_trade_counts", "security_trade_counts", "daily_trade_counts", "cash_transaction_types", "profile_counts")}
     totals = Counter()
     peaks = Counter()

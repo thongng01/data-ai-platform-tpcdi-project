@@ -32,34 +32,56 @@ class Field:
     type: str
     nullable: bool = False
 
-    def check(self, value: str):
-        """Check field values against the source contract before writing or replay."""
-        if not value:
-            if self.nullable:
-                return
-            raise ValueError(f"{self.name} cannot be empty.")
-        if not value.isascii() or any(character in value for character in "\r\n\t"):
-            raise ValueError(f"{self.name} must contain single-byte text without control separators.")
+    @cached_property
+    def checker(self):
+        """Prepare immutable type metadata once for repeated scalar validation."""
         datatype = TYPES.get(self.type, self.type)
         if datatype == "DATE":
-            if date.fromisoformat(value).isoformat() != value:
-                raise ValueError(f"Invalid date in {self.name}.")
+            def typed(value):
+                """Require a valid date and its canonical source spelling."""
+                if date.fromisoformat(value).isoformat() != value:
+                    raise ValueError(f"Invalid date in {self.name}.")
         elif datatype == "DATETIME":
-            if datetime.fromisoformat(value).isoformat(sep=" ") != value or len(value) != 19:
-                raise ValueError(f"Invalid timestamp in {self.name}.")
+            def typed(value):
+                """Require a canonical whole-second timestamp without a zone."""
+                if datetime.fromisoformat(value).isoformat(sep=" ") != value or len(value) != 19:
+                    raise ValueError(f"Invalid timestamp in {self.name}.")
         elif datatype == "BOOLEAN":
-            if value not in ("0", "1"):
-                raise ValueError(f"Invalid boolean in {self.name}.")
+            def typed(value):
+                """Accept only the two source boolean spellings."""
+                if value not in ("0", "1"):
+                    raise ValueError(f"Invalid boolean in {self.name}.")
         elif datatype.startswith("CHAR("):
-            if len(value) > int(datatype[5:-1]):
-                raise ValueError(f"{self.name} exceeds {datatype}.")
+            width = int(datatype[5:-1])
+            def typed(value):
+                """Enforce the declared character width without trimming text."""
+                if len(value) > width:
+                    raise ValueError(f"{self.name} exceeds {datatype}.")
         else:
             signed, precision, scale = _numeric_type(datatype)
-            if not re.fullmatch(r"[+-]?\d+(?:\.\d+)?" if signed else r"\d+(?:\.\d+)?", value):
-                raise ValueError(f"Invalid number in {self.name}: {value}")
-            integer, _, fractional = value.lstrip("+-").partition(".")
-            if len(integer) + len(fractional) > precision or len(fractional) > scale:
-                raise ValueError(f"{self.name} exceeds {datatype}: {value}")
+            match = re.compile(r"[+-]?\d+(?:\.\d+)?" if signed else r"\d+(?:\.\d+)?").fullmatch
+            def typed(value):
+                """Count all source digits without rounding or dropping leading zeros."""
+                if not match(value):
+                    raise ValueError(f"Invalid number in {self.name}: {value}")
+                integer, _, fractional = value.lstrip("+-").partition(".")
+                if len(integer) + len(fractional) > precision or len(fractional) > scale:
+                    raise ValueError(f"{self.name} exceeds {datatype}: {value}")
+
+        def check(value):
+            """Keep empty, ASCII, and control checks before the prepared type check."""
+            if not value:
+                if self.nullable:
+                    return
+                raise ValueError(f"{self.name} cannot be empty.")
+            if not value.isascii() or "\r" in value or "\n" in value or "\t" in value:
+                raise ValueError(f"{self.name} must contain single-byte text without control separators.")
+            typed(value)
+        return check
+
+    def check(self, value: str):
+        """Check one lexical value with this field's prepared contract."""
+        self.checker(value)
 
 
 @dataclass(frozen=True)
@@ -77,14 +99,19 @@ class Source:
         """Return business column names in their on-disk order."""
         return [field.name for field in self.fields]
 
+    @cached_property
+    def checks(self):
+        """Retain prepared field predicates without rebuilding metadata per row."""
+        return tuple(field.checker for field in self.fields)
+
     def check(self, values):
-        """Check field values against the source contract before writing or replay."""
+        """Check ordered lexical values against the independent scalar contract."""
         if len(values) != len(self.fields):
             raise ValueError(f"Incorrect field count in {self.name}.")
-        for field, value in zip(self.fields, values):
+        for field, check, value in zip(self.fields, self.checks, values):
             if self.separator in value:
                 raise ValueError(f"Delimiter in {self.name}.{field.name}.")
-            field.check(value)
+            check(value)
 
     def check_payload(self, payload):
         """Split a serialized business row and check its exact contract."""

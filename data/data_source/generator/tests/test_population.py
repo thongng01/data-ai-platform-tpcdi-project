@@ -12,7 +12,9 @@ from hypothesis import given, strategies as st
 
 from data.data_source.generator.config import Config
 from data.data_source.generator.customers import _prospect_values, account_values, customer_birth_year, customer_values, generate_prospects, xml_action
+from data.data_source.generator.formats import load_sources
 from data.data_source.generator.population import ACCOUNT_DTYPE, CUSTOMER_DTYPE, _account_traits, assign_tiers, build_population
+from data.data_source.generator.recording import SourceRecorder
 
 
 def short_config(**kwargs):
@@ -75,7 +77,7 @@ def dynamic_run(tmp_path_factory):
     population = build_population(config, root)
     before = population.accounts.copy()
     summary = generate_activity(generation, market, population)
-    generation.close()
+    generation.finish()
     return config, root, population, before, summary
 
 
@@ -323,8 +325,18 @@ def test_emitted_cms_matches_seeded_prospects_and_preserves_updated_names(tmp_pa
                     customer_tier_error_rate=0, customer_dob_error_rate=0)
     population = build_population(config, tmp_path)
     text_rows, emitted = [], []
-    generation = SimpleNamespace(config=config, text=lambda path, rows: text_rows.extend(rows),
-                                 emit=lambda source, day, rows: emitted.append((source, day, rows)), cash=lambda *args: None)
+
+    def record(family, day, values, *, order=(), flag="I", profile=None):
+        """Capture typed source rows while keeping the existing XML assertions."""
+        if family == "CustomerMgmt":
+            text_rows.append((order, values[0]))
+        elif family != "CashTransaction":
+            row = dict(zip(load_sources()[family].columns, values, strict=True))
+            emitted.append((family, config.day(day), [{**row, "_flag": flag}]))
+
+    generation = SimpleNamespace(config=config, sources=load_sources(), record=record,
+                                 _record_fault=lambda entry: None)
+    generation.recorder = SourceRecorder(generation)
     prices = {"close": np.array([10000]), "low": np.array([9000]), "high": np.array([11000]),
               "dividends": np.array([0]), "trading": True, "close_second": 57600, "shock": False}
     market = SimpleNamespace(day=lambda day: prices, sessions_per_year={2019: 252})
@@ -403,11 +415,15 @@ class ProspectCapture:
         self.config = config
         self.snapshots = {}
 
-    def emit(self, name, day, rows):
-        """Capture a prospect batch and enforce the batch-size bound."""
+    def record_batch(self, name, day, columns, *, order=None, flag="I"):
+        """Consume native prospect columns and enforce the existing block bound."""
         assert name == "Prospect"
-        assert len(rows) <= 2048
-        self.snapshots.setdefault(day, []).extend(rows)
+        assert tuple(columns) == tuple(load_sources()[name].columns)
+        size = len(columns["AgencyID"])
+        assert size <= 2048
+        assert len(order["_identity"]) == size
+        rows = [{name: values[index].item() for name, values in columns.items()} for index in range(size)]
+        self.snapshots.setdefault(self.config.day(day), []).extend(rows)
 
 
 def test_prospects_keep_identity_without_future_customer_status(tmp_path):

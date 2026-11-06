@@ -4,7 +4,6 @@ from datetime import date, timedelta
 from xml.etree import ElementTree as ET
 
 import numpy as np
-import polars as pl
 
 from .personal_data import personal_columns, personal_values
 from .population import rounded, uniform
@@ -145,7 +144,6 @@ def _prospect_columns(identifiers, identities, snapshot: date, seed: int, birth_
         "CreditRating": 550 + identifiers % 251, "OwnOrRentFlag": np.where(identifiers % 3, "R", "O"),
         "Employer": EMPLOYERS[identifiers % len(EMPLOYERS)], "NumberCreditCards": 1 + identifiers % 4,
         "NetWorth": income * (2 + identifiers % 10),
-        "_key": np.strings.zfill(id_text, 15) if len(identifiers) else id_text,
     }
 
 
@@ -189,6 +187,7 @@ def generate_prospects(generation, population) -> None:
             personal_ids = np.where(block["customer_id"], block["customer_id"], len(customers) + block["prospect_id"])
             years = np.maximum(config.end.year - 120, np.minimum(1940 + personal_ids % 45, config.start.year - 18))
             columns = _prospect_columns(block["prospect_id"], personal_ids, snapshot, config.seed, years)
-            # Only the export boundary needs row dictionaries. All random
-            # selection and field construction above operate on whole columns.
-            generation.emit("Prospect", snapshot, pl.DataFrame(columns).to_dicts())
+            # Agency identity, not the lexical AG-prefixed field, sets row
+            # order. The export module consumes the arrays before returning.
+            generation.record_batch("Prospect", (snapshot - config.start).days, columns,
+                                    order={"_identity": block["prospect_id"]})

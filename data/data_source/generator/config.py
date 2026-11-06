@@ -150,6 +150,8 @@ class Config:
     workers: int = 1
     threads: int = 2
     export_rows: int = 8192
+    # Accept old run configurations, but native export has no merge fan-in tree.
+    # Reports mark this setting as ignored; it remains outside dataset identity.
     merge_fan_in: int = 16
     memory_limit_mb: int = 2048
     disk_limit_mb: int = 65536

@@ -12,7 +12,6 @@ from numpy.lib.format import open_memmap
 
 from .config import Config, calendar_for, read_yaml
 from .random_values import values
-from .recording import SourceRecorder
 
 
 def prior_year(day: date) -> date:
@@ -188,12 +187,15 @@ class Market:
             if trading:
                 volumes = 100000 + values(ids, config.seed, f"market/volume/{day}") % 10000000
                 for first_security in range(0, config.securities, config.export_rows):
-                    rows = [{"DM_DATE": str(day), "DM_S_SYMB": f"S{security + 1:010d}",
-                             "DM_CLOSE": money(close[security]), "DM_HIGH": money(high[security]), "DM_LOW": money(low[security]),
-                             "DM_VOL": int(volumes[security]),
-                             "_key": f"{day}/{security + 1:015d}"}
-                            for security in range(first_security, min(config.securities, first_security + config.export_rows))]
-                    generation.emit("DailyMarket", day, rows)
+                    block = slice(first_security, min(config.securities, first_security + config.export_rows))
+                    # The export module consumes these views before the next day
+                    # changes prices. It formats cents and security IDs in columns.
+                    generation.record_batch("DailyMarket", (day - config.start).days, {
+                        "DM_DATE": (day - date(1970, 1, 1)).days,
+                        "DM_S_SYMB": ids[block].astype(np.int64),
+                        "DM_CLOSE": close[block], "DM_HIGH": high[block], "DM_LOW": low[block],
+                        "DM_VOL": volumes[block].astype(np.int64),
+                    })
         for array in [*arrays.values(), annual, release_dates]:
             array.flush()
         market = cls(root, config)
@@ -208,23 +210,21 @@ class Market:
         pe = 5 + _uniform(company_ids, config, "market/pe") * 35
         losses = _uniform(company_ids, config, "market/loss") < .03
         initial_posting = postings[0][0]
-        recorder = SourceRecorder(generation)
+        recorder = generation.recorder
         for index, (posting, quarter) in enumerate(postings):
             stamp = posting.strftime("%Y%m%d-000000")
-            filename = f"FINWIRE{posting.year}Q{(posting.month - 1) // 3 + 1}"
-            relative = f"offline/initial/{filename}" if posting <= config.cutover else f"offline/daily/{posting:%Y%m%d}/{filename}"
-            def emit(kind, identifier, fields):
+            def emit(kind, fields):
                 """Pass each correct FINWIRE record through stage 3 before padding."""
-                key = f"{stamp}/{('CMP', 'SEC', 'FIN').index(kind)}/{identifier:015d}"
-                recorder.finwire(kind, posting, {**fields, "PTS": stamp, "RecType": kind}, key, relative, layouts[kind])
+                recorder.finwire(kind, (posting - config.start).days,
+                                 {**fields, "PTS": stamp, "RecType": kind}, layout=layouts[kind])
 
             for identifier in range(1, config.companies + 1):
-                emit("CMP", identifier, {"CompanyName": f"Company {identifier}", "CIK": identifier,
+                emit("CMP", {"CompanyName": f"Company {identifier}", "CIK": identifier,
                     "Status": "ACTV", "IndustryID": "AA", "SPrating": "AAA", "FoundingDate": f"{min(1950, initial_posting.year):04d}0101",
                     "AddrLine1": "1 Main Street", "PostalCode": "10001", "City": "New York", "StateProvince": "NY",
                     "Country": "USA", "CEOname": f"Executive {identifier}", "Description": "Publicly traded company."})
             for identifier in range(1, config.securities + 1):
-                emit("SEC", identifier, {"Symbol": f"S{identifier:010d}", "IssueType": "COMMON", "Status": "ACTV",
+                emit("SEC", {"Symbol": f"S{identifier:010d}", "IssueType": "COMMON", "Status": "ACTV",
                     "Name": f"Security {identifier}", "ExID": "NYSE", "ShOut": "1000000",
                     "FirstTradeDate": initial_posting.strftime("%Y%m%d"), "FirstTradeExchg": initial_posting.strftime("%Y%m%d"),
                     "Dividend": money(self._arrays["annual_dividends"][index, identifier - 1]),
@@ -238,7 +238,7 @@ class Market:
                         quarter_eps = -quarter_eps
                     earnings = quarter_eps * 1000000
                     revenue = max(abs(earnings) * 8, 100000000)
-                    emit("FIN", identifier, {"Year": quarter.year, "Quarter": (quarter.month - 1) // 3 + 1,
+                    emit("FIN", {"Year": quarter.year, "Quarter": (quarter.month - 1) // 3 + 1,
                         "QtrStartDate": quarter.strftime("%Y%m%d"), "PostingDate": posting.strftime("%Y%m%d"),
                         "Revenue": money(revenue), "Earnings": money(earnings), "EPS": money(quarter_eps),
                         "DilutedEPS": money(quarter_eps), "Margin": f"{earnings / revenue:.2f}",
