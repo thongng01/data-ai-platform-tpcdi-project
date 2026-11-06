@@ -13,7 +13,8 @@ import pytest
 
 from data.data_source.generator.config import Config
 from data.data_source.generator.formats import load_sources, source_for_day
-from data.data_source.generator.recording import SourceRecorder, _selected
+from data.data_source.generator.recording import SourceRecorder
+from data.data_source.generator.tests.recording_oracle import scalar_faults, scalar_selected
 from data.data_source.generator.runner import run
 from data.data_source.generator.validation import ValidationError, validate
 
@@ -232,7 +233,6 @@ def test_mixed_trade_batch_matches_scalar_faults_and_keeps_input_immutable():
     offsets = [0, 26, 27, 30] * 12
     rows = []
     expected_audit = []
-    scalar_recorder = SourceRecorder(SimpleNamespace(config=config, _record_fault=expected_audit.append))
     expected_values = []
     for index, offset in enumerate(offsets):
         fields = _trade(index + 1)
@@ -245,7 +245,8 @@ def test_mixed_trade_batch_matches_scalar_faults_and_keeps_input_immutable():
                   "T_TRADE_PRICE": "20.00" if fields["T_ST_ID"] == "CMPT" else "",
                   "T_CHRG": "1.00" if fields["T_ST_ID"] == "CMPT" else "",
                   "T_COMM": "0.20" if fields["T_ST_ID"] == "CMPT" else ""}
-        result = scalar_recorder._recorded("Trade", config.day(offset), legacy)
+        result, entries = scalar_faults(config, "Trade", config.day(offset), legacy)
+        expected_audit.extend(entries)
         expected_values.append(tuple(int(Decimal(result[field]) * 100) if result[field] else None
                                      for field in ("T_CHRG", "T_COMM")))
     correct = _frame(config, rows).with_columns(pl.Series("_record_day", offsets, dtype=pl.Int64))
@@ -273,7 +274,7 @@ def test_mixed_customer_batch_preserves_scalar_selection_and_date_units():
         day = config.day(row["_record_day"])
         identity = {"C_ID": str(row["C_ID"]), "C_ST_ID": row["C_ST_ID"]}
         for field in ("C_TIER", "C_DOB"):
-            if _selected(config, "Customer", day, identity, field):
+            if scalar_selected(config, "Customer", day, identity, field):
                 expected.add((row["C_ID"], field))
     assert {(int(entry["identity"]["C_ID"]), entry["field"]) for entry in audit} == expected
     assert {entry["correct"] for entry in audit if entry["field"] == "C_DOB"} == {"1980-01-01"}

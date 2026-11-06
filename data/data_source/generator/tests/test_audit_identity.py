@@ -2,14 +2,14 @@
 
 from datetime import date
 import json
-from types import SimpleNamespace
 
 import polars as pl
 import pytest
 
 from data.data_source.generator.config import Config
 from data.data_source.generator.generation import Generation
-from data.data_source.generator.recording import SourceRecorder, _selected
+from data.data_source.generator.recording import SourceRecorder
+from data.data_source.generator.tests.recording_oracle import scalar_faults, scalar_selected
 from data.data_source.generator.validation import _require, _Stage, _xml
 from data.data_source.generator.validation_faults import FaultAudit
 
@@ -44,13 +44,13 @@ def test_daily_new_and_update_have_distinct_audit_keys(tmp_path):
         assert audit.restore("Customer", date(2019, 6, 24), row)["C_TIER"] == expected
     audit.finish()
     scalar_entries = []
-    scalar = SourceRecorder(SimpleNamespace(config=config, _record_fault=scalar_entries.append))
     for row in frame.iter_rows(named=True):
-        scalar._recorded("Customer", date(2019, 6, 24), row)
+        _, evidence = scalar_faults(config, "Customer", date(2019, 6, 24), row)
+        scalar_entries.extend(evidence)
     assert scalar_entries == entries
     for entry in entries:
         old_identity = {name: entry["identity"][name] for name in ("C_ID", "C_ST_ID")}
-        assert _selected(config, "Customer", entry["day"], entry["identity"], "C_TIER") == _selected(
+        assert scalar_selected(config, "Customer", entry["day"], entry["identity"], "C_TIER") == scalar_selected(
             config, "Customer", entry["day"], old_identity, "C_TIER")
 
 
@@ -73,5 +73,5 @@ def test_same_second_account_actions_have_distinct_audit_keys(tmp_path, kind):
     audit.finish()
     for entry in entries:
         old_identity = {name: value for name, value in entry["identity"].items() if name != "CA_ID"}
-        assert _selected(config, "CustomerMgmt", entry["day"], entry["identity"], "C_TIER") == _selected(
+        assert scalar_selected(config, "CustomerMgmt", entry["day"], entry["identity"], "C_TIER") == scalar_selected(
             config, "CustomerMgmt", entry["day"], old_identity, "C_TIER")

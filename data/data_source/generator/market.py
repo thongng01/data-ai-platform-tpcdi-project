@@ -11,6 +11,7 @@ import numpy as np
 from numpy.lib.format import open_memmap
 
 from .config import Config, calendar_for, read_yaml
+from .money import cents_text as money
 from .random_values import values
 
 
@@ -44,12 +45,6 @@ def finwire_postings(config: Config):
     while report_release(quarter) <= config.end:
         yield report_release(quarter), quarter
         quarter = shift_quarter(quarter, 1)
-
-
-def money(cents: int) -> str:
-    """Format integer cents for source fields without binary rounding."""
-    cents = int(cents)
-    return f"{'-' if cents < 0 else ''}{abs(cents) // 100}.{abs(cents) % 100:02d}"
 
 
 def _uniform(ids, config, purpose):
