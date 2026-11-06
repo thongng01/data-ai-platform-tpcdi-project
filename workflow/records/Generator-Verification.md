@@ -138,6 +138,36 @@ The recommendation is the improved text approach: it has the lowest measured tim
 
 The concise report is `local/tmp/generator-perf/export-options/focused-results.md`; it links four raw measurement records, load snapshots, code counts, and the composition check. All experiment processes finished, with none queued. Shared packages, existing datasets, and platform services remain unchanged.
 
+### Combined Column-Based Prototype
+
+The owner next authorized a compact generation-to-export investigation, not production integration. The partial Polars path connects NumPy columns to one bounded batch, native integer-cent and identifier formatting, checked ordering, unchanged compiled field checks, and native CSV output through a binary hashing sink. DailyMarket and Prospect already arrive in delivery and key order, so their records bypass the SQLite catalog, sorted text files, and custom merge tree. Batch-boundary checks reject duplicates or decreasing keys. Other sources and ordered financial execution remain on improved text.
+
+This path covers 221 files, 1,017,770 rows, and 61,326,840 bytes: 49.48% of rows and 40.83% of bytes in the bounded workload, not the full calendar. It removes covered row dictionaries, per-row money strings, payload joins, and payload reparsing. About 7.67 million independent field checks remain in column loops, including delimiter checks before unquoted CSV output. No validation rule is removed.
+
+One serial pair measures actual generation through export, not trace replay. Both use the same compiled checks and safe text cleanup, two workers, two threads, a 4 GiB aggregate RSS limit, a 16 GiB disk limit, and a 300-second generation ceiling.
+
+| Measure | Improved text | Partial Polars |
+| --- | ---: | ---: |
+| Generation through export, seconds | 41.870 | 38.552 |
+| Market, seconds | 6.954 | 5.834 |
+| Ordered financial activity, seconds | 21.915 | 22.242 |
+| Prospects, seconds | 1.113 | 1.570 |
+| Final export, seconds | 11.021 | 8.041 |
+| Generation peak aggregate RSS, MiB | 710.81 | 733.47 |
+| Generation peak temporary disk, MiB | 241.82 | 159.13 |
+| Generation peak total disk, MiB | 373.63 | 268.99 |
+| Separate saved-file validation, seconds | Not rerun | 56.386, passed |
+
+The measured generation difference is 3.32 seconds, or 7.9%. Final export alone overstates the benefit because covered checks move into the market and prospect phases; prospects become slower. Mean WSL CPU busy is 7.34% and 7.78% across 20 logical CPUs. Windows load is unmeasured, and one pair does not establish a repeatable percentage gain. RSS and disk are sampled every 0.1 and 2 seconds. No resource guard fires. The native batch peaks at 2,048 rows against the 8,192-row allowance, with the legacy coordinator buffer empty before allocation. No native batch remains during financial-worker execution.
+
+Both outputs match all 1,515 source paths, counts, bytes, and hashes, with independent rehashes and an exact 441-row audit comparison. The prototype passes the existing saved-file validator once, including global cash IDs, financial replay, data-error evidence, and both dated Trade schemas. A small interface check matches 43 files and rejects five delimiter, width, duplicate, and ordering cases. Empty files and CDC sequences across chunks remain exact.
+
+The improved run's harness exits after generation and successful source comparisons because an optional activity-summary comparison compares integer dictionary keys with JSON string keys. Original logs and exit status remain intact; a supplemental record rehashes the saved files without rerunning generation. That dataset is explicitly `generated-unvalidated`, with exact equality to the already validated reference. The prototype normalizes only this post-timing comparison, then passes it and validation. This reporting defect does not alter source bytes or measured generation time.
+
+Recommend against this partial production integration for the observed gain. It reduces disk use and proves the column interface works, but adds a second export path while retaining the entire 225-line sorting module. The scratch runtime is 297 physical lines, including 132 copied producer lines, plus an 18-line binding hook. A direct integration would add an estimated 80 to 130 net maintained lines; no production deletion was demonstrated. Polars is already a dependency. The scratch overrides replace only `Market.build`, `generate_prospects`, and `Generation`, with the same compiled checks and deferred text cleanup in both modes. Financial execution, faults, cash IDs, Trade versions, XML, and FINWIRE stay unchanged. A complete column-native architecture remains unproven and was not implemented.
+
+Evidence is in `local/tmp/generator-perf/columnar/results.md`, `results.json`, `comparison-data.json`, and `patch-manifest.json`; the manifest records exact overrides and file hashes. Datasets are under `local/runs/generator-perf/columnar/`. Production source hashes remain unchanged. All planned work finished; no experiment remains active or queued, and no further run or production rewrite is authorized by this result.
+
 ## Calibration and Remaining Evidence
 
 Calibration subtracts the directly measured fixed families: `DailyMarket`, FINWIRE, `Date`, `Time`, `Industry`, `StatusType`, `TaxRate`, and `TradeType`. HR is variable because staffing scales with the firm. Decimal half-up rounding of `3300 * 1,000,000,000 / 916,523,728` gives the accepted default of 3,601 customers per unit. The repeat keeps the seed, market, and behavior controls unchanged. Its source freeze is `76081d9`, which includes the fixture tool fix and explanatory comments as well as the new default.
