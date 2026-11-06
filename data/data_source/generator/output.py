@@ -19,8 +19,10 @@ CASH_NAME_PATTERN = r"^(?:Deposit|Withdrawal|Trade settlement [1-9][0-9]{0,14}|D
 
 def native_environment(config, root: Path) -> dict[str, str]:
     """Return pinned-engine resource settings for a fresh supervised child process."""
-    # Private OOC settings trigger spill; they do not cap RSS. Leave most of the
-    # process-tree allowance for account state, Python, scan buffers, and encoding.
+    # Private OOC settings trigger spill; they do not cap RSS. Give the engine
+    # one eighth of the memory allowance, capped at 256 MB, to leave room for
+    # account state, Python, scan buffers, and encoding. Convert the disk limit
+    # from MiB to decimal MB and reserve half for non-spill run files.
     memory_mb = max(1, min(256, config.memory_limit_mb // 8))
     disk_mb = max(1, int(config.disk_limit_mb * 1024**2 / 2 / 1_000_000))
     return {"POLARS_MAX_THREADS": str(config.threads),
@@ -51,7 +53,7 @@ def native_batches(query: pl.LazyFrame, rows: int, consume) -> None:
 
 
 class BinaryWriter:
-    """Hash exactly the native writer's bytes and close one final delivery at a time."""
+    """Hash exactly the native writer's bytes and close one source file at a time."""
 
     def __init__(self, root: Path, relative: str, *, xml=False):
         """Create a new output file without overwriting retained partial evidence."""
@@ -73,7 +75,7 @@ class BinaryWriter:
         return written
 
     def close(self):
-        """Finish exact XML framing and return the existing inventory entry shape."""
+        """Finish exact XML framing and return path, row, byte, and hash metadata."""
         if self.xml:
             self.write(XML_CLOSE.encode("ascii"))
         self.stream.close()
@@ -81,7 +83,7 @@ class BinaryWriter:
                 "sha256": self.digest.hexdigest()}
 
     def abort(self):
-        """Close a failed delivery without publishing a successful inventory entry."""
+        """Close a failed source file without publishing a successful inventory entry."""
         self.stream.close()
 
 
@@ -135,7 +137,7 @@ class TypedOutput:
                 0 if family == "__audit" else int(day_value > self.config.cutover), relative)
 
     def record(self, family, day, values, *, order=(), flag="I", profile=None):
-        """Append one typed tuple without creating a tiny DataFrame per business event."""
+        """Buffer one typed tuple until the shared row allowance triggers a flush."""
         self._require_open()
         if family not in self.fields or not isinstance(values, tuple) or len(values) != len(self.fields[family]):
             raise ValueError(f"Incorrect typed source tuple in {family}.")
@@ -305,7 +307,7 @@ class TypedOutput:
         return parts
 
     def _aggregate(self, metrics):
-        """Combine sealed worker counters and maxima without inventing merge metrics."""
+        """Sum sealed worker counters and retain the largest worker maxima."""
         for name, value in metrics.items():
             self.metrics[name] = max(self.metrics.get(name, 0), value) if name.startswith("maximum_") else self.metrics.get(name, 0) + value
 
@@ -340,9 +342,9 @@ class TypedOutput:
         if first == last:
             yield first, frame
             return
-        # Delivery-major ordering makes these ranges contiguous. Trade has at
-        # most three kinds: initial, daily v1, and daily v2. Most batches need no
-        # split, even when they contain many separate delivery files.
+        # Dated YYYYMMDD paths sort chronologically, so initial, daily v1, and
+        # daily v2 Trade ranges stay contiguous. Endpoint checks are sufficient
+        # because a later path cannot return to an earlier contract version.
         expression = pl.col("_delivery_rank")
         if family == "Trade":
             expression = pl.when((expression > 0) & (pl.col("_record_day") >= channel_day)).then(2).otherwise(expression)
@@ -352,7 +354,7 @@ class TypedOutput:
             yield int(write_kind), chunk
 
     def _encode_batch(self, family, batch, write_kind, writer):
-        """Format and check a bounded contract batch before splitting delivery files."""
+        """Format and check a bounded contract batch before splitting source files."""
         if family in RAW_FAMILIES:
             self._check_raw(family, batch)
             return batch.select("_payload", "_relative"), "|"
@@ -377,9 +379,9 @@ class TypedOutput:
             frame = frame.select(pl.struct(fields).struct.json_encode().str.replace_all(
                 "\x7f", "\\u007f", literal=True).alias("_payload"), "_relative")
         elif source.cdc and write_kind:
-            # Only the first delivery can continue the previous batch's open
+            # Only the first source file can continue the previous batch's open
             # file. All later groups start at one. This window is bounded by the
-            # admitted batch, never by a complete family or delivery history.
+            # admitted batch, never by a complete family or source-file history.
             carried = (pl.when(pl.col("_relative") == writer.relative).then(writer.rows).otherwise(0)
                        if writer is not None else pl.lit(0))
             cdc = batch.select(pl.col("_flag").alias("CDC_FLAG"),
@@ -391,14 +393,16 @@ class TypedOutput:
         return frame, source.separator
 
     def write_family(self, family, paths, expected):
-        """Sort one family with native spill and write contiguous delivery segments."""
+        """Sort one family with native spill and write contiguous source-file segments."""
         started = time.monotonic()
+        # Initial files precede daily YYYYMMDD paths, which sort chronologically.
+        # Global CT_ID assignment and dated Trade chunks rely on this path order.
         query = pl.scan_parquet(paths).sort(["_delivery_rank", "_relative", "_key"])
         writer = None
         inventory = []
         previous = None
         def consume(frame):
-            """Check one bounded frame and write its contiguous delivery segments."""
+            """Check one bounded frame and write its contiguous source-file segments."""
             nonlocal previous, writer
             self.metrics["native_batches"] += 1
             self.metrics["maximum_stream_batch_rows"] = max(self.metrics["maximum_stream_batch_rows"], frame.height)
@@ -406,18 +410,20 @@ class TypedOutput:
                 return
             keys = frame.select("_delivery_rank", "_relative", "_key")
             duplicate = keys.select(pl.struct(pl.all()).eq(pl.struct(pl.all()).shift(1)).fill_null(False).any()).item()
+            # Paths and keys contain ASCII only. Python tuple comparison thus
+            # matches the native byte order, including across batch boundaries.
             first, last = tuple(keys.row(0)), tuple(keys.row(-1))
             if duplicate or (previous is not None and first <= previous):
                 raise ValueError(f"Nonunique or unordered source key in {family}.")
             previous = last
             # Formatting and all contract checks precede per-file dispatch.
             # Native partitioning drops the path column, leaving final writer
-            # frames without a select/check plan for each small delivery.
+            # frames without a select/check plan for each small source file.
             for write_kind, chunk in self._contract_chunks(family, frame):
                 encoded, separator = self._encode_batch(family, chunk, write_kind, writer)
-                deliveries = encoded.partition_by("_relative", include_key=False,
+                source_files = encoded.partition_by("_relative", include_key=False,
                                                   as_dict=True, maintain_order=True)
-                for (relative,), segment in deliveries.items():
+                for (relative,), segment in source_files.items():
                     if relative not in expected:
                         raise ValueError(f"Unexpected source output: {relative}")
                     if writer is None or writer.relative != relative:

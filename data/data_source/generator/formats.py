@@ -113,10 +113,6 @@ class Source:
                 raise ValueError(f"Delimiter in {self.name}.{field.name}.")
             check(value)
 
-    def check_payload(self, payload):
-        """Split a serialized business row and check its exact contract."""
-        self.check(payload.split(self.separator))
-
     @cached_property
     def daily_version(self):
         """Build the upgraded contract once without hashing all fields per event."""

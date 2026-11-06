@@ -15,7 +15,7 @@ import pytest
 from data.data_source.generator.formats import Field, Source
 from data.data_source.generator.generation import Generation
 from data.data_source.generator.output import native_batches, native_environment
-from data.data_source.generator.output_formats import NativeContract, lexical_invalid, order_key
+from data.data_source.generator.output_formats import NativeContract, field_dtype, lexical_invalid, order_key
 from data.data_source.generator.tests.test_export import config
 
 
@@ -51,6 +51,16 @@ def test_native_cents_keep_sign_and_two_fractional_digits():
     assert formatted["amount"].to_list() == ["-0.01", "123.45", "0.00"]
 
 
+def test_native_contract_rejects_unsupported_numeric_scale():
+    """Reject integer storage that would silently discard a declared decimal scale."""
+    field = Field("amount", "SNUM(8,3)")
+    source = Source("Example", "example.txt", "|", (field,))
+    with pytest.raises(ValueError, match="Unsupported numeric scale 3.*amount"):
+        field_dtype(field)
+    with pytest.raises(ValueError, match="Unsupported numeric scale 3.*amount"):
+        NativeContract(source)
+
+
 def test_prepared_scalar_contract_is_reused():
     """Keep immutable metadata prepared on each source and field object."""
     field = Field("value", "SNUM(8,2)")
@@ -58,7 +68,7 @@ def test_prepared_scalar_contract_is_reused():
     assert field.checker is field.checker
     assert source.checks is source.checks
     source.check(["+0001.20"])
-    source.check_payload("-1.00")
+    source.check("-1.00".split(source.separator))
 
 
 @pytest.mark.parametrize("array", [np.asarray([1.5]), pl.Series([1.5])])

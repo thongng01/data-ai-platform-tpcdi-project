@@ -204,13 +204,13 @@ These are factor 100 expectations, not measured results. Counts and activity vol
 
 These factor 1 measurements use the full reference calendar, seed `20261029`, two workers, two Polars threads per worker, 1,250 companies, and 2,000 securities. The saved files pass full validation. The customer anchor is a planning input; the cutover counts below are realized observations.
 
-| Export runtime | Customers per unit | Cutover customers | Cutover accounts | Offline bytes | Stream bytes | Generation seconds | Validation seconds |
+| Measurement | Customers per unit | Cutover customers | Cutover accounts | Offline bytes | Stream bytes | Generation seconds | Validation seconds |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Historical text | 3,300 | 3,278 | 5,488 | 1,346,693,500 | 307,655,539 | 954.77 | 753.54 |
-| Historical text | 3,601 | 3,597 | 6,028 | 1,438,704,592 | 339,074,412 | 896.26 | 829.15 |
-| Typed native | 3,601 | 3,597 | 6,028 | 1,438,704,592 | 339,074,412 | 470.48 | 831.70 |
+| Calibration input | 3,300 | 3,278 | 5,488 | 1,346,693,500 | 307,655,539 | | |
+| Calibrated volume | 3,601 | 3,597 | 6,028 | 1,438,704,592 | 339,074,412 | | |
+| Runtime | 3,601 | 3,597 | 6,028 | 1,438,704,592 | 339,074,412 | 470.48 | 831.70 |
 
-The typed run matches all calibrated source bytes, audit records, and ordered typed hidden records. Its command takes 1,304.80 seconds including validation, compared with the historical 1,726.97 seconds. These are single-run observations, not a larger-factor runtime guarantee.
+The runtime measurement covers the calibrated source bytes, audit records, and ordered typed hidden records. Its command takes 1,304.80 seconds including validation. This single run does not establish larger-factor throughput.
 
 All runs contain 430,169,772 fixed offline bytes. The first contains 916,523,728 variable offline bytes; the calibrated run contains 1,008,534,820, or 0.853482% above the one-GB variable target. At the default anchor, combined initial and streamed cash transactions are 69.189662% settlements, 16.302305% deposits, 8.572914% dividends, and 5.935119% withdrawals. Four fixed security-selection slots per account allow repeated buys in the same small universe; the dividend-paying share remains 40%.
 

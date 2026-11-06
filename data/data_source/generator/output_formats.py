@@ -40,7 +40,9 @@ def field_dtype(field):
         return pl.Int64
     if datatype.startswith("CHAR(") or field.name == "TX_RATE":
         return pl.String
-    _numeric_type(datatype)
+    _, _, scale = _numeric_type(datatype)
+    if scale not in (0, 2):
+        raise ValueError(f"Unsupported numeric scale {scale} in {field.name}: integer storage requires scale 0 or 2.")
     return pl.Int64
 
 
@@ -64,7 +66,7 @@ def padded(value, width: int) -> pl.Expr:
 
 
 def timestamp_text(value) -> pl.Expr:
-    """Format timezone-free epoch seconds exactly like the existing source clock."""
+    """Format timezone-free epoch seconds as whole-second source timestamps."""
     value = pl.col(value) if isinstance(value, str) else value
     return pl.from_epoch(value, time_unit="s").dt.strftime("%Y-%m-%d %H:%M:%S")
 
@@ -95,7 +97,7 @@ def cash_name() -> pl.Expr:
 
 
 def order_key(family: str) -> pl.Expr:
-    """Build the complete legacy ASCII key natively from typed event facts."""
+    """Build the complete ASCII sort key natively from typed event facts."""
     if family == "Trade":
         initial = padded("T_ID", 15)
         daily = pl.concat_str([timestamp_text("T_DTS"), padded("T_ID", 15), padded("_ordinal", 8)], separator="/")
@@ -111,7 +113,7 @@ def order_key(family: str) -> pl.Expr:
     elif family == "HoldingHistory":
         values = [timestamp_text("_timestamp"), padded("_account", 11), padded("_ordinal", 12)]
     elif family == "WatchHistory":
-        # The old key uses a zero-based security ordinal; the source symbol is one-based.
+        # The sort key uses a zero-based security ordinal; the source symbol is one-based.
         values = [timestamp_text("W_DTS"), padded("W_C_ID", 11), padded(pl.col("W_S_SYMB") - 1, 10), pl.col("W_ACTION")]
     elif family in ("Customer", "CustomerMgmt"):
         customer = "C_ID" if family == "Customer" else "_customer"
@@ -185,6 +187,7 @@ class NativeContract:
                 formatted = value.cast(pl.String)
             else:
                 signed, precision, scale = _numeric_type(datatype)
+                field_dtype(field)  # Reject scales that integral formatting cannot represent.
                 maximum = 10**precision - 1
                 minimum = -maximum if signed else 0
                 self.bounds.append(((value < minimum) | (value > maximum)).fill_null(False))

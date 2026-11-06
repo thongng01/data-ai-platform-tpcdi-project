@@ -750,7 +750,7 @@ class BusinessSimulation:
         if day.date == self.config.cutover:
             for order in self.orders.values():
                 # The initial pending snapshot keeps the original creation date
-                # with the order's last recorded second and status, as before.
+                # with the order's last recorded second and status.
                 self.record_trade(order, day.offset, order.seconds, order.status, value_day=order.created_day)
         self.maximum_open_orders = max(self.maximum_open_orders, len(self.orders))
         self.maximum_watches = max(self.maximum_watches, sum(len(w) for w in self.watches.values()))

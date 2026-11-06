@@ -233,21 +233,13 @@ Phase times cover references, market, population, activity, prospects, final exp
 
 These runs cover generation stages 1 to 3 over 2014-01-01 through 2025-12-31, with two workers, two Polars threads per worker, seed `20261029`, 1,250 companies, and 2,000 securities. Each run passes full saved-file validation. Generation seconds sum the measured phases before validation; peak RSS covers the supervisor and all descendants. Disk sampling occurs every two seconds, so temporary storage is a sampled peak.
 
-| Export runtime | Factor | Customers per unit | Offline bytes | Stream bytes | Generation seconds | Validation seconds | Peak RSS MiB | Peak temporary GiB |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Historical text | 1 | 3,300 | 1,346,693,500 | 307,655,539 | 954.77 | 753.54 | 1,374.79 | 2.426 |
-| Historical text | 1 | 3,601 | 1,438,704,592 | 339,074,412 | 896.26 | 829.15 | 1,434.32 | 2.585 |
-| Typed native | 1 | 3,601 | 1,438,704,592 | 339,074,412 | 470.48 | 831.70 | 1,774.40 | 3.463 |
+| Measurement | Factor | Customers per unit | Cutover customers | Cutover accounts | Offline bytes | Stream bytes | Generation seconds | Validation seconds | Peak RSS MiB | Peak temporary GiB |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Calibration input | 1 | 3,300 | 3,278 | 5,488 | 1,346,693,500 | 307,655,539 | | | | |
+| Calibrated volume | 1 | 3,601 | 3,597 | 6,028 | 1,438,704,592 | 339,074,412 | | | | |
+| Runtime | 1 | 3,601 | 3,597 | 6,028 | 1,438,704,592 | 339,074,412 | 470.48 | 831.70 | 1,774.40 | 3.463 |
 
-The typed run matches all 18,051 source files, 5,574 audit rows, and eight ordered typed hidden files from the calibrated text run. Its full command takes 1,304.80 seconds, including validation. The historical command takes 1,726.97 seconds. These single-run observations do not isolate host variation or establish larger-factor throughput. The RSS column covers the generator supervisor and descendants; including the separate measurement wrapper raises the typed run's sampled peak to 1,909.45 MiB.
-
-### Original Stage 1 Reference Measurement
-
-This historical measurement covers the full 2014 through 2025 reference calendar with two workers and 3,300 cutover customers per unit. It records the original stage 1 behavior and source format, before the attrition and source-recording stages. It is not a runtime or volume guarantee for another configuration.
-
-| Factor | Customers per unit | Offline bytes | Stream bytes | Generation seconds | Validation seconds | Peak RSS MiB | Peak temporary GiB |
-| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 | 3,300 | 1,302,815,601 | 561,699,602 | 1,284.40 | 948.49 | 1,279.64 | 2.562 |
+The runtime measurement covers all 18,051 source files, 5,574 audit rows, and eight ordered typed hidden files. Its full command takes 1,304.80 seconds, including validation. This single run does not establish larger-factor throughput. The RSS column covers the generator supervisor and descendants; including the separate measurement wrapper raises the sampled peak to 1,909.45 MiB.
 
 ### Volume Calibration
 

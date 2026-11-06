@@ -148,8 +148,8 @@ class SourceRecorder:
             elif field == "C_DOB":
                 incorrect = pl.col("_record_day") + (self.generation.config.start - EPOCH_DATE).days + 1
             else:
-                # Python's original decimal calculation cannot overflow. A wide
-                # intermediate preserves that rule before the VALUE_T bound check.
+                # The product can exceed Int64 before the VALUE_T bound check.
+                # Int128 keeps the full trade value until that check rejects it.
                 incorrect = pl.col("T_TRADE_PRICE").cast(pl.Int128) * pl.col("T_QTY").cast(pl.Int128) + 1
                 if frame.filter(mask).select((incorrect > MAX_FEE_CENTS).any()).item():
                     raise ValueError("A fee error above this trade value cannot fit VALUE_T; reduce the configured trade wealth or disable this fee error.")
@@ -198,7 +198,7 @@ class SourceRecorder:
             recorded = dict(self.transform(source, day, MappingProxyType(recorded)))
         return recorded
 
-    def xml_action(self, kind, timestamp, customer_id, customer_fields, account_fields, key=None, *, ordinal=0):
+    def xml_action(self, kind, timestamp, customer_id, customer_fields, account_fields, *, ordinal=0):
         """Record a CMS action through the same error seam as daily customers."""
         from .customers import xml_action
 
@@ -213,7 +213,7 @@ class SourceRecorder:
                                (xml_action(kind, timestamp, customer_id, recorded, accounts),),
                                order=(epoch_seconds, int(customer_id), int(ordinal), kind))
 
-    def finwire(self, kind, day, fields, key=None, relative=None, layout=None):
+    def finwire(self, kind, day, fields, *, layout):
         """Record released company, security, and financial fields before padding."""
         from .market import _fixed
 
