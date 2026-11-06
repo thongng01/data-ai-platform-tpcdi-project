@@ -2,6 +2,7 @@
 
 import json
 import shutil
+from dataclasses import replace
 from datetime import date
 from types import SimpleNamespace
 
@@ -133,7 +134,7 @@ def test_exported_replay_and_partition_replay_agree(exported, monkeypatch):
     assert result["customer_actions"].get("CLOSEACCT", 0) + result["customer_actions"].get("INACT", 0) > 0
     assert not list(root.glob("validation-*"))
     monkeypatch.setattr(validation, "_VALIDATION_PARTITION_BYTES", max(1, result["bytes"] // 3))
-    partitioned = validate(root, config, inventory)
+    partitioned = validate(root, replace(config, workers=2), inventory)
     assert partitioned["partitions"] >= 3
     for name in ("customers", "accounts", "trades", "completed_trades", "cash_transactions", "rows", "bytes"):
         assert partitioned[name] == result[name]
@@ -239,6 +240,42 @@ def test_corrupted_source_fails_without_hash_evidence(exported, tmp_path, case, 
     with pytest.raises(ValidationError, match=match):
         validate(root, config)
     assert not list(root.glob("validation-*"))
+
+
+def _failing_partition(stage, partition):
+    """Make the later partition fail first in time, but not in result order."""
+    import time
+
+    if partition == 0:
+        time.sleep(.05)
+    raise ValidationError(f"Failed partition {partition}.")
+
+
+def test_parallel_replay_raises_lowest_failing_partition(tmp_path):
+    """Keep serial failure selection even when another partition fails sooner."""
+    from concurrent.futures import ProcessPoolExecutor
+    from multiprocessing import get_context
+
+    stage = validation._Stage(tmp_path, 3)
+    with ProcessPoolExecutor(max_workers=2, mp_context=get_context("spawn")) as executor:
+        with pytest.raises(ValidationError, match=r"Failed partition 0\."):
+            validation._replay_wave(executor, _failing_partition, stage)
+
+
+def test_replay_corruption_has_same_message_with_multiple_workers(exported, tmp_path, monkeypatch):
+    """Reject a changed holding through the same account check in both modes."""
+    original, config, _ = exported
+    root = tmp_path / "parallel-corrupt"
+    shutil.copytree(original, root, ignore=shutil.ignore_patterns("_work"))
+    _mutate_row(root, "HoldingHistory", "HH_H_T_ID", lambda value: str(int(value) + 1))
+    monkeypatch.setattr(validation, "_VALIDATION_PARTITION_BYTES", 128 * 1024)
+    messages = []
+    for workers in (1, 2):
+        with pytest.raises(ValidationError, match="Holding origin") as error:
+            validate(root, replace(config, workers=workers))
+        messages.append(str(error.value))
+        assert not list(root.glob("validation-*"))
+    assert messages[0] == messages[1]
 
 
 @pytest.mark.parametrize("source_name,partitions", [("CashTransaction", 128), ("DailyMarket", 1024)])

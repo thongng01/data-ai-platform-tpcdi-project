@@ -8,10 +8,12 @@ import math
 import re
 import tempfile
 from collections import defaultdict
+from concurrent.futures import ProcessPoolExecutor
 from contextlib import closing
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from itertools import groupby
+from multiprocessing import get_context
 from pathlib import Path
 from typing import NamedTuple
 from xml.etree import ElementTree as ET
@@ -999,6 +1001,36 @@ def _account_replay(stage, partition, config, securities, sessions, brokers):
     return len(accounts), len(replay.trades), len(replay.completed)
 
 
+def _account_partition(stage, partition, config, securities, sessions, brokers):
+    """Check snapshot identities before replaying one independent account partition."""
+    prospects = stage.frame("ProspectIdentity", partition)
+    _require(prospects.is_empty() or not prospects.select("identity", "date").is_duplicated().any(),
+             "Duplicate Prospect identity in one snapshot.")
+    return _account_replay(stage, partition, config, securities, sessions, brokers)
+
+
+def _replay_wave(executor, function, stage, *arguments):
+    """Return partition results in serial order, including the first failing partition."""
+    if executor is None:
+        return [function(stage, partition, *arguments) for partition in range(stage.partitions)]
+    futures = [executor.submit(function, stage, partition, *arguments) for partition in range(stage.partitions)]
+    # Reading futures in partition order makes the failure independent of scheduling.
+    return [future.result() for future in futures]
+
+
+def _replay_partitions(stage, config, securities, sessions, brokers, tax_rates):
+    """Finish every customer lifetime before starting the dependent account wave."""
+    workers = min(config.workers, stage.partitions)
+    if workers == 1:
+        customers = _replay_wave(None, _customer_replay, stage, config, securities, tax_rates)
+        accounts = _replay_wave(None, _account_partition, stage, config, securities, sessions, brokers)
+    else:
+        # Spawn avoids inheriting Polars thread pools and open audit connections.
+        with ProcessPoolExecutor(max_workers=workers, mp_context=get_context("spawn")) as executor:
+            customers = _replay_wave(executor, _customer_replay, stage, config, securities, tax_rates)
+            accounts = _replay_wave(executor, _account_partition, stage, config, securities, sessions, brokers)
+    return sum(customers), [sum(values) for values in zip(*accounts)]
+
 
 def validate(root: Path, config: Config, inventory=None):
     """Parse saved sources, verify fault evidence, and replay bounded business state."""
@@ -1150,14 +1182,7 @@ def validate(root: Path, config: Config, inventory=None):
             observed = stage.frame("DailyMarket", market_date)
             observed_symbols = set(observed["DM_S_SYMB"].to_list()) if not observed.is_empty() else set()
             _require(observed_symbols == required_symbols, f"Market coverage is incomplete for {market_date}.")
-        customers = sum(_customer_replay(stage, partition, config, securities, tax_rates) for partition in range(partitions))
-        totals = [0, 0, 0]
-        for partition in range(partitions):
-            prospects = stage.frame("ProspectIdentity", partition)
-            _require(prospects.is_empty() or not prospects.select("identity", "date").is_duplicated().any(),
-                     "Duplicate Prospect identity in one snapshot.")
-            for index, value in enumerate(_account_replay(stage, partition, config, securities, sessions, brokers)):
-                totals[index] += value
+        customers, totals = _replay_partitions(stage, config, securities, sessions, brokers, tax_rates)
         audit.finish()
         fault_count = audit.count
         error_measurements = audit.report()

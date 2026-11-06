@@ -213,7 +213,7 @@ The semantic dataset identity includes business settings, seed, format version, 
 
 ## Validation and Measurements
 
-Validation reads the saved files and stream messages, derives its own expected-file list, and checks coverage, cadence, field widths, encoding, hashes, and identities. It stages typed records into bounded Parquet blocks, partitions replay by account and customer, and joins market prices by date. Every partition undergoes checks for legal trade transitions, settlement, cash and margin limits, holding conservation, dividends, watches, and lifetimes.
+Validation reads the saved files and stream messages, derives its own expected-file list, and checks coverage, cadence, field widths, encoding, hashes, and identities. It stages typed records into bounded Parquet blocks, partitions replay by account and customer, and joins market prices by date. The `workers` setting also controls validation replay processes. All customer partitions finish before account replay starts because accounts read the saved customer lifetimes. One worker uses serial replay. Multiple workers use spawned processes and report the error from the lowest failing partition, in the same order as serial replay. Every partition undergoes checks for legal trade transitions, settlement, cash and margin limits, holding conservation, dividends, watches, and lifetimes.
 
 Hidden account files supply traits and lifetime attributes. They do not supply balances as proof: the validator reconstructs balances and holdings from source records after it verifies any audited data errors. Parquet staging buffers have an aggregate row allowance. The source-byte partition target is an average, not a hard memory bound for one unusually large account history.
 
