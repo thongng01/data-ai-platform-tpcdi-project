@@ -92,6 +92,63 @@ The implementation adds a net 528 production Python lines against base `352fac1`
 
 The final report is `local/tmp/generator-whole/final/run/measurement.json`; it links the candidate manifest, samples, source inventories, reference checks, and command log. The independent business comparison sits beside it. The full-suite spill evidence for this source freeze is preserved under `local/tmp/generator-whole/backend-probes/final-freeze/`. Factors 5 and 100 remain unmeasured. Native spill and bounded output batches do not establish a hard total-memory bound or large-factor throughput; population and hidden-state arrays remain part of the resource requirement.
 
+### Independent Review and Proposed Next Work
+
+A new review session read the diff `352fac1...7705d88` (production commit `682659c`, documentation commits `6a4e64e` and `7705d88`) and the enclosing functions. Two read-only helper reviews covered the Standards and Spec axes separately; the review session checked their line references and owns this synthesis. No code, test, dependency, or dataset changed, and no generation, validation, or test run occurred. One helper ran a small `/tmp` probe that confirms a `True` callback result stops a Polars 2.0.0 sorted `sink_batches` query after one batch.
+
+**Spec axis.** No material finding and no integration blocker. Sort keys match the deleted key strings for every family. CT_ID runs over initial cash, then daily streams in path order. CDC_DSN restarts per daily file and carries across batches. Trade versions and channel draws use the delivery date. Selection draws, incorrect values, and audit units for data errors match the scalar rules. Group markers, scheduled-group discovery, partial retention, and publication after validation hold. Four low notes remain:
+
+| ID | Where | Note | Origin |
+| --- | --- | --- | --- |
+| P1 | `output_formats.py:190-191` | Integer numerics format as cents only when the scale is 2. A future field with another scale would print a plain integer, and the lexical check would accept it. No current field is affected; `TX_RATE` stays text. | Introduced, latent |
+| P2 | `output.py:334-342`, `396` | CT_ID order and endpoint-only Trade version splitting depend on `YYYYMMDD` paths sorting by date. A changed path layout would misorder cash IDs. | Introduced, latent |
+| P3 | `runner.py:291-312` | Manifest and summary drop four old export keys and add `export` and `phase_cpu_seconds`. No repository code reads the old keys. | Introduced |
+| P4 | `config.py:259` | The ignored `merge_fan_in` value still must lie between 2 and 64. | Preexisting check |
+
+**Standards axis.** No missing file descriptions or docstrings. Findings are low impact; S1 and S2 break documented rules, the rest are judgment calls:
+
+| ID | Where | Finding | Kind |
+| --- | --- | --- | --- |
+| S1 | `activity.py:753`; `output.py:76`, `138`, `308`; `output_formats.py:67`, `114`; `recording.py:151` | Comments and docstrings describe the removed design or editing history ("as before", "the old key", "without creating a tiny DataFrame"). `AGENTS.md` asks for lasting behavior instead. | Documented rule |
+| S2 | `recording.py:201`, `216`; `formats.py:116` | `xml_action` and `finwire` keep unused `key` and `relative` parameters; `layout` defaults to `None` but is required. `Source.check_payload` has only a test caller. | Documented rule (clear names) |
+| S3 | `recording.py:39-58` and `70-178`; `output.py:332`, `recording.py:166`, `formats.py:128`; `activity.py` six epoch-second sums | One rule lives in several places: scalar and batch error selection (the scalar Customer and Trade branches no longer serve production), the Trade channel date cut, cents formatting, and epoch-second arithmetic. A rule change needs coordinated edits. | Judgment |
+| S4 | `output.py:119-196`, `219-221`, `455` | `TypedOutput` holds buffering, spooling, sealing, discovery, sequencing, formatting, and writing. It calls `Generation` private members and sets `owner.recording_summary`. Cash and Trade special cases recur in five methods. `_metadata` returns a positional tuple that `record_batch` fills with dummy order values and slices. | Judgment |
+| S5 | `output.py:53`, `79`, `write_family` | "Delivery" names one file; the glossary uses it for the initial load or one daily delivery. | Glossary |
+| S6 | Generator README, Data Platform section 2 | "Historical text" rows and "compared with the historical 1,726.97 seconds" compare the design with code that no longer exists. The Documentation Guide keeps such comparisons in Status and records. The calibration rows themselves remain valid dataset evidence. | Judgment |
+| S7 | `output.py:20-29`, `400-412` | Budget arithmetic in `native_environment` and the ASCII-tuple order check in `consume` lack explanations. | Judgment |
+
+The earlier cross-file reviews reported no material standards findings. That conclusion holds for correctness, but S1 and S2 are concrete breaches they did not report.
+
+**Coherence.** The selected design has one producer boundary (`record`, `record_batch`, `finish`), one ordering mechanism, and one writer lifecycle. That is a real reduction in coordination mechanisms compared with catalog, spools, fan-in, heap, and adoption. Its main readability cost is S4: one large class with back-references. Splitting part writing from publication and moving the Cash and Trade rules into one family policy would follow the owner's definition of simplicity, but it does not block integration. The validator gained independence: the exporter now checks fields with native expressions, while the validator keeps the Python `Field.check` oracle.
+
+**Measured runtime map.** The full-calendar command takes 1,304.80 seconds: validation 831.70 (63.7%), activity 369.18 (28.3%), export 72.73 (5.6%), market 19.90, and prospects 7.85. Activity uses 666.22 CPU seconds over its 369.18-second wall time, about 1.8 busy cores across two processes and four customer groups. Validation uses 1,028.06 CPU seconds over 831.70 seconds, so it runs mostly on one core. Export uses 144.07 user and 112.99 system CPU seconds; the system share is unexplained. Cumulative spool time is 67.76 seconds across all producers, so activity also contains recording frames and Parquet writes. Without validation changes, command time cannot fall below about 832 seconds.
+
+The run covers 17,707,514 customer-days, 29,580,640 account-days, 2,618,469 trades, 3,484,311 cash transactions, and 3,348,179 watch changes. About 56,631 watches remain active for 6,198 active customers at the end.
+
+**Inherent order versus representation cost.** These conclusions come from reading the code; none is measured.
+
+- Inherent: each account's cash, reservations, settlements, and holdings run in time order, with same-second tie rules and holding insertion order. Daily attrition reads realized returns. Accounts in different customer groups share only read-only market data, which is why groups already run in separate processes and output does not depend on worker count.
+- Representation: `_update_customers` visits every eligible customer every day with scalar draws, and `_update_watches` visits every live watch every day. If the end-of-run average of about 9 live watches per customer held throughout, that loop would run about 160 million times. `_plan_due_orders`, `AttritionPlanner.intents`, and `AttritionPlanner.after_day` also scan all open orders or holdings in Python every day. Other costs are Python objects for each intent and order, scalar draws and structured-array access for each event, tuple building for each record, and in the validator, per-row dictionaries, `_typed`, and `_source_schema` rebuilt for every row.
+- Validation: replay partitions are independent by account or customer ID. Customer replays write lifetimes that account replays read, so the partitions can run as two parallel waves. The parse pass carries global checks (CT_ID sequence, cash, market, and initial trade order) that need ordered boundary checks if files are parsed in parallel.
+
+**Compiled-kernel readiness.** The new boundary avoids per-event Python callbacks: `record_batch` accepts aligned arrays, order columns, and `_profile`. A kernel would call it once per family and day, split by CDC flag (or the interface gains a `_flag` column), and chunk at `export_rows`. The larger interface work lies upstream: `allow_trade`, `allow_cash`, `observe_cash`, `record_outflow_candidate`, and leaving intents are planner calls inside execution. A kernel needs them as daily leaving masks, an external-flow accumulator, and an outflow-event array. Orders and holdings need array forms that keep insertion order and first origin. Numba and Cython are not installed; GCC is. Support for Python 3.14.3 and NumPy 2.5.4 is unverified, and exact floating-point operation order must be proven.
+
+**Proposed plan.** This is a proposal only; no item is accepted or authorized.
+
+| Rank | Work | Measurable question | Smallest evidence | Gate |
+| --- | --- | --- | --- | --- |
+| 0 | Pre-merge cleanup | Do S1, S2, and P1 close without behavior change? | Comment, signature, and scale-guard edits; targeted tests; source bytes untouched | Owner chooses before or after integration |
+| 1 | Attribution measurement | What exclusive CPU share goes to day scans, proposal expansion, ordered execution, record calls, and spooling? What wall share goes to parsing, fault restore, staging, market coverage, customer replay, account replay, and hashing? | Scratch timers and call counts, no cProfile. One full-calendar run that stops after activity, plus one validation pass over a hard-linked copy of `final-factor1` | Instrumented phases within 10% of 369.18 and 831.70 seconds, or report shares only |
+| 2 | Parallel scheduling | How much wall time do more activity workers and two parallel validation replay waves save, at what RSS per process? | Raise the two-worker cap; process-pool replay calling the unchanged partition functions. Bounded comparison first | Identical sources, audit, hidden files, summaries, and validation report; RSS within the owner's budget |
+| 3 | Validation parse cost | Does removing per-row schema and type resolution cut the parse share? | Stage-local conversion plans from the existing prototype (21 lines, 2,173 differential cases). File-parallel parsing only if parsing still dominates | Corruption matrix and audit tests unchanged; validator imports nothing from `output.py` or `output_formats.py` |
+| 4 | Activity day scans | Does indexing watches by due day, drawing customer updates in arrays, and avoiding daily full scans reduce activity CPU? | Python and NumPy only, no dependency | Byte-identical bounded output, then one authorized full-calendar confirmation |
+| 5 | Compiled financial core | Is ordered execution still a large share after items 2 to 4? | Design note on the interface changes above and a dependency check | Only with owner approval of a dependency or build step |
+| 6 | Larger-factor readiness | Do validation partition math and the global family sort scale? | Code review plus a factor 5 run when authorized | `_row_group_rows` falls to about 32 rows at a projected 8,000 validation partitions; export sorts each family globally with a 256 MB engine budget |
+
+Item 1 comes first because the activity phase mixes execution with recording, and the only validation profile is a bounded, heavily instrumented run (`local/tmp/generator-perf/profile/Report.md`). Items 2 and 3 address the largest phase without touching the validator's checks. Item 4 changes data structures, not business order. Item 5 waits for evidence. Business rules, named random keys, integer-cent arithmetic, source contracts, the typed output path, `Field.check`, `FaultAudit`, and the validator's independent replay stay. Daily full scans, per-row schema rebuilding, and the fixed two-worker ceiling would go.
+
+Owner decisions: authorize item 1 (full calendar, or the cheaper bounded calendar with different phase shares); choose item 0 timing; set an RSS budget for more worker processes; confirm that scheduling and caching changes keep the validator independent while native lexical checks in the validator stay out; defer item 5.
+
 ## Full-Calendar Factor 1 Runs
 
 Both runs use seed `20261029`, two workers, two Polars threads per worker, 1,250 companies, and 2,000 securities. Their configurations differ only in `customers_per_unit`: 3,300 for `factor1-3300-first` and 3,601 for `factor1-3601-calibrated`. The initial-load period is 2014-01-01 through 2018-12-31; daily delivery covers 2019-01-01 through 2025-12-31. Each runner completes generation and full validation before the final dataset rename.
