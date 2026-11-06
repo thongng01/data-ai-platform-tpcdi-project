@@ -239,8 +239,8 @@ class _Stage:
         """Join daily prices once and partition typed records for independent replay."""
         for table in list(self.buffers):
             self.flush(table)
-        # Join prices by day before account partitioning. This reads the market once,
-        # not once per account partition, and never builds a whole-market hash map.
+        # Project only price fields into the join so market metadata cannot
+        # replace a trade's account partition, delivery day, or source order.
         tables = sorted(self.buffers, key=lambda name: (name != "DailyMarket", name))
         for table in tables:
             if not self.counter[table]:
@@ -248,37 +248,24 @@ class _Stage:
             directory = self.root / "blocks" / table
             scan = pl.scan_parquet(directory / "*.parquet")
             if table == "Trade":
-                day_root = self.root / "trade-days"
-                scan.with_columns(pl.col("T_DTS").str.slice(0, 10).alias("_market_day")).sink_parquet(
-                    pl.PartitionBy(day_root, key="_market_day", max_rows_per_file=65536), mkdir=True, engine="streaming",
-                    row_group_size=self._row_group_rows(self.date_partitions, self.schemas[table]))
-                enriched = self.root / "trade-prices"
-                enriched.mkdir()
-                for day_directory in sorted(day_root.iterdir()):
-                    day = day_directory.name.split("=", 1)[1]
-                    market = self.frame("DailyMarket", day)
-                    if market.is_empty():
-                        prices = pl.DataFrame(schema={"T_S_SYMB": pl.String, "_market_low": pl.Int64, "_market_high": pl.Int64})
-                    else:
-                        prices = market.select(pl.col("DM_S_SYMB").alias("T_S_SYMB"),
-                                               pl.col("DM_LOW").alias("_market_low"), pl.col("DM_HIGH").alias("_market_high"))
-                    pl.scan_parquet(day_directory / "*.parquet").join(prices.lazy(), on="T_S_SYMB", how="left").sink_parquet(
-                        enriched / f"{day}.parquet", engine="streaming", row_group_size=8192)
-                    for path in day_directory.glob("*.parquet"):
-                        path.unlink()
-                    day_directory.rmdir()
-                day_root.rmdir()
-                scan = pl.scan_parquet(enriched / "*.parquet")
+                if self.counter.get("DailyMarket", 0):
+                    prices = pl.scan_parquet(self.root / "partitioned" / "DailyMarket" / "*" / "*.parquet").select(
+                        pl.col("DM_DATE").alias("_market_day"), pl.col("DM_S_SYMB").alias("T_S_SYMB"),
+                        pl.col("DM_LOW").alias("_market_low"), pl.col("DM_HIGH").alias("_market_high"))
+                else:
+                    prices = pl.LazyFrame(schema={"_market_day": pl.String, "T_S_SYMB": pl.String,
+                                                  "_market_low": pl.Int64, "_market_high": pl.Int64})
+                # Market settings fix the number of price rows across customer
+                # scales. Build the hash state from that side and stream trades;
+                # the optimizer must not switch to a scale-sized trade hash map.
+                scan = scan.with_columns(pl.col("T_DTS").str.slice(0, 10).alias("_market_day")).join(
+                    prices, on=["_market_day", "T_S_SYMB"], how="left", build_side="force_right")
             partition_count = self.date_partitions if table == "DailyMarket" else self.partitions
             scan.sink_parquet(pl.PartitionBy(self.root / "partitioned" / table, key="_partition", max_rows_per_file=65536),
                               mkdir=True, engine="streaming", row_group_size=self._row_group_rows(partition_count, self.schemas[table]))
             for path in directory.glob("*.parquet"):
                 path.unlink()
             directory.rmdir()
-            if table == "Trade":
-                for path in enriched.glob("*.parquet"):
-                    path.unlink()
-                enriched.rmdir()
 
     def frame(self, table, partition):
         """Read one bounded replay partition, preserving its schema when empty."""

@@ -250,6 +250,31 @@ def test_corrupted_source_fails_without_hash_evidence(exported, tmp_path, case, 
     assert not list(root.glob("validation-*"))
 
 
+@pytest.mark.parametrize("include_market", [True, False])
+def test_trade_price_join_keeps_dates_nulls_and_account_partition(tmp_path, include_market):
+    """Join only price fields by date and symbol, including absent market rows."""
+    stage = validation._Stage(tmp_path / "prices", 8, date_partitions=3)
+    market_schema = {"DM_DATE": validation.pl.String, "DM_S_SYMB": validation.pl.String,
+                     "DM_LOW": validation.pl.Int64, "DM_HIGH": validation.pl.Int64,
+                     "_partition": validation.pl.String, "_day": validation.pl.String, "_order": validation.pl.Int64}
+    trade_schema = {"T_ID": validation.pl.Int64, "T_DTS": validation.pl.String, "T_S_SYMB": validation.pl.String,
+                    "_partition": validation.pl.String, "_day": validation.pl.String, "_order": validation.pl.Int64}
+    if include_market:
+        for day, low, high in (("2019-01-02", 100, 150), ("2019-01-03", 200, 250)):
+            stage.add("DailyMarket", {"DM_DATE": day, "DM_S_SYMB": "ABC", "DM_LOW": low, "DM_HIGH": high,
+                                      "_partition": day, "_day": day, "_order": 99}, market_schema)
+    for trade_id, day in enumerate(("2019-01-02", "2019-01-03", "2019-01-04"), 1):
+        stage.add("Trade", {"T_ID": trade_id, "T_DTS": day + " 09:00:00", "T_S_SYMB": "ABC",
+                            "_partition": "7", "_day": "initial", "_order": trade_id}, trade_schema)
+    stage.finish()
+    frame = stage.frame("Trade", 7).sort("T_ID")
+    prices = frame.select("_market_low", "_market_high").rows()
+    assert prices == ([(100, 150), (200, 250), (None, None)] if include_market else [(None, None)] * 3)
+    assert frame["_day"].to_list() == ["initial"] * 3
+    assert frame["_order"].to_list() == [1, 2, 3]
+    assert not any(column.endswith("_right") for column in frame.columns)
+
+
 @pytest.mark.parametrize("case,match", [("cash_sequence", "CT_ID"), ("cash_order", "timestamp and ID"), ("market", "Market keys")])
 def test_file_boundaries_fail_before_later_parse_errors(case, match):
     """Keep the first global-key failure ahead of a later failure in the same file."""
