@@ -4,23 +4,29 @@ from datetime import date, timedelta
 from decimal import Decimal
 import json
 from pathlib import Path
-import sqlite3
 
 from .random_values import uniform
 
 
 class FaultAudit:
-    """Index fault evidence on disk so memory does not grow with run history."""
+    """Check sparse read-only evidence with separate consumption and measurement state."""
 
-    def __init__(self, root: Path, temporary: Path, config, require):
-        """Load exact audit records and reject duplicate or unsupported evidence."""
+    def __init__(self, config, require, entries):
+        """Attach immutable evidence and start this reader's one-time-use checks."""
         self.config = config
         self.require = require
-        self.database = sqlite3.connect(temporary / "faults.sqlite")
-        self.database.execute("CREATE TABLE faults (identity TEXT, field TEXT, correct TEXT, recorded TEXT, used INTEGER DEFAULT 0, PRIMARY KEY(identity, field))")
-        self.count = 0
+        # Readers never change entries. Spawned workers receive their own copy;
+        # only the coordinator combines their consumed keys and measurements.
+        self.entries = entries
+        self.used = set()
+        self.count = len(entries)
         self.measurements = {field: {delivery: {"eligible": 0, "errors": 0} for delivery in ("initial", "daily")}
                              for field in ("C_TIER", "C_DOB", "SPrating", "T_CHRG", "T_COMM")}
+
+    @classmethod
+    def load(cls, root: Path, config, require):
+        """Load exact audit records and reject duplicate or unsupported evidence."""
+        entries = {}
         path = root / "summary/data_errors.jsonl"
         if path.exists():
             require(not path.is_symlink(), "Fault audit must not be a symbolic link.")
@@ -33,14 +39,24 @@ class FaultAudit:
                     require(entry["field"] in allowed.get(entry["source"], set()), "Unsupported fault audit source or field.")
                     require(isinstance(entry["identity"], dict) and all(type(value) is str for value in entry["identity"].values()), "Invalid fault audit identity.")
                     require(type(entry["correct"]) is str and type(entry["recorded"]) is str and entry["correct"] != entry["recorded"], "Fault audit must contain distinct text values.")
-                    key = self._key(entry["source"], entry["day"], entry["identity"])
-                    try:
-                        self.database.execute("INSERT INTO faults(identity, field, correct, recorded) VALUES (?, ?, ?, ?)",
-                                              (key, entry["field"], entry["correct"], entry["recorded"]))
-                    except sqlite3.IntegrityError:
-                        require(False, "Duplicate fault audit identity and field.")
-                    self.count += 1
-        self.database.commit()
+                    key = cls._key(entry["source"], entry["day"], entry["identity"]), entry["field"]
+                    require(key not in entries, "Duplicate fault audit identity and field.")
+                    entries[key] = entry["correct"], entry["recorded"]
+        return cls(config, require, entries)
+
+    def reader(self):
+        """Share the evidence without sharing a file's mutable consumption state."""
+        return FaultAudit(self.config, self.require, self.entries)
+
+    def accept(self, used, measurements):
+        """Combine one file's verified keys and exact counts in source-file order."""
+        self.require(not self.used.intersection(used), "A fault audit entry was consumed more than once.")
+        self.require(used <= self.entries.keys(), "A worker consumed unknown fault audit evidence.")
+        self.used.update(used)
+        for field, deliveries in measurements.items():
+            for delivery, bucket in deliveries.items():
+                for name, count in bucket.items():
+                    self.measurements[field][delivery][name] += count
 
     @staticmethod
     def _key(source, day, identity):
@@ -72,7 +88,7 @@ class FaultAudit:
                  "T_COMM": self.config.trade_commission_error_rate}
         identifier = int(identity.get("C_ID", identity.get("T_ID", identity.get("CIK", 0))))
         discriminator = identity.get("ActionType", identity.get("C_ST_ID", identity.get("T_ST_ID", "")))
-        key = self._key(source, day, identity)
+        identity_key = None
         for field in candidates:
             if field not in row or row[field] in (None, ""):
                 continue
@@ -85,10 +101,13 @@ class FaultAudit:
             bucket["errors"] += int(chosen)
             if not chosen:
                 continue
-            evidence = self.database.execute("SELECT correct, recorded, used FROM faults WHERE identity=? AND field=?", (key, field)).fetchone()
+            if identity_key is None:
+                identity_key = self._key(source, day, identity)
+            key = identity_key, field
+            evidence = self.entries.get(key)
             self.require(evidence is not None, f"Missing fault audit for {source}.{field}.")
-            correct, recorded, used = evidence
-            self.require(not used, "A fault audit entry was consumed more than once.")
+            correct, recorded = evidence
+            self.require(key not in self.used, "A fault audit entry was consumed more than once.")
             self.require(str(row[field]) == recorded, f"Recorded fault differs from audit: {source}.{field}.")
             if field == "C_TIER":
                 expected = "9"
@@ -109,7 +128,7 @@ class FaultAudit:
                 self.require(Decimal(correct) * 100 == fee_cents, "Fault audit correct fee differs from the business rule.")
             self.require(recorded == expected, f"Fault audit does not describe the configured mutation: {source}.{field}.")
             row[field] = correct
-            self.database.execute("UPDATE faults SET used=1 WHERE identity=? AND field=?", (key, field))
+            self.used.add(key)
         return row
 
     def report(self):
@@ -127,9 +146,4 @@ class FaultAudit:
 
     def finish(self):
         """Reject extra audit entries that no parsed source row consumed."""
-        remaining = self.database.execute("SELECT COUNT(*) FROM faults WHERE used=0").fetchone()[0]
-        self.require(remaining == 0, "Unused fault audit evidence has no configured source fault.")
-
-    def close(self):
-        """Release the temporary disk index before its directory is removed."""
-        self.database.close()
+        self.require(len(self.used) == self.count, "Unused fault audit evidence has no configured source fault.")

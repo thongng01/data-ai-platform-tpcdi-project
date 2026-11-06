@@ -1,6 +1,5 @@
 """Keep source-visible fault identities unique without changing selection draws."""
 
-from contextlib import closing
 from datetime import date
 import json
 from types import SimpleNamespace
@@ -40,10 +39,10 @@ def test_daily_new_and_update_have_distinct_audit_keys(tmp_path):
     for entry in reversed(entries):
         generation._record_fault(entry)
     generation.finish()
-    with closing(FaultAudit(tmp_path, tmp_path, config, _require)) as audit:
-        for row, expected in zip(recorded.iter_rows(named=True), ("3", "2"), strict=True):
-            assert audit.restore("Customer", date(2019, 6, 24), row)["C_TIER"] == expected
-        audit.finish()
+    audit = FaultAudit.load(tmp_path, config, _require)
+    for row, expected in zip(recorded.iter_rows(named=True), ("3", "2"), strict=True):
+        assert audit.restore("Customer", date(2019, 6, 24), row)["C_TIER"] == expected
+    audit.finish()
     scalar_entries = []
     scalar = SourceRecorder(SimpleNamespace(config=config, _record_fault=scalar_entries.append))
     for row in frame.iter_rows(named=True):
@@ -67,11 +66,11 @@ def test_same_second_account_actions_have_distinct_audit_keys(tmp_path, kind):
     generation.finish()
     entries = [json.loads(line) for line in (tmp_path / "summary/data_errors.jsonl").read_text().splitlines()]
     assert {entry["identity"]["CA_ID"] for entry in entries} == {"11", "12"}
-    with closing(FaultAudit(tmp_path, tmp_path, config, _require)) as audit:
-        counts = _xml(_Stage(tmp_path / "stage", 1), tmp_path / "offline/initial/CustomerMgmt.xml",
-                      generation.sources, config, audit)
-        assert counts == {kind: 2}
-        audit.finish()
+    audit = FaultAudit.load(tmp_path, config, _require)
+    counts = _xml(_Stage(tmp_path / "stage", 1), tmp_path / "offline/initial/CustomerMgmt.xml",
+                  generation.sources, config, audit)
+    assert counts == {kind: 2}
+    audit.finish()
     for entry in entries:
         old_identity = {name: value for name, value in entry["identity"].items() if name != "CA_ID"}
         assert _selected(config, "CustomerMgmt", entry["day"], entry["identity"], "C_TIER") == _selected(

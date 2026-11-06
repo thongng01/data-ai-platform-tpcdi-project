@@ -103,7 +103,7 @@ def test_all_faults_validate_with_correct_settlements(recorded_run):
     audit = _audit(root)
     assert {entry["source"] for entry in audit} == {"CustomerMgmt", "Customer", "FINWIRE:CMP", "Trade"}
     assert {entry["field"] for entry in audit} == {"C_TIER", "C_DOB", "SPrating", "T_CHRG", "T_COMM"}
-    validation = validate(root, config)
+    validation = validate(root, replace(config, workers=1))
     parallel = validate(root, replace(config, workers=2))
     # File stages have separate buffers, so their measured peaks can differ.
     assert {key: value for key, value in parallel.items() if key != "maximum_parse_buffer_rows"} == {
@@ -127,8 +127,12 @@ def test_all_faults_validate_with_correct_settlements(recorded_run):
     assert "definitions/given_names.csv" in manifest["implementation_files"]
 
 
-@pytest.mark.parametrize("case", ["missing_audit", "extra_audit", "wrong_correct_fee", "changed_fault", "changed_settlement", "changed_channel"])
-def test_audit_does_not_authorize_arbitrary_corruption(recorded_run, tmp_path, case):
+@pytest.mark.parametrize("case,match", [
+    ("missing_audit", "Missing fault audit"), ("extra_audit", "Unused fault audit"),
+    ("wrong_correct_fee", "correct fee differs"), ("changed_fault", "Recorded fault differs"),
+    ("changed_settlement", "Settlement does not match"), ("changed_channel", "Trade channel differs"),
+])
+def test_audit_does_not_authorize_arbitrary_corruption(recorded_run, tmp_path, case, match):
     """Remove saved hashes to prove business and fault checks reject corruption."""
     original, config = recorded_run
     root = tmp_path / "corrupt"
@@ -161,8 +165,29 @@ def test_audit_does_not_authorize_arbitrary_corruption(recorded_run, tmp_path, c
         rows[0][-1] = "BROKER" if rows[0][-1] != "BROKER" else "WEB"
         path.write_text("".join("|".join(row) + "\n" for row in rows))
     (root / "summary/data_errors.jsonl").write_text("".join(json.dumps(entry) + "\n" for entry in entries))
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError, match=match):
         validate(root, config)
+
+
+def test_fault_parse_failures_use_lowest_source_file(recorded_run, tmp_path):
+    """Report earlier XML evidence failure before a later FINWIRE parser failure."""
+    original, config = recorded_run
+    root = tmp_path / "ordered-fault-errors"
+    shutil.copytree(original, root)
+    (root / "manifest.json").unlink()
+    path = root / "offline/initial/CustomerMgmt.xml"
+    text = path.read_text()
+    assert 'C_TIER="9"' in text
+    path.write_text(text.replace('C_TIER="9"', 'C_TIER="8"', 1))
+    path = sorted((root / "offline/initial").glob("FINWIRE*"))[-1]
+    text = path.read_text()
+    assert "BAD" in text
+    path.write_text(text.replace("BAD", "XXX", 1))
+    for workers in (1, 2):
+        with pytest.raises(ValidationError) as error:
+            validate(root, replace(config, workers=workers))
+        assert str(error.value) == "Recorded fault differs from audit: CustomerMgmt.C_TIER."
+        assert not list(root.glob("validation-*"))
 
 
 @pytest.mark.parametrize("quantity,price,valid", [(999999, 9000, True), (999999, 99999999, False)])
