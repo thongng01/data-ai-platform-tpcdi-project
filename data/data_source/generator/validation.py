@@ -169,6 +169,7 @@ class _Stage:
         self.counter = defaultdict(int)
         self.rows = 0
         self.peak_rows = 0
+        self._source_plans = {}
 
     def add(self, table, row, schema):
         """Buffer a typed row and flush the largest table when the shared row bound is reached."""
@@ -263,12 +264,33 @@ def _source_schema(source):
             "_order": pl.Int64, "_day": pl.String, "_partition": pl.String}
 
 
+def _compile_plan(source):
+    """Resolve field converters and the staging schema once per source identity."""
+    converters = []
+    for field in source.fields:
+        converter = None
+        if _field_type(field) == pl.Int64:
+            converter = _cents if ",2)" in TYPES.get(field.type, field.type) else int
+        converters.append((field.name, converter))
+    return tuple(converters), _source_schema(source)
+
+
 def _stage_source(stage, source, row, day, key):
-    """Route one typed source row to its bounded account or date partition."""
-    result = _typed(source, row)
+    """Reuse this stage's source plan to convert and route one replay row."""
+    identity = id(source)
+    entry = stage._source_plans.get(identity)
+    if entry is None:
+        converters, schema = _compile_plan(source)
+        # Retaining the Source prevents identity reuse while this stage exists.
+        entry = stage._source_plans[identity] = (source, converters, schema)
+    _, converters, schema = entry
+    result = {}
+    for name, converter in converters:
+        value = row.get(name)
+        result[name] = value if converter is None else None if value in (None, "") else converter(value)
     result.update(_flag=row.get("_flag", "I"), _order=row.get("_order", 0), _day=day,
                   _partition=str(key) if source.name == "DailyMarket" else str(int(key) % stage.partitions))
-    stage.add(source.name, result, _source_schema(source))
+    stage.add(source.name, result, schema)
 
 
 _XML_GROUPS = {
@@ -1025,10 +1047,14 @@ def _replay_partitions(stage, config, securities, sessions, brokers, tax_rates):
         customers = _replay_wave(None, _customer_replay, stage, config, securities, tax_rates)
         accounts = _replay_wave(None, _account_partition, stage, config, securities, sessions, brokers)
     else:
+        # Workers need only the saved blocks and schemas. Source conversion plans
+        # belong to parsing and contain lexical-check closures that cannot be pickled.
+        reader = _Stage(stage.root, stage.partitions, stage.date_partitions)
+        reader.schemas = stage.schemas
         # Spawn avoids inheriting Polars thread pools and open audit connections.
         with ProcessPoolExecutor(max_workers=workers, mp_context=get_context("spawn")) as executor:
-            customers = _replay_wave(executor, _customer_replay, stage, config, securities, tax_rates)
-            accounts = _replay_wave(executor, _account_partition, stage, config, securities, sessions, brokers)
+            customers = _replay_wave(executor, _customer_replay, reader, config, securities, tax_rates)
+            accounts = _replay_wave(executor, _account_partition, reader, config, securities, sessions, brokers)
     return sum(customers), [sum(values) for values in zip(*accounts)]
 
 
