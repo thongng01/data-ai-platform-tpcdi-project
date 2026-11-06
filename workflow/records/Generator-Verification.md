@@ -95,7 +95,7 @@ Both signal checks sample 512 accounts, use chronological splits, and leave 30-d
 
 ## Performance Investigation
 
-The owner ended the performance task on 2026-11-06 after profiling and scratch comparisons. No production optimization shipped, and no new full-calendar run occurred. The existing calibrated dataset remains unchanged.
+The owner ended the first performance round on 2026-11-06 after profiling and scratch comparisons, then authorized only the focused alternative comparison below. No production optimization shipped, and no new full-calendar run occurred. The existing calibrated dataset remains unchanged.
 
 The bounded workload uses factor 1, the 3,601-customer anchor, seed `20261029`, 1,250 companies, 2,000 securities, two workers, and two Polars threads. Initial load covers 2018-10-01 through 2018-12-31; daily delivery covers 2019-01-01 through 2019-07-31. Both unprofiled baselines pass full validation and take 178.79 and 170.68 seconds. All 1,515 source files and the separate error audit match across those runs and the profiled run. The bounded workload has more fixed data and shorter account histories than the full calendar.
 
@@ -113,9 +113,30 @@ These scratch exporter measurements replay the same captured inputs. They exclud
 
 Each treatment has one completed replay, without the planned closing stock repeat. Background development activity and commit latency vary, so these observations do not establish a precise speedup or full-calendar throughput. The combined candidate's sampled total output storage increases from about 200 to 328 MiB because consumed runs remain until close. Sampled temporary storage stays near 198 MiB, peak RSS stays near 160 MiB, and the 8,192-row buffer and 16-input path bounds remain unchanged. The separate captured trace occupies about 411 MiB and is not included in those output-storage figures.
 
-Compiled-check probes compare 476,495 edge and malformed field strings with the original checker. Deferred-cleanup probes cover catalog consistency around commit, deletion, and failed final checks. A separate stage-local schema-cache prototype passes 2,173 differential row cases but has no completed runtime measurement. Polars and DuckDB exporters have small feasibility checks only, not representative performance results. No production code was removed. Further comparisons, production integration, and final full-calendar verification stopped at the owner's request.
+Compiled-check probes compare 476,495 edge and malformed field strings with the original checker. Deferred-cleanup probes cover catalog consistency around commit, deletion, and failed final checks. A separate stage-local schema-cache prototype passes 2,173 differential row cases but has no completed runtime measurement. At the end of that round, Polars and DuckDB exporters had small feasibility checks only. No production code was removed. Production integration and final full-calendar verification remain outside the later bounded continuation.
 
 Evidence remains in ignored `local/tmp/generator-perf/profile/Report.md`, `local/tmp/generator-perf/export-options/measurements/`, and `local/tmp/generator-perf/validation-options/`. New datasets are under `local/runs/generator-perf/`. The prepared full-calendar wrapper was not executed.
+
+### Focused Alternative Comparison
+
+The continuation compares the improved text exporter with Polars and DuckDB using the same captured inputs, compiled source checks, safe deferred catalog cleanup, and no byte batching. Each serial replay has a 300-second ceiling, a 4 GiB aggregate RSS allowance, and a 16 GiB output-plus-trace disk allowance. All use two compute threads, an 8,192-row buffer, and a 16-input merge bound. Native adapters receive the same catalog improvement because they retain SQLite; the comparison does not leave the known per-file commit cost untreated.
+
+| Candidate | Complete replay seconds | Final-write seconds | Peak RSS MiB | Peak temporary MiB | Peak total output MiB | Exact source equality |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| Improved text, opening | 30.87 | 11.57 | 158.34 | 198.23 | 317.25 | Yes |
+| Polars | 34.78 | 13.92 | 659.49 | 211.98 | 331.93 | Yes |
+| DuckDB | 35.76 | 14.60 | 351.28 | 215.30 | 350.48 | Yes |
+| Improved text, closing | 28.41 | 10.68 | 159.19 | 198.70 | 325.95 | Yes |
+
+Every replay rehashes and matches all 1,515 source files, 2,057,139 rows, 150,184,502 source bytes, and the fault audit. Complete time includes trace decoding, ingress, encoding, temporary writes, compaction, adoption, ordering, final checks, sequence assignment, output writing, hashing, and comparison. It excludes business simulation and saved-file validation. DataFrame calls replay as bounded row iterators in all candidates. The closing text repeat checks timing variation because the first Polars gap was only 3.91 seconds. Both native runs remain slower than either text run; these few samples do not establish a precise speed ratio.
+
+Temporary disk includes the catalog, temporary sorted files, and engine spill. Total output disk includes final files; the fixed trace adds 411.49 MiB to each budget. Peaks are sampled, and no budget guard fired. WSL CPU busy averaged 5.3 to 6.0 percent across 20 logical CPUs; available memory stayed above 19.8 GiB. Windows-side load was not measured. Native engines had a 128 MB memory threshold and 1,024 MB spill allowance, separate from the process-tree RSS guard. Sampled spill was zero, so larger-than-memory behavior remains unmeasured.
+
+All candidates retain the SQLite catalog, fan-in tree, adoption, Python encoding, and final Python checks and transformations. Native adapters replace text temporary files with Parquet String columns and re-sort selected inputs through native queries. They do not remove the catalog machinery. Measured scratch sizes are 225 lines for existing `sorting.py`, 100 for the shared compiled-check experiment, 101 for the shared deferred-cleanup class, 60 additional lines for Polars, 49 further lines for DuckDB, and 12 for the comparison's composition classes. These counts include comments and copied code, not a production diff. Estimated production additions are 40 to 60 net contract lines and 10 to 25 cleanup lines; this Polars approach adds about 10 to 20 further lines, or 30 to 50 for DuckDB. No production simplification was implemented or measured by line deletion.
+
+The recommendation is the improved text approach: it has the lowest measured time and memory, adds no dependency, and avoids another engine lifecycle. Polars adds streaming and private spill-setting reliance; DuckDB adds a package, connection handling, and version-specific batch calls while still using Polars to write temporary files. All reuse duplicate rejection and safe final cleanup. The continuation adds only a small composition-equivalence check, not native failure or spill stress testing. This result applies to these sorting and temporary-file substitutions inside the existing exporter; it does not show that a different engine-native architecture cannot reduce custom code. No redesign or production integration is authorized by this comparison.
+
+The concise report is `local/tmp/generator-perf/export-options/focused-results.md`; it links four raw measurement records, load snapshots, code counts, and the composition check. All experiment processes finished, with none queued. Shared packages, existing datasets, and platform services remain unchanged.
 
 ## Calibration and Remaining Evidence
 
