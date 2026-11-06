@@ -141,8 +141,11 @@ def test_exported_replay_and_partition_replay_agree(exported, monkeypatch):
     monkeypatch.setattr(validation, "_VALIDATION_MAX_PARTITIONS", 2)
     capped = validate(root, replace(config, workers=2), inventory)
     assert capped["partitions"] == 2
-    assert {key: value for key, value in capped.items() if key != "partitions"} == {
-        key: value for key, value in result.items() if key != "partitions"}
+    # Partition count and the largest single-stage buffer peak measure runtime
+    # resources. Independent file stages can change them without changing results.
+    resources = {"partitions", "maximum_parse_buffer_rows"}
+    assert {key: value for key, value in capped.items() if key not in resources} == {
+        key: value for key, value in result.items() if key not in resources}
 
 
 @pytest.mark.parametrize("case,match", [
@@ -247,6 +250,52 @@ def test_corrupted_source_fails_without_hash_evidence(exported, tmp_path, case, 
     assert not list(root.glob("validation-*"))
 
 
+@pytest.mark.parametrize("case,match", [("cash_sequence", "CT_ID"), ("cash_order", "timestamp and ID"), ("market", "Market keys")])
+def test_file_boundaries_fail_before_later_parse_errors(case, match):
+    """Keep the first global-key failure ahead of a later failure in the same file."""
+    result = validation._ParsedFile("source")
+    result.error = ValidationError("Later row failed.")
+    if case == "cash_sequence":
+        result.first_cash = 3, ("2019-01-02 08:00:00", 3)
+    elif case == "cash_order":
+        result.first_cash = 2, ("2019-01-01 08:00:00", 2)
+    else:
+        result.first_market = "2019-01-01", "S0000000001"
+    with pytest.raises(ValidationError, match=match):
+        validation._check_file_boundary(result, 1, ("2019-01-02 08:00:00", 1), ("2019-01-02", "S0000000001"))
+
+
+def test_file_boundaries_keep_empty_files_and_advance_valid_ranges():
+    """Advance exact cash and market boundaries while empty files change no state."""
+    state = 1, ("2019-01-01 08:00:00", 1), ("2019-01-01", "S0000000001")
+    assert validation._check_file_boundary(validation._ParsedFile("empty"), *state) == state
+    result = validation._ParsedFile("next")
+    result.first_cash = 2, ("2019-01-02 08:00:00", 2)
+    result.last_cash = 4, ("2019-01-02 10:00:00", 4)
+    result.first_market = "2019-01-02", "S0000000001"
+    result.last_market = "2019-01-02", "S0000000002"
+    assert validation._check_file_boundary(result, *state) == (4, result.last_cash[1], result.last_market)
+
+
+def test_parallel_cash_cutover_keeps_first_error(exported, tmp_path):
+    """Reject a cross-file CT_ID gap before a later malformed stream amount."""
+    original, config, _ = exported
+    root = tmp_path / "cash-boundary"
+    shutil.copytree(original, root, ignore=shutil.ignore_patterns("_work"))
+    path = next(path for path in sorted((root / "stream" / "cash_transactions").glob("*.jsonl"))
+                if len(path.read_text().splitlines()) >= 2)
+    payloads = [json.loads(line) for line in path.read_text().splitlines()]
+    for payload in payloads:
+        payload["ct_id"] += 1
+    payloads[-1]["ct_amt"] = "invalid"
+    path.write_text("".join(json.dumps(payload) + "\n" for payload in payloads))
+    for workers in (1, 2):
+        with pytest.raises(ValidationError) as error:
+            validate(root, replace(config, workers=workers))
+        assert str(error.value) == "CT_ID must be one global sequence 1..N across cutover."
+        assert not list(root.glob("validation-*"))
+
+
 def _failing_partition(stage, partition):
     """Make the later partition fail first in time, but not in result order."""
     import time
@@ -321,6 +370,24 @@ def test_projected_large_factor_caps_partitions_and_bounds_writer_bytes():
         schema = validation._source_schema(source)
         if source.name == "Customer":
             schema.update(_present=pl.List(pl.String), _timestamp=pl.String, _kind=pl.String)
+        # Use maximum-width text and a full presence list to check the byte
+        # estimate against actual Arrow data, not only its own arithmetic.
+        values = {}
+        fields = {field.name: field for field in source.fields}
+        for name, datatype in schema.items():
+            if datatype == pl.String:
+                field = fields.get(name)
+                if field:
+                    width = int(field.type[5:-1]) if field.type.startswith("CHAR(") else 10 if field.type == "DATE" else 19
+                else:
+                    width = {"_flag": 1, "_day": 10, "_partition": 10, "_timestamp": 19, "_kind": 9}.get(name, 6)
+                values[name] = "X" * width
+            elif isinstance(datatype, pl.List):
+                values[name] = list(schema)
+            else:
+                values[name] = 1
+        frame = pl.DataFrame([values], schema=schema)
+        assert frame.estimated_size() <= validation._staged_row_bytes(schema)
         rows = validation._Stage._row_group_rows(partitions, schema)
         assert rows * partitions <= validation.PARQUET_BUFFER_ROWS
         assert rows * partitions * validation._staged_row_bytes(schema) <= validation._PARQUET_BUFFER_BYTES
@@ -340,7 +407,7 @@ def test_saved_hash_evidence_detects_unrelated_text_change(exported, tmp_path):
     lines[0] = ",".join(fields)
     path.write_text("\n".join(lines) + "\n")
     with pytest.raises(ValidationError, match="SHA-256"):
-        validate(root, config, inventory)
+        validate(root, replace(config, workers=2), inventory)
 
 
 def test_duplicate_json_keys_fail(tmp_path):

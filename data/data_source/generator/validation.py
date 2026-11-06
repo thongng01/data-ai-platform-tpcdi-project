@@ -9,7 +9,7 @@ import re
 import tempfile
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor
-from contextlib import closing
+from contextlib import closing, nullcontext
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from itertools import groupby
@@ -166,7 +166,7 @@ def _partition_count(total_bytes):
 def _staged_row_bytes(schema):
     """Estimate a maximum Arrow row from source widths and private staging fields."""
     widths = {"_flag": 1, "_day": 10, "_partition": 10, "_timestamp": 19, "_kind": 9,
-              "identity": 30, "date": 10}
+              "date": 10}
     for source in load_sources().values():
         for field in (*source.fields, *source.daily_version_fields):
             datatype = TYPES.get(field.type, field.type)
@@ -177,6 +177,7 @@ def _staged_row_bytes(schema):
             else:
                 width = 32
             widths[field.name] = max(widths.get(field.name, 0), width)
+    widths["identity"] = widths["AgencyID"]
     size = 0
     for name, datatype in schema.items():
         # Include offsets and validity space. XML presence lists contain field
@@ -1094,6 +1095,245 @@ def _replay_partitions(stage, config, securities, sessions, brokers, tax_rates):
     return sum(customers), [sum(values) for values in zip(*accounts)]
 
 
+def _trade_schema_counts():
+    """Start counts for the initial and dated daily Trade contracts."""
+    return {"initial_v1": 0, "daily_v1": 0, "daily_v2": 0,
+            "channels": {"WEB": 0, "MOBILE": 0, "BROKER": 0}}
+
+
+class _ParsedFile:
+    """Carry file counts, boundary keys, and staged block metadata, never source rows."""
+
+    def __init__(self, relative):
+        """Start an empty file summary that also survives a later parse failure."""
+        self.relative = relative
+        self.count = 0
+        self.first_cash = self.last_cash = None
+        self.first_market = self.last_market = None
+        self.brokers = set()
+        self.trade_schemas = _trade_schema_counts()
+        self.schemas = {}
+        self.peak_rows = 0
+        self.error = None
+
+
+# Only spawned parser workers use this process-local, read-only context.
+_PARSE_INPUTS = None
+
+
+def _initialize_parser(inputs):
+    """Load process-local lexical contracts without pickling prepared check closures."""
+    global _PARSE_INPUTS
+    _PARSE_INPUTS = {**inputs, "sources": load_sources()}
+
+
+def _independent_file(relative):
+    """Leave XML, FINWIRE, Customer, and Trade on the single audit-owning process."""
+    path = Path(relative)
+    name = "CashTransaction" if relative.startswith("stream/") else path.stem.split("_")[0]
+    return path.suffix != ".xml" and not path.name.startswith("FINWIRE") and name not in {"Customer", "Trade"}
+
+
+def _parse_independent_file(job):
+    """Parse into an isolated file stage and return no mutable audit or row state."""
+    index, relative = job
+    inputs = _PARSE_INPUTS
+    stage = _Stage(inputs["temporary"] / "files" / str(index), inputs["partitions"], inputs["date_partitions"])
+    result = _ParsedFile(relative)
+    try:
+        _parse_file(inputs["root"], relative, stage, inputs["config"], inputs["sources"], inputs["sessions"],
+                    inputs["securities"], None, inputs["saved"], {}, result)
+        for table in list(stage.buffers):
+            stage.flush(table)
+        result.schemas = stage.schemas
+        result.peak_rows = stage.peak_rows
+    except Exception as error:
+        # Keep the valid prefix so an earlier cross-file failure still wins.
+        result.error = error
+    return result
+
+
+def _check_file_boundary(result, cash_sequence, previous_cash, previous_market):
+    """Verify global keys in file order before accepting a worker's later error."""
+    if result.first_cash is not None:
+        identifier, order = result.first_cash
+        _require(identifier == cash_sequence + 1, "CT_ID must be one global sequence 1..N across cutover.")
+        _require(order > previous_cash, "Cash transactions must be in timestamp and ID order.")
+    if result.first_market is not None:
+        _require(previous_market is None or result.first_market > previous_market, "Market keys must be unique and ordered.")
+    if result.error is not None:
+        raise result.error
+    if result.last_cash is not None:
+        cash_sequence, previous_cash = result.last_cash
+    if result.last_market is not None:
+        previous_market = result.last_market
+    return cash_sequence, previous_cash, previous_market
+
+
+def _adopt_file_blocks(stage, index, result):
+    """Move completed file blocks into the shared stage without reading their rows."""
+    for table, schema in result.schemas.items():
+        stage.schemas[table] = schema
+        stage.buffers.setdefault(table, [])
+        directory = stage.root / "blocks" / table
+        directory.mkdir(parents=True, exist_ok=True)
+        for path in (stage.root / "files" / str(index) / "blocks" / table).glob("*.parquet"):
+            path.rename(directory / f"file-{index}-{path.name}")
+            stage.counter[table] += 1
+    stage.peak_rows = max(stage.peak_rows, result.peak_rows)
+
+
+def _parse_file(root, relative, stage, config, sources, sessions, securities, audit, saved, action_counts, result):
+    """Check one source file and retain ordered boundary keys before later failures."""
+    cash_sequence = 0
+    previous_cash = ("", 0)
+    previous_market = None
+    previous_initial_trade = -1
+    previous_history = None
+    path = root / relative
+    if path.name.startswith("FINWIRE"):
+        count = sum(1 for _ in _lines(path))
+    elif path.suffix == ".xml":
+        for _ in _lines(path):
+            pass
+        count = sum(action_counts.values())
+    else:
+        initial = relative.startswith("offline/initial/")
+        day = "initial" if initial else (path.stem if relative.startswith("stream/") else path.parent.name)
+        if day != "initial":
+            day = datetime.strptime(day, "%Y%m%d").date().isoformat()
+        name = "CashTransaction" if relative.startswith("stream/") else path.stem.split("_")[0]
+        source = sources[name] if initial else source_for_day(sources[name], date.fromisoformat(day), config)
+        rows = _stream(path, source) if relative.startswith("stream/") else _rows(path, source, 1 if initial else 2)
+        count = 0
+        seen = set() if name in {"HR", "Date", "Time", "StatusType", "TradeType", "Industry", "TaxRate"} else None
+        for number, row in enumerate(rows, 1):
+            count = number
+            row.setdefault("_order", number)
+            if seen is not None:
+                identity = row[source.columns[0]]
+                _require(identity not in seen, f"Duplicate {name} identity.")
+                seen.add(identity)
+            if name == "HR":
+                if row["EmployeeJobCode"] == "314":
+                    result.brokers.add(int(row["EmployeeID"]))
+            elif name == "Time":
+                _require(int(row["SK_TimeID"]) == number - 1, "Time reference must cover ordered seconds 0..86399.")
+            elif name == "Prospect":
+                identity = row["AgencyID"]
+                bucket = int.from_bytes(hashlib.blake2b(identity.encode("ascii"), digest_size=8).digest(), "big") % stage.partitions
+                schema = {"identity": pl.String, "date": pl.String, "_partition": pl.String}
+                stage.add("ProspectIdentity", {"identity": identity, "date": day, "_partition": str(bucket)}, schema)
+            elif name in {"StatusType", "TradeType", "Industry", "TaxRate", "Date"}:
+                pass
+            else:
+                timestamp_field = {"Trade": "T_DTS", "TradeHistory": "TH_DTS", "CashTransaction": "CT_DTS", "WatchHistory": "W_DTS", "DailyMarket": "DM_DATE"}.get(name)
+                if timestamp_field:
+                    date_value = row[timestamp_field][:10]
+                    lower = _prior_year(config.start) if name == "DailyMarket" else config.start
+                    _require(str(lower) <= date_value <= str(config.cutover) if initial else date_value == day,
+                             f"{name} timestamp lies outside its delivery.")
+                if name == "Trade":
+                    version = "initial_v1" if initial else "daily_v2" if day >= config.trade_channel_start else "daily_v1"
+                    result.trade_schemas[version] += 1
+                    if version == "daily_v2":
+                        _require(row["T_CHANNEL"] in result.trade_schemas["channels"], "Invalid trade channel.")
+                        result.trade_schemas["channels"][row["T_CHANNEL"]] += 1
+                    if initial:
+                        identifier = int(row["T_ID"])
+                        _require(identifier > previous_initial_trade, "Initial trades must have unique increasing IDs.")
+                        previous_initial_trade = identifier
+                    key = int(row["T_CA_ID"])
+                elif name == "TradeHistory":
+                    key = int(row["TH_T_ID"]) // 1000000
+                    order = int(row["TH_T_ID"]), row["TH_DTS"], row["_order"]
+                    _require(previous_history is None or order > previous_history, "Initial trade history keys must be ordered.")
+                    previous_history = order
+                elif name == "HoldingHistory":
+                    key = int(row["HH_T_ID"]) // 1000000
+                elif name == "CashTransaction":
+                    key = int(row["CT_CA_ID"])
+                    identifier = int(row["CT_ID"])
+                    if result.first_cash is None:
+                        result.first_cash = identifier, (row["CT_DTS"], identifier)
+                        cash_sequence = identifier - 1
+                    cash_sequence += 1
+                    _require(int(row["CT_ID"]) == cash_sequence, "CT_ID must be one global sequence 1..N across cutover.")
+                    order = row["CT_DTS"], int(row["CT_ID"])
+                    _require(order > previous_cash, "Cash transactions must be in timestamp and ID order.")
+                    previous_cash = order
+                    result.last_cash = cash_sequence, order
+                    _require(re.fullmatch(r"Deposit|Withdrawal|Trade settlement [1-9][0-9]*|Dividend [A-Za-z0-9._-]+", row["CT_NAME"]), "Invalid cash transaction name.")
+                elif name == "Customer":
+                    key = int(row["C_ID"])
+                elif name == "Account":
+                    key = int(row["CA_ID"])
+                elif name == "WatchHistory":
+                    key = int(row["W_C_ID"])
+                elif name == "DailyMarket":
+                    key = row["DM_DATE"]
+                    order = row["DM_DATE"], row["DM_S_SYMB"]
+                    if result.first_market is None:
+                        result.first_market = order
+                    _require(previous_market is None or order > previous_market, "Market keys must be unique and ordered.")
+                    previous_market = order
+                    result.last_market = order
+                    _require(key in sessions and 0 < _cents(row["DM_LOW"]) <= _cents(row["DM_CLOSE"]) <= _cents(row["DM_HIGH"]), "Invalid market date or price bounds.")
+                    _require(int(row["DM_VOL"]) >= 0, "Market volume cannot be negative.")
+                    _security(securities, row["DM_S_SYMB"], key + " 23:59:59")
+                if name in {"Customer", "Trade"}:
+                    fault_day = row["T_DTS"][:10] if name == "Trade" else day
+                    row = audit.restore(name, fault_day, row)
+                _stage_source(stage, source, row, day, key)
+        if name == "Time":
+            _require(count == 86400, "Time reference must contain 86400 seconds.")
+    result.count = count
+    if saved is not None:
+        evidence = saved[relative]
+        with path.open("rb") as stream:
+            digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        _require((count, path.stat().st_size, digest) == (evidence["rows"], evidence["bytes"], evidence["sha256"]),
+                 f"File rows, bytes, or SHA-256 differ from saved evidence: {relative}")
+
+
+def _parse_files(root, expected, stage, config, sources, sessions, securities, audit, saved, action_counts):
+    """Parse independent files in workers and consume all evidence in source order."""
+    files = sorted(expected, key=lambda name: (0 if name.startswith("offline/initial/") else 1 if name.startswith("offline/") else 2, name))
+    jobs = [(index, relative) for index, relative in enumerate(files) if _independent_file(relative)]
+    inputs = {"root": root, "temporary": stage.root, "partitions": stage.partitions,
+              "date_partitions": stage.date_partitions, "config": config, "sessions": sessions,
+              "securities": securities, "saved": saved}
+    workers = min(config.workers, len(jobs))
+    pool = (ProcessPoolExecutor(max_workers=workers, mp_context=get_context("spawn"),
+                                initializer=_initialize_parser, initargs=(inputs,)) if workers > 1 else nullcontext())
+    counts, brokers = {}, set()
+    cash_sequence, previous_cash, previous_market = 0, ("", 0), None
+    trade_schemas = _trade_schema_counts()
+    with pool as executor:
+        # Bound queued summaries and tasks independently of the source file count.
+        results = (executor.map(_parse_independent_file, jobs, buffersize=workers * 128)
+                   if executor is not None else None)
+        for index, relative in enumerate(files):
+            if executor is not None and _independent_file(relative):
+                result = next(results)
+            else:
+                result = _ParsedFile(relative)
+                try:
+                    _parse_file(root, relative, stage, config, sources, sessions, securities, audit, saved, action_counts, result)
+                except Exception as error:
+                    result.error = error
+            cash_sequence, previous_cash, previous_market = _check_file_boundary(result, cash_sequence, previous_cash, previous_market)
+            if result.schemas:
+                _adopt_file_blocks(stage, index, result)
+            counts[relative] = result.count
+            brokers.update(result.brokers)
+            for version in ("initial_v1", "daily_v1", "daily_v2"):
+                trade_schemas[version] += result.trade_schemas[version]
+            for channel in trade_schemas["channels"]:
+                trade_schemas["channels"][channel] += result.trade_schemas["channels"][channel]
+    return counts, brokers, cash_sequence, trade_schemas
+
+
 def validate(root: Path, config: Config, inventory=None):
     """Parse saved sources, verify fault evidence, and replay bounded business state."""
     root = Path(root)
@@ -1113,14 +1353,6 @@ def validate(root: Path, config: Config, inventory=None):
     sessions = _sessions(config)
     industries = {row["IN_ID"] for row in _rows(root / "offline" / "initial" / "Industry.txt", sources["Industry"], 1)}
     tax_rates = {row["TX_ID"] for row in _rows(root / "offline" / "initial" / "TaxRate.txt", sources["TaxRate"], 1)}
-    brokers = set()
-    counts = {}
-    cash_sequence = 0
-    previous_cash = ("", 0)
-    previous_market = None
-    previous_initial_trade = -1
-    previous_history = None
-    trade_schemas = {"initial_v1": 0, "daily_v1": 0, "daily_v2": 0, "channels": {"WEB": 0, "MOBILE": 0, "BROKER": 0}}
     with tempfile.TemporaryDirectory(prefix="validation-", dir=root) as temporary, closing(FaultAudit(root, Path(temporary), config, _require)) as audit:
         securities, finwire_counts = _finwire([root / name for name in expected if Path(name).name.startswith("FINWIRE")], config, industries, audit)
         stage = _Stage(Path(temporary), partitions, date_partitions=len(sessions))
@@ -1137,103 +1369,8 @@ def validate(root: Path, config: Config, inventory=None):
                     row["_partition"] = str(row["account_id"] % partitions)
                     stage.add("Hidden", row, hidden_schema)
         action_counts = _xml(stage, root / "offline" / "initial" / "CustomerMgmt.xml", sources, config, audit)
-        for relative in sorted(expected, key=lambda name: (0 if name.startswith("offline/initial/") else 1 if name.startswith("offline/") else 2, name)):
-            path = root / relative
-            if path.name.startswith("FINWIRE"):
-                count = sum(1 for _ in _lines(path))
-            elif path.suffix == ".xml":
-                for _ in _lines(path):
-                    pass
-                count = sum(action_counts.values())
-            else:
-                initial = relative.startswith("offline/initial/")
-                day = "initial" if initial else (path.stem if relative.startswith("stream/") else path.parent.name)
-                if day != "initial":
-                    day = datetime.strptime(day, "%Y%m%d").date().isoformat()
-                name = "CashTransaction" if relative.startswith("stream/") else path.stem.split("_")[0]
-                source = sources[name] if initial else source_for_day(sources[name], date.fromisoformat(day), config)
-                rows = _stream(path, source) if relative.startswith("stream/") else _rows(path, source, 1 if initial else 2)
-                count = 0
-                seen = set() if name in {"HR", "Date", "Time", "StatusType", "TradeType", "Industry", "TaxRate"} else None
-                for number, row in enumerate(rows, 1):
-                    count = number
-                    row.setdefault("_order", number)
-                    if seen is not None:
-                        identity = row[source.columns[0]]
-                        _require(identity not in seen, f"Duplicate {name} identity.")
-                        seen.add(identity)
-                    if name == "HR":
-                        if row["EmployeeJobCode"] == "314":
-                            brokers.add(int(row["EmployeeID"]))
-                    elif name == "Time":
-                        _require(int(row["SK_TimeID"]) == number - 1, "Time reference must cover ordered seconds 0..86399.")
-                    elif name == "Prospect":
-                        identity = row["AgencyID"]
-                        bucket = int.from_bytes(hashlib.blake2b(identity.encode("ascii"), digest_size=8).digest(), "big") % partitions
-                        schema = {"identity": pl.String, "date": pl.String, "_partition": pl.String}
-                        stage.add("ProspectIdentity", {"identity": identity, "date": day, "_partition": str(bucket)}, schema)
-                    elif name in {"StatusType", "TradeType", "Industry", "TaxRate", "Date"}:
-                        pass
-                    else:
-                        timestamp_field = {"Trade": "T_DTS", "TradeHistory": "TH_DTS", "CashTransaction": "CT_DTS", "WatchHistory": "W_DTS", "DailyMarket": "DM_DATE"}.get(name)
-                        if timestamp_field:
-                            date_value = row[timestamp_field][:10]
-                            lower = _prior_year(config.start) if name == "DailyMarket" else config.start
-                            _require(str(lower) <= date_value <= str(config.cutover) if initial else date_value == day,
-                                     f"{name} timestamp lies outside its delivery.")
-                        if name == "Trade":
-                            version = "initial_v1" if initial else "daily_v2" if day >= config.trade_channel_start else "daily_v1"
-                            trade_schemas[version] += 1
-                            if version == "daily_v2":
-                                _require(row["T_CHANNEL"] in trade_schemas["channels"], "Invalid trade channel.")
-                                trade_schemas["channels"][row["T_CHANNEL"]] += 1
-                            if initial:
-                                identifier = int(row["T_ID"])
-                                _require(identifier > previous_initial_trade, "Initial trades must have unique increasing IDs.")
-                                previous_initial_trade = identifier
-                            key = int(row["T_CA_ID"])
-                        elif name == "TradeHistory":
-                            key = int(row["TH_T_ID"]) // 1000000
-                            order = int(row["TH_T_ID"]), row["TH_DTS"], row["_order"]
-                            _require(previous_history is None or order > previous_history, "Initial trade history keys must be ordered.")
-                            previous_history = order
-                        elif name == "HoldingHistory":
-                            key = int(row["HH_T_ID"]) // 1000000
-                        elif name == "CashTransaction":
-                            key = int(row["CT_CA_ID"])
-                            cash_sequence += 1
-                            _require(int(row["CT_ID"]) == cash_sequence, "CT_ID must be one global sequence 1..N across cutover.")
-                            order = row["CT_DTS"], int(row["CT_ID"])
-                            _require(order > previous_cash, "Cash transactions must be in timestamp and ID order.")
-                            previous_cash = order
-                            _require(re.fullmatch(r"Deposit|Withdrawal|Trade settlement [1-9][0-9]*|Dividend [A-Za-z0-9._-]+", row["CT_NAME"]), "Invalid cash transaction name.")
-                        elif name == "Customer":
-                            key = int(row["C_ID"])
-                        elif name == "Account":
-                            key = int(row["CA_ID"])
-                        elif name == "WatchHistory":
-                            key = int(row["W_C_ID"])
-                        elif name == "DailyMarket":
-                            key = row["DM_DATE"]
-                            order = row["DM_DATE"], row["DM_S_SYMB"]
-                            _require(previous_market is None or order > previous_market, "Market keys must be unique and ordered.")
-                            previous_market = order
-                            _require(key in sessions and 0 < _cents(row["DM_LOW"]) <= _cents(row["DM_CLOSE"]) <= _cents(row["DM_HIGH"]), "Invalid market date or price bounds.")
-                            _require(int(row["DM_VOL"]) >= 0, "Market volume cannot be negative.")
-                            _security(securities, row["DM_S_SYMB"], key + " 23:59:59")
-                        if name in {"Customer", "Trade"}:
-                            fault_day = row["T_DTS"][:10] if name == "Trade" else day
-                            row = audit.restore(name, fault_day, row)
-                        _stage_source(stage, source, row, day, key)
-                if name == "Time":
-                    _require(count == 86400, "Time reference must contain 86400 seconds.")
-            counts[relative] = count
-            if saved is not None:
-                evidence = saved[relative]
-                with path.open("rb") as stream:
-                    digest = hashlib.file_digest(stream, "sha256").hexdigest()
-                _require((count, path.stat().st_size, digest) == (evidence["rows"], evidence["bytes"], evidence["sha256"]),
-                         f"File rows, bytes, or SHA-256 differ from saved evidence: {relative}")
+        counts, brokers, cash_sequence, trade_schemas = _parse_files(
+            root, expected, stage, config, sources, sessions, securities, audit, saved, action_counts)
         stage.finish()
         for market_date in sessions:
             if not str(_prior_year(config.start)) <= market_date <= str(config.end):
