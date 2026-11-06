@@ -17,7 +17,7 @@ ORDER_COLUMNS = {
     "HoldingHistory": ("_timestamp", "_account", "_ordinal"),
     "Customer": ("_timestamp", "_ordinal", "_action"),
     "Account": ("_timestamp", "_ordinal"),
-    "CustomerMgmt": ("_timestamp", "_customer", "_ordinal", "_action"),
+    "CustomerMgmt": ("_timestamp", "_customer", "_ordinal", "_action", "_account"),
     "FINWIRE": ("_posting", "_rank", "_identity"),
     "Prospect": ("_identity",),
     "__audit": ("_audit_key",),
@@ -118,6 +118,10 @@ def order_key(family: str) -> pl.Expr:
     elif family in ("Customer", "CustomerMgmt"):
         customer = "C_ID" if family == "Customer" else "_customer"
         values = [timestamp_text("_timestamp"), padded(customer, 11), padded("_ordinal", 8), pl.col("_action")]
+        if family == "CustomerMgmt":
+            # Account versions are local to each account, so two accounts can
+            # share the earlier customer-action key. Only those ties use CA_ID.
+            values.append(padded("_account", 11))
     elif family == "Account":
         values = [timestamp_text("_timestamp"), padded("CA_ID", 11), padded("_ordinal", 8)]
     elif family == "FINWIRE":

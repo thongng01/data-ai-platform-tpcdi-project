@@ -209,7 +209,7 @@ NYSE sessions come from pinned `exchange-calendars`, calendar `XNYS`. The fixed 
 | Customers and accounts | Stable customer ordinals and account slots; IDs are not reused |
 | Trades | Account ID times 1,000,000 plus lifetime trade ordinal; checked bounds below `10^15` |
 | Initial trades and history | Trade ID, with history timestamp and transition order |
-| Initial CMS actions | Action timestamp, customer ID, and action ordinal; omitted and empty fields stay distinct |
+| Initial CMS actions | Action timestamp, customer ID, action ordinal, action kind, and account ID as the final tie-breaker; omitted and empty fields stay distinct |
 | Cash transactions | Global `CT_ID` sequence in timestamp, account, local ordinal, and kind order, continuing across cutover |
 | Daily CDC rows | `CDC_DSN` from 1 through N within each file after business-order sorting |
 | FINWIRE | Posting timestamp, then company, security, and financial dependency order, then natural ID |

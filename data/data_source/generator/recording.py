@@ -207,11 +207,14 @@ class SourceRecorder:
         identity = _identity("CustomerMgmt", correct, kind, str(timestamp))
         recorded = self._recorded("CustomerMgmt", day, correct, identity=identity)
         accounts = [self._recorded("Account", day, fields) for fields in account_fields or ()]
+        # A single-account action uses its CA_ID only to break an existing
+        # customer-action tie. Actions with zero or multiple accounts use zero.
+        account_id = int(accounts[0]["CA_ID"]) if len(accounts) == 1 else 0
         stamp = datetime.fromisoformat(str(timestamp))
         epoch_seconds = (stamp - EPOCH_DATETIME).days * 86400 + stamp.hour * 3600 + stamp.minute * 60 + stamp.second
         self.generation.record("CustomerMgmt", (day - self.generation.config.start).days,
                                (xml_action(kind, timestamp, customer_id, recorded, accounts),),
-                               order=(epoch_seconds, int(customer_id), int(ordinal), kind))
+                               order=(epoch_seconds, int(customer_id), int(ordinal), kind, account_id))
 
     def finwire(self, kind, day, fields, *, layout):
         """Record released company, security, and financial fields before padding."""

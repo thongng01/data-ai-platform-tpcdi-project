@@ -7,6 +7,7 @@ import sys
 from datetime import date, timedelta
 from pathlib import Path
 import threading
+from xml.etree import ElementTree as ET
 
 import numpy as np
 import polars as pl
@@ -117,6 +118,33 @@ def test_duplicate_key_across_sealed_groups_fails(tmp_path):
     (tmp_path / "_work/source-parts/scheduled-groups.json").write_text("[1,2]")
     with pytest.raises(ValueError, match="Nonunique"):
         coordinator.finish()
+
+
+def test_same_day_first_account_updates_have_deterministic_xml_order(tmp_path):
+    """Order two accounts' first updates without changing their shared customer key."""
+    outputs = []
+    for account_ids in ((13, 12), (12, 13)):
+        root = tmp_path / str(account_ids[0])
+        generation = Generation(config(export_rows=1), root)
+        for account_id in account_ids:
+            generation.recorder.xml_action("UPDACCT", "2018-12-28T00:00:02", 7, None,
+                [{"CA_ID": account_id, "CA_NAME": f"Account {account_id} v1"}], ordinal=1)
+        generation.finish()
+        payload = (root / "offline/initial/CustomerMgmt.xml").read_bytes()
+        actions = ET.fromstring(payload)
+        assert [int(action.find("Customer/Account").attrib["CA_ID"]) for action in actions] == [12, 13]
+        outputs.append(payload)
+    assert outputs[0] == outputs[1]
+
+
+def test_duplicate_customer_account_update_still_fails(tmp_path):
+    """Reject repeating one account update even when other accounts can share its time."""
+    generation = Generation(config(export_rows=1), tmp_path)
+    for _ in range(2):
+        generation.recorder.xml_action("UPDACCT", "2018-12-28T00:00:02", 7, None,
+            [{"CA_ID": 12, "CA_NAME": "Account 12 v1"}], ordinal=1)
+    with pytest.raises(ValueError, match="Nonunique"):
+        generation.finish()
 
 
 def test_audit_order_ignores_initial_and_daily_delivery_rank(tmp_path):
@@ -275,7 +303,7 @@ def run_spill_probe(root: Path) -> dict:
             identifiers = np.arange(last - 1, last - settings.export_rows - 1, -1, dtype=np.int64)
             payloads = [f'<Action id="{identifier:08d}">' + "x" * 1024 + "</Action>" for identifier in identifiers]
             generation.record_batch("CustomerMgmt", 0, {"_payload": payloads},
-                order={"_timestamp": 0, "_customer": 1, "_ordinal": identifiers, "_action": "NEW"})
+                order={"_timestamp": 0, "_customer": 1, "_ordinal": identifiers, "_action": "NEW", "_account": 0})
         try:
             inventory = generation.finish()
             result = next(item for item in inventory if item["path"].endswith("CustomerMgmt.xml"))

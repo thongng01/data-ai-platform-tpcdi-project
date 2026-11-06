@@ -110,7 +110,7 @@ def test_raw_delimiter_and_control_character_fail(tmp_path):
     with pytest.raises(ValueError, match="Invalid source value"):
         generation.finish()
     generation = Generation(config(), tmp_path / "control")
-    generation.record("CustomerMgmt", 0, ("a\nb",), order=(0, 1, 0, "NEW"))
+    generation.record("CustomerMgmt", 0, ("a\nb",), order=(0, 1, 0, "NEW", 0))
     with pytest.raises(ValueError, match="Invalid encoded"):
         generation.finish()
 
