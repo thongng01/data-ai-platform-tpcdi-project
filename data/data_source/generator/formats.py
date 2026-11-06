@@ -2,7 +2,7 @@
 
 import re
 from dataclasses import dataclass, replace
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from functools import cache, cached_property
 from pathlib import Path
 
@@ -119,9 +119,14 @@ class Source:
         return replace(self, fields=(*self.fields, *self.daily_version_fields))
 
 
+def trade_channel_day(config) -> date:
+    """Return the first daily date that carries the Trade channel field."""
+    return max(config.cutover + timedelta(days=1), date.fromisoformat(config.trade_channel_start))
+
+
 def source_for_day(source: Source, day: date, config) -> Source:
     """Add the channel only to daily Trade rows on or after the configured date."""
-    if source.name == "Trade" and day > config.cutover and day.isoformat() >= config.trade_channel_start:
+    if source.name == "Trade" and day >= trade_channel_day(config):
         return source.daily_version
     return source
 

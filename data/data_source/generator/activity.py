@@ -270,6 +270,10 @@ class BusinessSimulation:
         key = (day + 1) * DAY_KEY_STRIDE + int(identity)
         return uniform(key, self.config.seed, f"{purpose}:{ordinal}")
 
+    def epoch_second(self, offset: int, second: int) -> int:
+        """Convert a simulation day offset and UTC second to source epoch seconds."""
+        return self.start_epoch_second + offset * 86400 + second
+
     def cash(self, day: date, second: int, index: int, amount: int, name: str, *, reference: int = 0) -> None:
         """Apply correct money, then capture its kind and numeric source reference."""
         if not amount:
@@ -280,7 +284,7 @@ class BusinessSimulation:
         account = int(self.accounts[index]["account_id"])
         offset = (day - self.config.start).days
         self.generation.record("CashTransaction", offset,
-                               (account, self.start_epoch_second + offset * 86400 + second, int(amount), name),
+                               (account, self.epoch_second(offset, second), int(amount), name),
                                order=(int(self.cash_ordinals[index]), int(reference)))
         kind = "Settlement" if name == "Trade settlement" else name
         self.cash_type_counts[kind] += 1
@@ -310,7 +314,7 @@ class BusinessSimulation:
         cv = self.customer_fields(customer, kind == "INACT")
         av = [self.account_fields(i, inactive) for i in indices]
         offset = (day - self.config.start).days
-        epoch_second = self.start_epoch_second + offset * 86400 + second
+        epoch_second = self.epoch_second(offset, second)
         if day <= self.config.cutover:
             # XML is the small, exact scalar encoder exception. Ordinary daily
             # customer and account records enter the same typed export buffers.
@@ -335,7 +339,7 @@ class BusinessSimulation:
         """Capture one typed trade version before its mutable order can change."""
         account = self.accounts[order.account_index]
         charge, commission = self.fees(order.quantity, price) if price is not None else (None, None)
-        epoch_second = self.start_epoch_second + (offset if value_day is None else value_day) * 86400 + seconds
+        epoch_second = self.epoch_second(offset if value_day is None else value_day, seconds)
         values = (order.trade_id, epoch_second, status, order.kind, int(account["is_cash"]),
                   order.security + 1, order.quantity, order.bid, int(account["account_id"]),
                   "Alex Broker", price, charge, commission, 0 if price is not None else None)
@@ -349,7 +353,7 @@ class BusinessSimulation:
         order.transition += 1
         offset = (day - self.config.start).days
         if day <= self.config.cutover:
-            epoch_second = self.start_epoch_second + offset * 86400 + seconds
+            epoch_second = self.epoch_second(offset, seconds)
             self.generation.record("TradeHistory", offset, (order.trade_id, epoch_second, status),
                                    order=(order.transition,))
             if status in ("CMPT", "CNCL"):
@@ -426,7 +430,7 @@ class BusinessSimulation:
         self.transition(order, day, second, "CMPT", price)
         offset = (day - self.config.start).days
         self.generation.record("HoldingHistory", offset, (origin, order.trade_id, before, after),
-                               order=(self.start_epoch_second + offset * 86400 + second,
+                               order=(self.epoch_second(offset, second),
                                       account, int(self.cash_ordinals[order.account_index])))
         self._remove_order(order)
         return True
@@ -542,7 +546,7 @@ class BusinessSimulation:
         """Record a watch change with a stable customer and security identity."""
         offset = (day - self.config.start).days
         self.generation.record("WatchHistory", offset,
-                               (customer, security + 1, self.start_epoch_second + offset * 86400 + second, action))
+                               (customer, security + 1, self.epoch_second(offset, second), action))
         self.metrics[f"watch_{action}"] += 1
 
     def _schedule_lifetimes(self) -> tuple:
