@@ -27,6 +27,8 @@ from .validation_faults import FaultAudit
 
 
 _VALIDATION_PARTITION_BYTES = 16 * 1024**2
+_VALIDATION_MAX_PARTITIONS = 1024
+_PARQUET_BUFFER_BYTES = 64 * 1024**2
 
 
 class ValidationError(ValueError):
@@ -156,6 +158,39 @@ def _typed(source, row):
 PARQUET_BUFFER_ROWS = 262144
 
 
+def _partition_count(total_bytes):
+    """Use the source-byte target until the replay partition ceiling is reached."""
+    return max(1, min(_VALIDATION_MAX_PARTITIONS, math.ceil(total_bytes / _VALIDATION_PARTITION_BYTES)))
+
+
+def _staged_row_bytes(schema):
+    """Estimate a maximum Arrow row from source widths and private staging fields."""
+    widths = {"_flag": 1, "_day": 10, "_partition": 10, "_timestamp": 19, "_kind": 9,
+              "identity": 30, "date": 10}
+    for source in load_sources().values():
+        for field in (*source.fields, *source.daily_version_fields):
+            datatype = TYPES.get(field.type, field.type)
+            if datatype.startswith("CHAR("):
+                width = int(datatype[5:-1])
+            elif datatype in {"DATE", "DATETIME"}:
+                width = 10 if datatype == "DATE" else 19
+            else:
+                width = 32
+            widths[field.name] = max(widths.get(field.name, 0), width)
+    size = 0
+    for name, datatype in schema.items():
+        # Include offsets and validity space. XML presence lists contain field
+        # names, not source values, and cannot contain more names than the schema.
+        if datatype == pl.String:
+            size += 16 + widths[name]
+        elif isinstance(datatype, pl.List):
+            size += 16 + sum(16 + len(column) for column in schema)
+        else:
+            size += 16
+    # Trade staging adds a day key and two joined price columns after parsing.
+    return size + 64
+
+
 class _Stage:
     """Write bounded typed blocks and bound row-group buffers across partitions."""
 
@@ -193,10 +228,11 @@ class _Stage:
         rows.clear()
 
     @staticmethod
-    def _row_group_rows(partitions):
-        """Bound aggregate Parquet row-group buffers across output partitions."""
+    def _row_group_rows(partitions, schema=None):
+        """Bound aggregate row counts and estimated Arrow bytes across writer partitions."""
         _require(0 < partitions <= PARQUET_BUFFER_ROWS, "Partition count exceeds the row-group buffer budget.")
-        return max(1, min(8192, PARQUET_BUFFER_ROWS // partitions))
+        byte_rows = _PARQUET_BUFFER_BYTES // _staged_row_bytes(schema) if schema else PARQUET_BUFFER_ROWS
+        return max(1, min(8192, min(PARQUET_BUFFER_ROWS, byte_rows) // partitions))
 
     def finish(self):
         """Join daily prices once and partition typed records for independent replay."""
@@ -214,7 +250,7 @@ class _Stage:
                 day_root = self.root / "trade-days"
                 scan.with_columns(pl.col("T_DTS").str.slice(0, 10).alias("_market_day")).sink_parquet(
                     pl.PartitionBy(day_root, key="_market_day", max_rows_per_file=65536), mkdir=True, engine="streaming",
-                    row_group_size=self._row_group_rows(self.date_partitions))
+                    row_group_size=self._row_group_rows(self.date_partitions, self.schemas[table]))
                 enriched = self.root / "trade-prices"
                 enriched.mkdir()
                 for day_directory in sorted(day_root.iterdir()):
@@ -234,7 +270,7 @@ class _Stage:
                 scan = pl.scan_parquet(enriched / "*.parquet")
             partition_count = self.date_partitions if table == "DailyMarket" else self.partitions
             scan.sink_parquet(pl.PartitionBy(self.root / "partitioned" / table, key="_partition", max_rows_per_file=65536),
-                              mkdir=True, engine="streaming", row_group_size=self._row_group_rows(partition_count))
+                              mkdir=True, engine="streaming", row_group_size=self._row_group_rows(partition_count, self.schemas[table]))
             for path in directory.glob("*.parquet"):
                 path.unlink()
             directory.rmdir()
@@ -1073,7 +1109,7 @@ def validate(root: Path, config: Config, inventory=None):
     if saved is not None:
         _require(set(saved) == expected, "Manifest file coverage differs from independently derived cadence.")
     total_bytes = sum((root / relative).stat().st_size for relative in actual)
-    partitions = max(1, math.ceil(total_bytes / _VALIDATION_PARTITION_BYTES))
+    partitions = _partition_count(total_bytes)
     sessions = _sessions(config)
     industries = {row["IN_ID"] for row in _rows(root / "offline" / "initial" / "Industry.txt", sources["Industry"], 1)}
     tax_rates = {row["TX_ID"] for row in _rows(root / "offline" / "initial" / "TaxRate.txt", sources["TaxRate"], 1)}

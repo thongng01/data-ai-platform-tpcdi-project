@@ -138,6 +138,11 @@ def test_exported_replay_and_partition_replay_agree(exported, monkeypatch):
     assert partitioned["partitions"] >= 3
     for name in ("customers", "accounts", "trades", "completed_trades", "cash_transactions", "rows", "bytes"):
         assert partitioned[name] == result[name]
+    monkeypatch.setattr(validation, "_VALIDATION_MAX_PARTITIONS", 2)
+    capped = validate(root, replace(config, workers=2), inventory)
+    assert capped["partitions"] == 2
+    assert {key: value for key, value in capped.items() if key != "partitions"} == {
+        key: value for key, value in result.items() if key != "partitions"}
 
 
 @pytest.mark.parametrize("case,match", [
@@ -304,6 +309,23 @@ def test_partition_sink_bounds_aggregate_row_group_buffers(tmp_path, monkeypatch
     monkeypatch.setattr(pl.LazyFrame, "sink_parquet", bounded_sink)
     stage.finish()
     assert calls
+
+
+def test_projected_large_factor_caps_partitions_and_bounds_writer_bytes():
+    """Keep projected factor 100 within a fixed partition and writer-buffer allowance."""
+    assert validation._partition_count(0) == 1
+    assert validation._partition_count(16 * 1024**2 + 1) == 2
+    partitions = validation._partition_count(135_000_000_000)
+    assert partitions == 1024
+    for source in (load_sources()["CashTransaction"], load_sources()["Customer"], load_sources()["Trade"].daily_version):
+        schema = validation._source_schema(source)
+        if source.name == "Customer":
+            schema.update(_present=pl.List(pl.String), _timestamp=pl.String, _kind=pl.String)
+        rows = validation._Stage._row_group_rows(partitions, schema)
+        assert rows * partitions <= validation.PARQUET_BUFFER_ROWS
+        assert rows * partitions * validation._staged_row_bytes(schema) <= validation._PARQUET_BUFFER_BYTES
+        if source.name == "CashTransaction":
+            assert rows >= 128
 
 
 def test_saved_hash_evidence_detects_unrelated_text_change(exported, tmp_path):
