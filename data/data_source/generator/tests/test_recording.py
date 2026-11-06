@@ -1,6 +1,7 @@
 """Prove source-only faults, dated channels, and independent fault verification."""
 
 from collections import Counter
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 import json
@@ -103,6 +104,10 @@ def test_all_faults_validate_with_correct_settlements(recorded_run):
     assert {entry["source"] for entry in audit} == {"CustomerMgmt", "Customer", "FINWIRE:CMP", "Trade"}
     assert {entry["field"] for entry in audit} == {"C_TIER", "C_DOB", "SPrating", "T_CHRG", "T_COMM"}
     validation = validate(root, config)
+    parallel = validate(root, replace(config, workers=2))
+    # File stages have separate buffers, so their measured peaks can differ.
+    assert {key: value for key, value in parallel.items() if key != "maximum_parse_buffer_rows"} == {
+        key: value for key, value in validation.items() if key != "maximum_parse_buffer_rows"}
     assert validation["verified_source_errors"] == len(audit)
     for measured in validation["source_recording"]["errors"].values():
         assert measured["errors"] == measured["eligible"] > 0
