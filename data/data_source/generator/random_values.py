@@ -4,7 +4,6 @@ import hashlib
 from functools import cache
 
 import numpy as np
-import polars as pl
 
 
 @cache
@@ -41,15 +40,3 @@ def values(identifiers, seed: int, field: str) -> np.ndarray:
 def uniforms(identifiers, seed: int, field: str) -> np.ndarray:
     """Return whole-array uniform draws that cannot round up to one."""
     return (values(identifiers, seed, field) >> np.uint64(11)).astype(np.float64) / 2**53
-
-
-def money(column: str) -> pl.Expr:
-    """Format a Polars integer-cent column with two decimal places."""
-    amount = pl.col(column)
-    magnitude = amount.abs()
-    return pl.concat_str(
-        pl.when(amount < 0).then(pl.lit("-")).otherwise(pl.lit("")),
-        (magnitude // 100).cast(pl.String),
-        pl.lit("."),
-        (magnitude % 100).cast(pl.String).str.pad_start(2, "0"),
-    )

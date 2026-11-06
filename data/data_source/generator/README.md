@@ -12,7 +12,7 @@ Run commands from the repository root with Python 3.14. If `.venv` does not exis
 uv pip install --python .venv/bin/python -r data/data_source/generator/requirements.txt
 ```
 
-Each run needs a new output directory. The small configuration covers `2018-12-20` through `2019-02-03`, with a fractional scale factor and a small market:
+Each new run needs a new output directory. The small configuration covers `2018-12-20` through `2019-02-03`, with a fractional scale factor and a small market:
 
 ```bash
 .venv/bin/python -m data.data_source.generator run \
@@ -21,6 +21,17 @@ Each run needs a new output directory. The small configuration covers `2018-12-2
 .venv/bin/python -m data.data_source.generator validate local/runs/small
 .venv/bin/python -m pytest data/data_source/generator/tests -q
 ```
+
+`run` performs full saved-file validation by default. For a repeat run of unchanged code, `--skip-validation` omits only that full validator. Export still checks source contracts, ordering, duplicate keys, and expected file coverage, and records counts, byte sizes, and hashes. The runner publishes the final directory with `status: generated-unvalidated` in both `manifest.json` and `summary.json`. Independent error measurements and Trade schema counts stay null until validation succeeds. The flag is a command choice, not a configuration setting, so it does not change dataset identity.
+
+```bash
+.venv/bin/python -m data.data_source.generator run \
+  --config data/data_source/generator/configs/small.yaml \
+  --output local/runs/small-unvalidated --skip-validation
+.venv/bin/python -m data.data_source.generator validate local/runs/small-unvalidated
+```
+
+`validate` reads the saved dataset without regeneration and records `status: validated` in both reports only after every check passes. The publisher refuses `generated-unvalidated` datasets unless the caller supplies `--allow-unvalidated`; its delivery report records that override.
 
 To check repeatability, run the same business configuration into another directory and compare the saved bytes:
 
@@ -64,7 +75,8 @@ Start with `runner.worker`, which calls the generation phases in order. Then rea
 | Daily business execution | `business.py`, `activity.py`; `BusinessDay`, `Intent`, `BusinessSimulation`, `Ledger`, `HoldingBook` | Select account-wide proposals in arrays and execute ordered money and holding changes |
 | Attrition signal | `attrition.py`; `AttritionPlanner`, `ReturnHistory` | Select exits from observed history, add leaving and partial-outflow intents, and classify observed outcomes |
 | Source recording | `customers.py`, `recording.py`; `SourceRecorder` | Encode CMS actions, customer and account fields, prospect snapshots, data errors, and trade channels |
-| Bounded export | `generation.py`, `output.py`, `output_formats.py`, `formats.py`, `definitions/`; `Generation`, `TypedOutput` | Buffer typed records, seal source parts, order and check native batches, assign sequences, and write source bytes |
+| Typed source parts | `generation.py`, `output.py`; `Generation`, `PartWriter` | Route typed records through recording, buffer bounded rows, and seal each producer part |
+| Source publication | `output.py`, `output_policy.py`, `output_formats.py`, `money.py`, `formats.py`, `definitions/`; `SourcePublisher`, `SourcePolicy`, `CashPolicy`, `TradePolicy` | Discover sealed parts, order and check native batches, select family contracts, assign sequences, and write source bytes |
 | Saved-file validation | `validation.py`, `validation_faults.py`; `FaultAudit` | Parse saved bytes, verify exact data-error evidence, and replay business invariants |
 | Sampled signal check | `signal_check.py`; `check_signal` | Build source-observed features and compare a logistic model with the outflow rule using chronological splits |
 
@@ -126,7 +138,19 @@ Customer-update and watch-count draws use arrays with the same named keys as sca
 
 A cash account cannot spend below zero. A margin account cannot exceed its borrowing limit. Reservations prevent two proposals from using the same money or shares. Each completed trade produces one cash transaction and one holding change. A full sale ends the holding; a later buy starts a new origin. No short selling occurs.
 
-The runner refuses an existing output directory or its `.partial` counterpart. It writes under `.partial`, samples aggregate process-tree RSS every 0.1 seconds and disk use every two seconds, and stops the process group if a budget fails. Sampling is not a kernel memory limit. A failed run retains logs and partial evidence. A successful run passes validation before the runner removes temporary files and renames the directory.
+The runner refuses an existing output directory or its `.partial` counterpart for a new run. It writes under `.partial`, samples aggregate process-tree RSS every 0.1 seconds and disk use every two seconds, and stops the process group if a budget fails. Sampling is not a kernel memory limit. A failed run retains logs, checkpoints, and partial evidence. A successful run passes full validation before the runner removes temporary files and renames the directory, unless `--skip-validation` explicitly selects the unvalidated state.
+
+Resume a retained run with its saved configuration, or supply `--config` to change permitted runtime settings:
+
+```bash
+.venv/bin/python -m data.data_source.generator run --resume local/runs/small.partial
+```
+
+Each completed step binds its result to `_checkpoints/context.json` through a SHA-256 context digest. That file records implementation file hashes, semantic configuration, `customer_group_size`, and `export_rows`. Resume refuses a changed code version, semantic configuration, or intermediate layout before it changes files. Worker count, thread count, resource budgets, and the ignored `merge_fan_in` setting can change. Reference records, market arrays, the population plan, each customer group, prospects, the coordinator part, export, and validation have completion receipts. Group receipts retain business counts and commit last, after actual lifetimes, hidden records, and sealed source files. Incomplete groups restart from immutable planned population rows, not partly changed lifetimes.
+
+Resume keeps completed steps and redoes incomplete steps. If export did not complete, it deletes `offline/`, `stream/`, and `summary/data_errors.jsonl` before exporting all sealed parts again. It keeps hidden records and sealed parts. If export completed but validation failed, resume runs only validation. `run --resume <dataset>` also validates a final `generated-unvalidated` dataset without its temporary files. Resume always performs full validation and does not accept `--skip-validation`. Run only one command against a retained directory at a time.
+
+`timeout_seconds` defaults to 7,200 seconds and applies separately to each run attempt, including validation. Keep it in the run configuration because workload size and machine speed determine the needed budget. A factor 100 full-calendar run is estimated to need more than 10 hours; set a budget above that estimate before starting it. This estimate is not a measured factor 100 runtime.
 
 ## One Simulated Day
 
@@ -178,6 +202,17 @@ The configured raw opportunity rate is `annual_lookalike * lookalike_opportunity
 
 The recorder writes the source identity, field, correct value, and recorded value to `summary/data_errors.jsonl`. This local audit is separate from source delivery. The generator validator recomputes error selection, requires an exact match to the recorded value and supported mutation, and restores only the verified correct value for business replay. Missing, duplicate, extra, or mismatched evidence fails validation. An arbitrary fee mismatch does not become acceptable because data errors are enabled.
 
+Each audit key contains source, day, identity, and field. The identity uses only unchanged fields in the delivered record:
+
+| Audited source | Identity fields | Why records stay distinct |
+| --- | --- | --- |
+| Daily Customer | `C_ID`, `C_ST_ID`, `CDC_FLAG` | The insert uses `I`; an active update uses `U`; inactivation uses `INAC`. Each customer has at most one active update per day. |
+| CustomerMgmt | `C_ID`, `ActionType`, `ActionTS`; also `CA_ID` for `ADDACCT`, `UPDACCT`, and `CLOSEACCT` | Each account-specific action contains one Account element. The other actions occur at most once per customer and timestamp. |
+| Completed Trade | `T_ID`, `T_DTS`, `T_ST_ID` | Each unique trade completes once. |
+| FINWIRE company | `CIK`, `PTS` | Each company appears once per posting. |
+
+Error selection uses the entity ID, source, field, day, and action kind or status. It does not use the added audit discriminators. Same-day active customer versions can share a draw, as can same-kind account actions for one customer. These records receive the selected error together, but each has separate evidence.
+
 The initial trade extract always has 14 business fields. Daily deliveries on or after `trade_channel_start` add `T_CHANNEL` as the 15th business field, after the original fields. Both daily versions also carry the two CDC fields. Channel selection uses stable trade identity and account profile; traders favor direct channels and retirees favor brokers. A later update to an older trade uses its delivery date's contract.
 
 ## Output, Ordering, and Identity
@@ -194,7 +229,8 @@ Only `offline/` files become objects in `upstream`, with that prefix removed fro
   summary/data_errors.jsonl           # Exact data-error evidence
   config.json
   manifest.json
-  validation.json
+  validation.json                    # Present after full validation succeeds
+  _checkpoints/                      # Run context and completed-step receipts
   supervision.json
   worker.log
   _work/                             # Typed source parts, native spill, and state
@@ -219,9 +255,11 @@ Named random keys include entity identity, date, purpose, and local ordinal. The
 
 `Generation` accepts typed tuples and named columns for all 18 source families. Money stays in integer cents, timestamps stay in epoch seconds, dates stay in epoch days, and security symbols use numeric IDs until export. `SourceRecorder` applies batch data errors and channel selection to a separate recorded frame. XML and FINWIRE keep their format-specific encoders.
 
-`TypedOutput` bounds the aggregate row buffer by `export_rows` and writes typed Parquet fragments. Each customer group owns an isolated directory and publishes its completion marker only after it seals its parts. Export checks the scheduled groups, consolidates each family's fragments, and lets Polars order the records with disk spill. Duplicate complete sort keys fail export, including duplicates across native batch boundaries.
+`PartWriter` bounds the aggregate row buffer by `export_rows` and writes typed Parquet fragments. It receives explicit routing, batch-recording, and fault-recording functions. Each customer group owns an isolated directory and publishes its completion marker only after it consolidates and seals its parts. `SourcePublisher` reads sealed paths and completion markers without a live recorder or business state. It checks the scheduled groups and lets Polars order each family's records with disk spill. Duplicate complete sort keys fail export, including duplicates across native batch boundaries.
 
-Each bounded contract batch undergoes native formatting and field checks before it splits into delivery files. Cash IDs continue across cutover; CDC sequences restart within each file. Writers measure rows, bytes, and SHA-256 hashes as they write. Native spill settings stay inside `output.py`; the runner installs them before it starts workers. Spill budgets and sampled process-tree guards do not constitute a hard RAM limit. Population arrays and business state also consume memory.
+`output_policy.py` keeps the Cash and Trade exceptions together: cash name expansion and checks, global cash IDs, daily cash JSON, and the dated Trade channel contract. `formats.trade_channel_day` owns the channel start date used by recording and contract selection. `money.py` owns scalar and native integer-cent text formatting; validation keeps its own parsing.
+
+Each bounded contract batch undergoes native formatting and field checks before it splits into delivery files. Cash IDs continue across cutover; CDC sequences restart within each file. The publisher returns the source inventory and separate audit receipt to `Generation`. Writers measure rows, bytes, and SHA-256 hashes as they write. Native spill settings stay inside `output.py`; the runner installs them before it starts workers. Spill budgets and sampled process-tree guards do not constitute a hard RAM limit. Population arrays and business state also consume memory.
 
 The semantic dataset identity includes business settings, seed, format version, source definitions, word lists, and calendar fingerprint. The manifest also records implementation hashes and dependency versions.
 
@@ -229,7 +267,9 @@ The semantic dataset identity includes business settings, seed, format version, 
 
 Validation reads the saved files and stream messages, derives its own expected-file list, and checks coverage, cadence, field widths, encoding, hashes, and identities. It stages typed records into bounded Parquet blocks, partitions replay by account and customer, and joins market prices by date.
 
-The `workers` setting also controls validation parsing and replay processes. Independent files parse into separate staged blocks. The coordinator checks their first and last cash and market keys in file order, so global sequences and order remain exact. It accepts file hashes and counts in that same order and reports an earlier boundary failure before a later row failure. XML, FINWIRE, Customer, and Trade stay in the coordinator because one `FaultAudit` connection owns fault restoration and one-time audit consumption.
+The `workers` setting also controls validation parsing and replay processes. FINWIRE runs first in one ordered parser because its company and report checks span files and its security versions supply later checks. XML, Customer, Trade, and the other independent files then parse into separate staged blocks. One worker runs inline; multiple workers use spawned processes. The coordinator accepts file results in source-file order, including any FINWIRE failure found in the first wave. It checks the first and last cash and market keys before any later row failure, so global sequences and order remain exact.
+
+Each parser reads a private copy of the sparse fault evidence, recomputes selection, verifies the mutation, and restores correct fields. It returns consumed audit keys and integer measurement counts, not source rows. The coordinator rejects a key consumed in two files, sums every field and delivery count exactly, and requires complete audit consumption. A parser also rejects repeated consumption inside its own file. Audit memory grows with the number of error entries and parser workers; the process-tree RSS guard covers these copies.
 
 Trade pricing uses one streaming left join on market date and symbol. The join builds its hash state from only the market date, symbol, low price, and high price. This state grows with securities and sessions, not with customer scale. Missing market rows leave null prices for the coverage and replay checks. Market metadata cannot replace a trade's account partition, delivery day, or source order.
 
@@ -245,7 +285,8 @@ Tests cover deterministic personal fields, XML omission and empty text, ledger a
 | --- | --- |
 | `manifest.json` | Semantic identity, configuration, dependency and code versions, file counts, byte totals, hashes, and phase times |
 | `summary.json` | Counts and bytes by family, date, and delivery; business activity, cash transaction types, profile counts, rejected proposals, skew, and state peaks |
-| `validation.json` | Saved-file validation results |
+| `validation.json` | Saved-file validation results, written after a successful full check |
+| `_checkpoints/` | Code and configuration context, completed-step receipts, and retained phase timings |
 | `summary/signal_check.json` | Sample size, chronological split counts, model and rule metrics, or the reason for insufficient data |
 | `supervision.json` | Sampled aggregate RSS, process count, disk use, temporary disk peaks, and sampling intervals |
 

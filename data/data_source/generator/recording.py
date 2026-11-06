@@ -1,12 +1,13 @@
 """Record source errors without changing the correct business fields or ledger."""
 
 from datetime import date, datetime, timedelta
-from decimal import Decimal
 from types import MappingProxyType
 
 import numpy as np
 import polars as pl
 
+from .formats import trade_channel_day
+from .money import cents_text
 from .random_values import uniform, uniforms
 
 
@@ -27,24 +28,28 @@ def _day(config, day) -> date:
     return config.start + timedelta(days=day) if type(day) is int else date.fromisoformat(day) if isinstance(day, str) else day
 
 
-def _identity(source, fields, kind="", timestamp="") -> dict[str, str]:
-    """Build an identity from fields that recording errors never change."""
+def _identity(source, fields, kind="", timestamp="", account_id=None) -> dict[str, str]:
+    """Identify a source record with unchanged fields visible in its saved delivery."""
     if source == "CustomerMgmt":
-        return {"C_ID": str(fields["C_ID"]), "ActionType": kind, "ActionTS": timestamp}
-    names = {"Customer": ("C_ID", "C_ST_ID"), "Trade": ("T_ID", "T_DTS", "T_ST_ID"),
-             "FINWIRE:CMP": ("CIK", "PTS")}[source]
-    return {name: str(fields[name]) for name in names}
+        identity = {"C_ID": str(fields["C_ID"]), "ActionType": kind, "ActionTS": timestamp}
+        if kind in {"ADDACCT", "UPDACCT", "CLOSEACCT"}:
+            identity["CA_ID"] = str(account_id)
+        return identity
+    if source == "Customer":
+        return {"C_ID": str(fields["C_ID"]), "C_ST_ID": str(fields["C_ST_ID"]),
+                "CDC_FLAG": str(fields["_flag"])}
+    return {name: str(fields[name]) for name in ("CIK", "PTS")}
 
 
 def _selected(config, source, day, identity, field) -> bool:
-    """Select each error separately from stable entity and source-version identity."""
-    identifier = int(identity.get("C_ID", identity.get("T_ID", identity.get("CIK", 0))))
-    kind = identity.get("ActionType", identity.get("C_ST_ID", identity.get("T_ST_ID", "")))
+    """Select a scalar CMS or FINWIRE error from its entity and action identity."""
+    identifier = int(identity.get("C_ID", identity.get("CIK", 0)))
+    kind = identity.get("ActionType", "")
     purpose = f"source-error/{source}/{field}/{day}/{kind}"
     return uniform(identifier, config.seed, purpose) < getattr(config, ERROR_RATES[field])
 
 
-def _incorrect(field, correct_fields, day) -> str:
+def _incorrect(field, day) -> str:
     """Return a format-valid value that violates the selected business rule."""
     if field == "C_TIER":
         return "9"
@@ -52,11 +57,7 @@ def _incorrect(field, correct_fields, day) -> str:
         return (day + timedelta(days=1)).isoformat()
     if field == "SPrating":
         return "BAD"
-    value = Decimal(str(correct_fields["T_TRADE_PRICE"])) * int(correct_fields["T_QTY"])
-    incorrect = value + Decimal("0.01")
-    if incorrect > Decimal("99999999.99"):
-        raise ValueError("A fee error above this trade value cannot fit VALUE_T; reduce the configured trade wealth or disable this fee error.")
-    return f"{incorrect:.2f}"
+    raise ValueError(f"Unsupported scalar source error field: {field}")
 
 
 class SourceRecorder:
@@ -97,14 +98,13 @@ class SourceRecorder:
         if field == "C_DOB":
             return (EPOCH_DATE + timedelta(days=int(value))).isoformat()
         if field in ("T_CHRG", "T_COMM"):
-            value = int(value)
-            return f"{'-' if value < 0 else ''}{abs(value) // 100}.{abs(value) % 100:02d}"
+            return cents_text(value)
         return str(value)
 
     def _batch_audit(self, source, correct, field, selected, replacement):
         """Build dictionaries only for selected errors, never for ordinary rows."""
         columns = ["_record_day", field, "T_ID", "T_DTS", "T_ST_ID"] if source == "Trade" else [
-            "_record_day", field, "C_ID", "C_ST_ID"]
+            "_record_day", field, "C_ID", "C_ST_ID", "_flag"]
         evidence = correct.select(columns).with_columns(replacement.alias("_recorded")).filter(pl.Series(selected))
         entries = []
         for row in evidence.iter_rows(named=True):
@@ -113,7 +113,7 @@ class SourceRecorder:
                 identity = {"T_ID": str(row["T_ID"]), "T_DTS": stamp.isoformat(sep=" "),
                             "T_ST_ID": row["T_ST_ID"]}
             else:
-                identity = {"C_ID": str(row["C_ID"]), "C_ST_ID": row["C_ST_ID"]}
+                identity = _identity(source, row)
             day = self.generation.config.start + timedelta(days=int(row["_record_day"]))
             entries.append({"source": source, "day": str(day), "identity": identity, "field": field,
                             "correct": self._audit_value(field, row[field]),
@@ -163,8 +163,8 @@ class SourceRecorder:
         if source == "Trade" and frame.height:
             config = self.generation.config
             days = frame["_record_day"].to_numpy()
-            first_channel_day = (date.fromisoformat(config.trade_channel_start) - config.start).days
-            eligible = (days > (config.cutover - config.start).days) & (days >= first_channel_day)
+            first_channel_day = (trade_channel_day(config) - config.start).days
+            eligible = days >= first_channel_day
             profiles = frame["_profile"].to_numpy() if "_profile" in frame.columns else np.ones(frame.height, dtype=np.int64)
             if np.any(eligible & ((profiles < 0) | (profiles >= len(CHANNEL_SHARES)))):
                 raise ValueError("A trade channel requires a known behavior profile.")
@@ -184,12 +184,12 @@ class SourceRecorder:
         config = getattr(self.generation, "config", None)
         if config is not None:
             day = _day(config, day)
-            candidates = ("C_TIER", "C_DOB") if source in ("Customer", "CustomerMgmt") else ("SPrating",) if source == "FINWIRE:CMP" else ("T_CHRG", "T_COMM") if source == "Trade" and correct.get("T_ST_ID") == "CMPT" else ()
+            candidates = ("C_TIER", "C_DOB") if source == "CustomerMgmt" else ("SPrating",) if source == "FINWIRE:CMP" else ()
             if candidates:
                 identity = identity or _identity(source, correct)
                 for field in candidates:
                     if field in correct and correct[field] not in (None, "") and _selected(config, source, day, identity, field):
-                        recorded[field] = _incorrect(field, correct, day)
+                        recorded[field] = _incorrect(field, day)
                         self.generation._record_fault({"source": source, "day": str(day), "identity": identity,
                                                        "field": field, "correct": str(correct[field]), "recorded": recorded[field]})
         if self.transform is not None:
@@ -204,7 +204,11 @@ class SourceRecorder:
 
         correct = {**(customer_fields or {}), "C_ID": customer_id}
         day = date.fromisoformat(str(timestamp)[:10])
-        identity = _identity("CustomerMgmt", correct, kind, str(timestamp))
+        account_fields = list(account_fields or ())
+        account_id = int(account_fields[0]["CA_ID"]) if len(account_fields) == 1 else None
+        if kind in {"ADDACCT", "UPDACCT", "CLOSEACCT"} and account_id is None:
+            raise ValueError("An account-specific CMS action requires exactly one account.")
+        identity = _identity("CustomerMgmt", correct, kind, str(timestamp), account_id)
         recorded = self._recorded("CustomerMgmt", day, correct, identity=identity)
         accounts = [self._recorded("Account", day, fields) for fields in account_fields or ()]
         # A single-account action uses its CA_ID only to break an existing

@@ -32,6 +32,9 @@ def parser():
     send.add_argument("dataset", type=Path)
     send.add_argument("--state", type=Path, required=True, help="Private local state directory outside the dataset.")
     send.add_argument("--profile", choices=("clean",), default="clean")
+    for command in (check, send):
+        command.add_argument("--allow-unvalidated", action="store_true",
+                             help="Accept a generated-unvalidated dataset and record this override; keep all preflight checks.")
     send.add_argument("--mode", choices=("bulk", "replay"), default="bulk", help="Bulk sends without clock waits.")
     send.add_argument("--speed", type=float, default=1.0, help="Simulated seconds per wall second in replay mode.")
     send.add_argument("--daily-release", choices=("start", "end"), default="end",
@@ -51,7 +54,7 @@ def main(argv=None):
     """Run a safe command, emit a report, and return a conventional exit status."""
     arguments = parser().parse_args(argv)
     try:
-        dataset = Dataset(arguments.dataset)
+        dataset = Dataset(arguments.dataset, allow_unvalidated=arguments.allow_unvalidated)
         if arguments.command == "check":
             report = dataset.verify()
         else:

@@ -19,6 +19,8 @@ class Journal:
         if raw.is_symlink():
             raise PublisherError("The publisher state directory cannot be a symbolic link.")
         self.directory = raw.resolve()
+        self.generator_status = dataset.generator_status
+        self.allow_unvalidated = dataset.allow_unvalidated
         if self.directory.is_relative_to(dataset.root):
             raise PublisherError("Publisher state must stay outside the generator dataset.")
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -56,6 +58,12 @@ class Journal:
                     possible_duplicate_rows INTEGER NOT NULL DEFAULT 0, updated REAL NOT NULL
                 );
             """)
+            # Add policy evidence without changing an existing delivery identity.
+            # Older journals remain usable, and earlier override use stays visible.
+            columns = {row[1] for row in self.connection.execute("PRAGMA table_info(segments)")}
+            for name, definition in (("generator_status", "TEXT"), ("allow_unvalidated", "INTEGER NOT NULL DEFAULT 0")):
+                if name not in columns:
+                    self.connection.execute(f"ALTER TABLE segments ADD COLUMN {name} {definition}")
             identity = {"schema": "1", "dataset_id": dataset.dataset_id,
                         "source_fingerprint": dataset.fingerprint, "destination_id": destination_id}
             saved = dict(self.connection.execute("SELECT key, value FROM metadata"))
@@ -156,8 +164,9 @@ class Journal:
         """Record the new replay segment without changing saved event timestamps."""
         with self.connection:
             cursor = self.connection.execute(
-                "INSERT INTO segments(mode, speed, daily_release, started, status) VALUES (?, ?, ?, ?, 'running')",
-                (clock.mode, clock.speed, daily_release, time.time()),
+                "INSERT INTO segments(mode, speed, daily_release, started, status, generator_status, allow_unvalidated) "
+                "VALUES (?, ?, ?, ?, 'running', ?, ?)",
+                (clock.mode, clock.speed, daily_release, time.time(), self.generator_status, self.allow_unvalidated),
             )
         return cursor.lastrowid
 
@@ -191,7 +200,12 @@ class Journal:
         """)]
         latest = self.connection.execute("SELECT * FROM segments ORDER BY id DESC LIMIT 1").fetchone()
         segments = self.connection.execute("SELECT COUNT(*) FROM segments").fetchone()[0]
+        overrides = self.connection.execute(
+            "SELECT COUNT(*) FROM segments WHERE generator_status='generated-unvalidated' AND allow_unvalidated=1"
+        ).fetchone()[0]
         result = {"status": status, "profile": "clean", **self.identity,
+                  "generator_status": self.generator_status, "allow_unvalidated": self.allow_unvalidated,
+                  "unvalidated_delivery_segments": overrides,
                   "clock_segments": segments, "latest_clock_segment": dict(latest) if latest else None,
                   "outcomes": dict(totals), "unresolved": unresolved,
                   "unresolved_truncated": totals["uncertain_files"] > len(unresolved),

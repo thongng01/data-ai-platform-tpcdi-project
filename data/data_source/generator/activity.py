@@ -270,6 +270,10 @@ class BusinessSimulation:
         key = (day + 1) * DAY_KEY_STRIDE + int(identity)
         return uniform(key, self.config.seed, f"{purpose}:{ordinal}")
 
+    def epoch_second(self, offset: int, second: int) -> int:
+        """Convert a simulation day offset and UTC second to source epoch seconds."""
+        return self.start_epoch_second + offset * 86400 + second
+
     def cash(self, day: date, second: int, index: int, amount: int, name: str, *, reference: int = 0) -> None:
         """Apply correct money, then capture its kind and numeric source reference."""
         if not amount:
@@ -280,7 +284,7 @@ class BusinessSimulation:
         account = int(self.accounts[index]["account_id"])
         offset = (day - self.config.start).days
         self.generation.record("CashTransaction", offset,
-                               (account, self.start_epoch_second + offset * 86400 + second, int(amount), name),
+                               (account, self.epoch_second(offset, second), int(amount), name),
                                order=(int(self.cash_ordinals[index]), int(reference)))
         kind = "Settlement" if name == "Trade settlement" else name
         self.cash_type_counts[kind] += 1
@@ -310,7 +314,7 @@ class BusinessSimulation:
         cv = self.customer_fields(customer, kind == "INACT")
         av = [self.account_fields(i, inactive) for i in indices]
         offset = (day - self.config.start).days
-        epoch_second = self.start_epoch_second + offset * 86400 + second
+        epoch_second = self.epoch_second(offset, second)
         if day <= self.config.cutover:
             # XML is the small, exact scalar encoder exception. Ordinary daily
             # customer and account records enter the same typed export buffers.
@@ -335,7 +339,7 @@ class BusinessSimulation:
         """Capture one typed trade version before its mutable order can change."""
         account = self.accounts[order.account_index]
         charge, commission = self.fees(order.quantity, price) if price is not None else (None, None)
-        epoch_second = self.start_epoch_second + (offset if value_day is None else value_day) * 86400 + seconds
+        epoch_second = self.epoch_second(offset if value_day is None else value_day, seconds)
         values = (order.trade_id, epoch_second, status, order.kind, int(account["is_cash"]),
                   order.security + 1, order.quantity, order.bid, int(account["account_id"]),
                   "Alex Broker", price, charge, commission, 0 if price is not None else None)
@@ -349,7 +353,7 @@ class BusinessSimulation:
         order.transition += 1
         offset = (day - self.config.start).days
         if day <= self.config.cutover:
-            epoch_second = self.start_epoch_second + offset * 86400 + seconds
+            epoch_second = self.epoch_second(offset, seconds)
             self.generation.record("TradeHistory", offset, (order.trade_id, epoch_second, status),
                                    order=(order.transition,))
             if status in ("CMPT", "CNCL"):
@@ -426,7 +430,7 @@ class BusinessSimulation:
         self.transition(order, day, second, "CMPT", price)
         offset = (day - self.config.start).days
         self.generation.record("HoldingHistory", offset, (origin, order.trade_id, before, after),
-                               order=(self.start_epoch_second + offset * 86400 + second,
+                               order=(self.epoch_second(offset, second),
                                       account, int(self.cash_ordinals[order.account_index])))
         self._remove_order(order)
         return True
@@ -542,7 +546,7 @@ class BusinessSimulation:
         """Record a watch change with a stable customer and security identity."""
         offset = (day - self.config.start).days
         self.generation.record("WatchHistory", offset,
-                               (customer, security + 1, self.start_epoch_second + offset * 86400 + second, action))
+                               (customer, security + 1, self.epoch_second(offset, second), action))
         self.metrics[f"watch_{action}"] += 1
 
     def _schedule_lifetimes(self) -> tuple:
@@ -876,17 +880,24 @@ class BusinessSimulation:
 
 def _run_group(config_dict: dict, root_string: str, first_customer: int, last_customer: int, planner_factory=None, recorder_factory=SourceRecorder) -> dict:
     """Execute one disjoint customer group and publish its actual lifetimes."""
+    from .checkpoints import existing_checkpoints
     from .config import Config
     from .generation import Generation
     from .market import Market
 
     config = Config(**config_dict)
     root = Path(root_string)
+    checkpoints = existing_checkpoints(root)
     customers = np.load(root / "_work/population/customers.npy", mmap_mode="r+")
     accounts = np.load(root / "_work/population/accounts.npy", mmap_mode="r+")
     left, right = np.searchsorted(accounts["customer_id"], [first_customer, last_customer])
-    group_customers = customers[first_customer - 1:last_customer - 1].copy()
-    group_accounts = accounts[left:right].copy()
+    # A failed group can have flushed actual lifetimes before its final seal.
+    # Retry from immutable planned rows, never from those partly changed rows.
+    initial = root / "_work" / "population-initial"
+    planned_customers = np.load(initial / "customers.npy", mmap_mode="r") if checkpoints else customers
+    planned_accounts = np.load(initial / "accounts.npy", mmap_mode="r") if checkpoints else accounts
+    group_customers = planned_customers[first_customer - 1:last_customer - 1].copy()
+    group_accounts = planned_accounts[left:right].copy()
     generation = Generation(config, root, group_id=first_customer)
     if recorder_factory is not SourceRecorder:
         generation.recorder = recorder_factory(generation)
@@ -913,8 +924,11 @@ def _run_group(config_dict: dict, root_string: str, first_customer: int, last_cu
     frame.write_parquet(hidden / f"accounts-{first_customer:011d}.parquet")
     if hasattr(simulation.planner, "records") and simulation.planner.records:
         pl.DataFrame(simulation.planner.records, schema=ATTRITION_RECORD_SCHEMA).write_parquet(hidden / f"attrition-{first_customer:011d}.parquet")
-    generation.finish()
-    return result
+    completion = checkpoints.completion(result) if checkpoints else None
+    generation.finish(completion=completion)
+    # Saved JSON receipts use text keys. Normalize fresh summaries too, so a
+    # replay combines the same security counters as newly completed groups.
+    return json.loads(json.dumps(result)) if checkpoints else result
 
 
 def generate_activity(generation, market, population, planner_factory=None, recorder_factory=SourceRecorder) -> dict:
@@ -922,9 +936,13 @@ def generate_activity(generation, market, population, planner_factory=None, reco
     from concurrent.futures import ProcessPoolExecutor, as_completed
     from multiprocessing import get_context
 
+    from .checkpoints import existing_checkpoints
+
     config = generation.config
     root = generation.root
-    for path in (root / "summary" / "hidden").glob("accounts-*.parquet"):
+    checkpoints = existing_checkpoints(root)
+    pattern = "accounts-??????.parquet" if checkpoints else "accounts-*.parquet"
+    for path in (root / "summary" / "hidden").glob(pattern):
         path.unlink()
     maximum_customer = int(population.customers["customer_id"].max())
     groups = [(first, min(maximum_customer + 1, first + config.customer_group_size)) for first in range(1, maximum_customer + 1, config.customer_group_size)]
@@ -935,15 +953,27 @@ def generate_activity(generation, market, population, planner_factory=None, reco
     temporary_schedule.write_text(json.dumps([first for first, _ in groups]) + "\n", encoding="ascii")
     temporary_schedule.replace(schedule)
     summaries = []
-    if config.workers == 1 or len(groups) == 1:
-        for first, last in groups:
+    pending = []
+    for first, last in groups:
+        name = f"group-{first:011d}"
+        receipt = checkpoints.part(name) if checkpoints else None
+        if receipt is not None:
+            summaries.append(receipt["result"])
+            continue
+        if checkpoints:
+            checkpoints.discard_part(name)
+            for prefix in ("accounts", "attrition"):
+                (root / "summary" / "hidden" / f"{prefix}-{first:011d}.parquet").unlink(missing_ok=True)
+        pending.append((first, last))
+    if config.workers == 1 or len(pending) <= 1:
+        for first, last in pending:
             summaries.append(_run_group(config.as_dict(), str(root), first, last, planner_factory, recorder_factory))
     else:
         # The pool takes the next group as soon as a process becomes free.
         # The coordinator only combines results, so groups have no wave barrier.
-        with ProcessPoolExecutor(max_workers=min(config.workers, len(groups)), mp_context=get_context("spawn")) as executor:
+        with ProcessPoolExecutor(max_workers=min(config.workers, len(pending)), mp_context=get_context("spawn")) as executor:
             futures = [executor.submit(_run_group, config.as_dict(), str(root), first, last,
-                                       planner_factory, recorder_factory) for first, last in groups]
+                                       planner_factory, recorder_factory) for first, last in pending]
             try:
                 for future in as_completed(futures):
                     summaries.append(future.result())

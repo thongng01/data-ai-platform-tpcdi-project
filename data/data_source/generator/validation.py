@@ -9,7 +9,7 @@ import re
 import tempfile
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor
-from contextlib import closing, nullcontext
+from contextlib import nullcontext
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from itertools import groupby
@@ -391,8 +391,13 @@ def _xml(stage, path, sources, config, audit=None):
         patch = _xml_patch(customer, sources["Customer"])
         _require("C_ID" in patch, "Missing customer XML ID.")
         identifier = int(patch["C_ID"])
+        accounts = customer.findall("Account")
+        if kind in {"ADDACCT", "UPDACCT", "CLOSEACCT"}:
+            _require(len(accounts) == 1 and "CA_ID" in accounts[0].attrib,
+                     "An account-specific CMS action requires exactly one account ID.")
+        account_id = int(accounts[0].attrib["CA_ID"]) if len(accounts) == 1 else None
         if audit is not None:
-            patch = audit.restore("CustomerMgmt", timestamp[:10], patch, kind=kind, timestamp=timestamp)
+            patch = audit.restore("CustomerMgmt", timestamp[:10], patch, kind=kind, timestamp=timestamp, account_id=account_id)
         key = timestamp, identifier
         _require(key >= previous, "Customer actions must be ordered by timestamp and customer ID.")
         previous = key
@@ -407,7 +412,6 @@ def _xml(stage, path, sources, config, audit=None):
             record.update(_present=list(patch), _kind=kind, _timestamp=timestamp, _day=timestamp[:10],
                           _flag="I" if kind == "NEW" else "U", _order=counts[kind], _partition=str(identifier % stage.partitions))
             stage.add("CustomerXML", record, schema)
-        accounts = customer.findall("Account")
         _require(bool(accounts) if kind in {"NEW", "ADDACCT", "UPDACCT", "CLOSEACCT"} else kind == "INACT" or not accounts,
                  "Unexpected number of accounts in XML action.")
         for account in accounts:
@@ -434,63 +438,79 @@ def _xml(stage, path, sources, config, audit=None):
     return dict(counts)
 
 
-def _finwire(paths, config, industries, audit=None):
+def _finwire(root, paths, config, industries, audit, saved):
     """Validate released fixed-width company, security, and financial versions."""
     layouts = read_yaml(Path(__file__).parent / "definitions" / "finwire.yaml")
     companies = {}
     securities = defaultdict(list)
     reports = set()
     counts = defaultdict(int)
+    results = {}
     for path in sorted(paths, key=lambda item: (0 if item.parent.name == "initial" else 1, str(item))):
-        previous = None
-        for line in _lines(path):
-            kind = line[15:18]
-            _require(kind in layouts, "Invalid FINWIRE record type.")
-            layout = layouts[kind]
-            _require(len(line) == sum(field[0] for field in layout.values()), f"Invalid {kind} record width.")
-            values = {}
-            offset = 0
-            for name, (width, _) in layout.items():
-                values[name] = line[offset:offset + width].strip()
-                offset += width
-            timestamp = values["PTS"]
-            posted = datetime.strptime(timestamp, "%Y%m%d-%H%M%S")
-            _require(posted.strftime("%Y%m%d-%H%M%S") == timestamp, "Invalid FINWIRE PTS.")
-            _require(path.name == f"FINWIRE{posted.year}Q{(posted.month - 1) // 3 + 1}", "FINWIRE is in the wrong posting-quarter file.")
-            _require(posted.date() <= config.cutover if path.parent.name == "initial" else posted.strftime("%Y%m%d") == path.parent.name,
-                     "FINWIRE release lies outside its delivery.")
-            identity = values["CIK"] if kind == "CMP" else values["Symbol"] if kind == "SEC" else values["CoNameOrCIK"]
-            key = timestamp, {"CMP": 0, "SEC": 1, "FIN": 2}[kind], identity
-            _require(previous is None or key > previous, "FINWIRE rows must have unique ordered posting keys.")
-            previous = key
-            counts[kind] += 1
-            if kind == "CMP":
-                if audit is not None:
-                    values = audit.restore("FINWIRE:CMP", str(posted.date()), values)
-                _require(values["Status"] in {"ACTV", "INAC"} and values["CIK"].isdigit(), "Invalid company identity or status.")
-                _require(values["IndustryID"] in industries, "Company industry is missing.")
-                _require(values["SPrating"] in {"AAA", "AA+", "AA", "AA-", "A+", "A", "A-", "BBB+", "BBB", "BBB-", "BB+", "BB", "BB-", "B+", "B", "B-", "CCC+", "CCC", "CCC-", "CC", "C", "D"}, "Invalid company credit rating.")
-                companies[int(values["CIK"])] = posted.strftime("%Y-%m-%d %H:%M:%S")
-            elif kind == "SEC":
-                _require(values["CoNameOrCIK"].isdigit() and int(values["CoNameOrCIK"]) in companies, "Security company is missing.")
-                dividend = _cents(values["Dividend"])
-                _require(dividend is not None and dividend >= 0 and values["Status"] in {"ACTV", "INAC"}, "Invalid security dividend or status.")
-                securities[values["Symbol"]].append((posted.strftime("%Y-%m-%d %H:%M:%S"), dividend, values["Status"]))
-            else:
-                quarter, year = int(values["Quarter"]), int(values["Year"])
-                _require(1 <= quarter <= 4, "Invalid financial quarter.")
-                company = int(values["CoNameOrCIK"])
-                _require(company in companies, "Financial company is missing.")
-                report = company, year, quarter
-                _require(report not in reports, "Duplicate financial report.")
-                reports.add(report)
-                _require(posted.date() == _release(year * 4 + quarter - 1), "Financial report has the wrong release date.")
-                for name in ("Revenue", "Earnings", "EPS", "DilutedEPS", "Margin", "Inventory", "Assets", "Liabilities", "ShOut", "DilutedShOut"):
-                    _require(Decimal(values[name]).is_finite(), "Invalid financial number.")
-    _require(all(counts[kind] for kind in ("CMP", "SEC", "FIN")), "Every FINWIRE record type must be present.")
+        reader = audit.reader()
+        result = _ParsedFile(path.relative_to(root).as_posix())
+        results[result.relative] = result
+        before = sum(counts.values())
+        try:
+            previous = None
+            for line in _lines(path):
+                kind = line[15:18]
+                _require(kind in layouts, "Invalid FINWIRE record type.")
+                layout = layouts[kind]
+                _require(len(line) == sum(field[0] for field in layout.values()), f"Invalid {kind} record width.")
+                values = {}
+                offset = 0
+                for name, (width, _) in layout.items():
+                    values[name] = line[offset:offset + width].strip()
+                    offset += width
+                timestamp = values["PTS"]
+                posted = datetime.strptime(timestamp, "%Y%m%d-%H%M%S")
+                _require(posted.strftime("%Y%m%d-%H%M%S") == timestamp, "Invalid FINWIRE PTS.")
+                _require(path.name == f"FINWIRE{posted.year}Q{(posted.month - 1) // 3 + 1}", "FINWIRE is in the wrong posting-quarter file.")
+                _require(posted.date() <= config.cutover if path.parent.name == "initial" else posted.strftime("%Y%m%d") == path.parent.name,
+                         "FINWIRE release lies outside its delivery.")
+                identity = values["CIK"] if kind == "CMP" else values["Symbol"] if kind == "SEC" else values["CoNameOrCIK"]
+                key = timestamp, {"CMP": 0, "SEC": 1, "FIN": 2}[kind], identity
+                _require(previous is None or key > previous, "FINWIRE rows must have unique ordered posting keys.")
+                previous = key
+                counts[kind] += 1
+                if kind == "CMP":
+                    values = reader.restore("FINWIRE:CMP", str(posted.date()), values)
+                    _require(values["Status"] in {"ACTV", "INAC"} and values["CIK"].isdigit(), "Invalid company identity or status.")
+                    _require(values["IndustryID"] in industries, "Company industry is missing.")
+                    _require(values["SPrating"] in {"AAA", "AA+", "AA", "AA-", "A+", "A", "A-", "BBB+", "BBB", "BBB-", "BB+", "BB", "BB-", "B+", "B", "B-", "CCC+", "CCC", "CCC-", "CC", "C", "D"}, "Invalid company credit rating.")
+                    companies[int(values["CIK"])] = posted.strftime("%Y-%m-%d %H:%M:%S")
+                elif kind == "SEC":
+                    _require(values["CoNameOrCIK"].isdigit() and int(values["CoNameOrCIK"]) in companies, "Security company is missing.")
+                    dividend = _cents(values["Dividend"])
+                    _require(dividend is not None and dividend >= 0 and values["Status"] in {"ACTV", "INAC"}, "Invalid security dividend or status.")
+                    securities[values["Symbol"]].append((posted.strftime("%Y-%m-%d %H:%M:%S"), dividend, values["Status"]))
+                else:
+                    quarter, year = int(values["Quarter"]), int(values["Year"])
+                    _require(1 <= quarter <= 4, "Invalid financial quarter.")
+                    company = int(values["CoNameOrCIK"])
+                    _require(company in companies, "Financial company is missing.")
+                    report = company, year, quarter
+                    _require(report not in reports, "Duplicate financial report.")
+                    reports.add(report)
+                    _require(posted.date() == _release(year * 4 + quarter - 1), "Financial report has the wrong release date.")
+                    for name in ("Revenue", "Earnings", "EPS", "DilutedEPS", "Margin", "Inventory", "Assets", "Liabilities", "ShOut", "DilutedShOut"):
+                        _require(Decimal(values[name]).is_finite(), "Invalid financial number.")
+            result.count = sum(counts.values()) - before
+            _check_saved_file(root, saved, result)
+        except Exception as error:
+            result.error = error
+        result.audit_used, result.audit_measurements = reader.used, reader.measurements
+        if result.error is not None:
+            break
+    else:
+        try:
+            _require(all(counts[kind] for kind in ("CMP", "SEC", "FIN")), "Every FINWIRE record type must be present.")
+        except Exception as error:
+            result.error = error
     for versions in securities.values():
         versions.sort()
-    return securities, dict(counts)
+    return securities, dict(counts), results
 
 
 def _security(securities, symbol, timestamp):
@@ -1102,6 +1122,17 @@ class _ParsedFile:
         self.schemas = {}
         self.peak_rows = 0
         self.error = None
+        self.action_counts = {}
+        self.audit_used = set()
+        self.audit_measurements = {}
+
+
+def _parse_finwire_files(inputs):
+    """Keep FINWIRE dependencies ordered in one parser with read-only fault evidence."""
+    root, config = inputs["root"], inputs["config"]
+    audit = FaultAudit(config, _require, inputs["audit_entries"])
+    return _finwire(root, [root / name for name in inputs["files"]], config,
+                    inputs["industries"], audit, inputs["saved"])
 
 
 # Only spawned parser workers use this process-local, read-only context.
@@ -1114,22 +1145,16 @@ def _initialize_parser(inputs):
     _PARSE_INPUTS = {**inputs, "sources": load_sources()}
 
 
-def _independent_file(relative):
-    """Leave XML, FINWIRE, Customer, and Trade on the single audit-owning process."""
-    path = Path(relative)
-    name = "CashTransaction" if relative.startswith("stream/") else path.stem.split("_")[0]
-    return path.suffix != ".xml" and not path.name.startswith("FINWIRE") and name not in {"Customer", "Trade"}
-
-
 def _parse_independent_file(job):
-    """Parse into an isolated file stage and return no mutable audit or row state."""
+    """Parse into an isolated stage and return fault keys and counts, not source rows."""
     index, relative = job
     inputs = _PARSE_INPUTS
     stage = _Stage(inputs["temporary"] / "files" / str(index), inputs["partitions"], inputs["date_partitions"])
     result = _ParsedFile(relative)
+    audit = FaultAudit(inputs["config"], _require, inputs["audit_entries"])
     try:
         _parse_file(inputs["root"], relative, stage, inputs["config"], inputs["sources"], inputs["sessions"],
-                    inputs["securities"], None, inputs["saved"], {}, result)
+                    inputs["securities"], audit, inputs["saved"], result)
         for table in list(stage.buffers):
             stage.flush(table)
         result.schemas = stage.schemas
@@ -1137,6 +1162,7 @@ def _parse_independent_file(job):
     except Exception as error:
         # Keep the valid prefix so an earlier cross-file failure still wins.
         result.error = error
+    result.audit_used, result.audit_measurements = audit.used, audit.measurements
     return result
 
 
@@ -1170,7 +1196,7 @@ def _adopt_file_blocks(stage, index, result):
     stage.peak_rows = max(stage.peak_rows, result.peak_rows)
 
 
-def _parse_file(root, relative, stage, config, sources, sessions, securities, audit, saved, action_counts, result):
+def _parse_file(root, relative, stage, config, sources, sessions, securities, audit, saved, result):
     """Check one source file and retain ordered boundary keys before later failures."""
     cash_sequence = 0
     previous_cash = ("", 0)
@@ -1178,12 +1204,11 @@ def _parse_file(root, relative, stage, config, sources, sessions, securities, au
     previous_initial_trade = -1
     previous_history = None
     path = root / relative
-    if path.name.startswith("FINWIRE"):
-        count = sum(1 for _ in _lines(path))
-    elif path.suffix == ".xml":
+    if path.suffix == ".xml":
+        result.action_counts = _xml(stage, path, sources, config, audit)
         for _ in _lines(path):
             pass
-        count = sum(action_counts.values())
+        count = sum(result.action_counts.values())
     else:
         initial = relative.startswith("offline/initial/")
         day = "initial" if initial else (path.stem if relative.startswith("stream/") else path.parent.name)
@@ -1275,25 +1300,31 @@ def _parse_file(root, relative, stage, config, sources, sessions, securities, au
         if name == "Time":
             _require(count == 86400, "Time reference must contain 86400 seconds.")
     result.count = count
+    _check_saved_file(root, saved, result)
+
+
+def _check_saved_file(root, saved, result):
+    """Check the parsed count and actual saved bytes against optional inventory evidence."""
     if saved is not None:
-        evidence = saved[relative]
+        path = root / result.relative
+        evidence = saved[result.relative]
         with path.open("rb") as stream:
             digest = hashlib.file_digest(stream, "sha256").hexdigest()
-        _require((count, path.stat().st_size, digest) == (evidence["rows"], evidence["bytes"], evidence["sha256"]),
-                 f"File rows, bytes, or SHA-256 differ from saved evidence: {relative}")
+        _require((result.count, path.stat().st_size, digest) == (evidence["rows"], evidence["bytes"], evidence["sha256"]),
+                 f"File rows, bytes, or SHA-256 differ from saved evidence: {result.relative}")
 
 
-def _parse_files(root, expected, stage, config, sources, sessions, securities, audit, saved, action_counts):
+def _parse_files(root, expected, stage, config, sources, sessions, securities, audit, saved, finwire_results):
     """Parse independent files in workers and consume all evidence in source order."""
     files = sorted(expected, key=lambda name: (0 if name.startswith("offline/initial/") else 1 if name.startswith("offline/") else 2, name))
-    jobs = [(index, relative) for index, relative in enumerate(files) if _independent_file(relative)]
+    jobs = [(index, relative) for index, relative in enumerate(files) if not Path(relative).name.startswith("FINWIRE")]
     inputs = {"root": root, "temporary": stage.root, "partitions": stage.partitions,
               "date_partitions": stage.date_partitions, "config": config, "sessions": sessions,
-              "securities": securities, "saved": saved}
+              "securities": securities, "saved": saved, "audit_entries": audit.entries}
     workers = min(config.workers, len(jobs))
     pool = (ProcessPoolExecutor(max_workers=workers, mp_context=get_context("spawn"),
                                 initializer=_initialize_parser, initargs=(inputs,)) if workers > 1 else nullcontext())
-    counts, brokers = {}, set()
+    counts, brokers, action_counts = {}, set(), {}
     cash_sequence, previous_cash, previous_market = 0, ("", 0), None
     trade_schemas = _trade_schema_counts()
     with pool as executor:
@@ -1301,15 +1332,21 @@ def _parse_files(root, expected, stage, config, sources, sessions, securities, a
         results = (executor.map(_parse_independent_file, jobs, buffersize=workers * 128)
                    if executor is not None else None)
         for index, relative in enumerate(files):
-            if executor is not None and _independent_file(relative):
+            if Path(relative).name.startswith("FINWIRE"):
+                result = finwire_results[relative]
+            elif executor is not None:
                 result = next(results)
             else:
                 result = _ParsedFile(relative)
+                reader = audit.reader()
                 try:
-                    _parse_file(root, relative, stage, config, sources, sessions, securities, audit, saved, action_counts, result)
+                    _parse_file(root, relative, stage, config, sources, sessions, securities, reader, saved, result)
                 except Exception as error:
                     result.error = error
+                result.audit_used, result.audit_measurements = reader.used, reader.measurements
             cash_sequence, previous_cash, previous_market = _check_file_boundary(result, cash_sequence, previous_cash, previous_market)
+            audit.accept(result.audit_used, result.audit_measurements)
+            action_counts.update(result.action_counts)
             if result.schemas:
                 _adopt_file_blocks(stage, index, result)
             counts[relative] = result.count
@@ -1318,7 +1355,7 @@ def _parse_files(root, expected, stage, config, sources, sessions, securities, a
                 trade_schemas[version] += result.trade_schemas[version]
             for channel in trade_schemas["channels"]:
                 trade_schemas["channels"][channel] += result.trade_schemas["channels"][channel]
-    return counts, brokers, cash_sequence, trade_schemas
+    return counts, brokers, cash_sequence, trade_schemas, action_counts
 
 
 def validate(root: Path, config: Config, inventory=None):
@@ -1340,8 +1377,18 @@ def validate(root: Path, config: Config, inventory=None):
     sessions = _sessions(config)
     industries = {row["IN_ID"] for row in _rows(root / "offline" / "initial" / "Industry.txt", sources["Industry"], 1)}
     tax_rates = {row["TX_ID"] for row in _rows(root / "offline" / "initial" / "TaxRate.txt", sources["TaxRate"], 1)}
-    with tempfile.TemporaryDirectory(prefix="validation-", dir=root) as temporary, closing(FaultAudit(root, Path(temporary), config, _require)) as audit:
-        securities, finwire_counts = _finwire([root / name for name in expected if Path(name).name.startswith("FINWIRE")], config, industries, audit)
+    audit = FaultAudit.load(root, config, _require)
+    with tempfile.TemporaryDirectory(prefix="validation-", dir=root) as temporary:
+        finwire_inputs = {"root": root, "files": [name for name in expected if Path(name).name.startswith("FINWIRE")],
+                          "config": config, "industries": industries, "saved": saved, "audit_entries": audit.entries}
+        # FINWIRE checks posting dependencies across files. Its ordered parser
+        # supplies the security versions that ordinary file parsers need. Keep
+        # this dependency wave separate; never share writable audit state.
+        if config.workers > 1:
+            with ProcessPoolExecutor(max_workers=1, mp_context=get_context("spawn")) as executor:
+                securities, finwire_counts, finwire_results = executor.submit(_parse_finwire_files, finwire_inputs).result()
+        else:
+            securities, finwire_counts, finwire_results = _parse_finwire_files(finwire_inputs)
         stage = _Stage(Path(temporary), partitions, date_partitions=len(sessions))
         hidden_paths = sorted((root / "summary" / "hidden").glob("accounts-*.parquet"))
         _require(bool(hidden_paths), "Hidden account attributes are required to prove cash and margin constraints.")
@@ -1355,9 +1402,8 @@ def validate(root: Path, config: Config, inventory=None):
                              "Invalid hidden account identity or margin limit.")
                     row["_partition"] = str(row["account_id"] % partitions)
                     stage.add("Hidden", row, hidden_schema)
-        action_counts = _xml(stage, root / "offline" / "initial" / "CustomerMgmt.xml", sources, config, audit)
-        counts, brokers, cash_sequence, trade_schemas = _parse_files(
-            root, expected, stage, config, sources, sessions, securities, audit, saved, action_counts)
+        counts, brokers, cash_sequence, trade_schemas, action_counts = _parse_files(
+            root, expected, stage, config, sources, sessions, securities, audit, saved, finwire_results)
         stage.finish()
         for market_date in sessions:
             if not str(_prior_year(config.start)) <= market_date <= str(config.end):

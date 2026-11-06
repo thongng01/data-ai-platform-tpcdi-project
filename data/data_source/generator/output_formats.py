@@ -5,6 +5,7 @@ from functools import cache
 import polars as pl
 
 from .formats import TYPES, Source, _numeric_type
+from .money import cents_expression as cents_text
 
 
 # These source fields carry one-based security IDs until final native formatting.
@@ -74,17 +75,6 @@ def timestamp_text(value) -> pl.Expr:
 def symbol_text(value) -> pl.Expr:
     """Create the fixed source symbol from its one-based security ordinal."""
     return pl.concat_str([pl.lit("S"), padded(value, 10)])
-
-
-def cents_text(value) -> pl.Expr:
-    """Format signed integer cents with no binary floating-point conversion."""
-    value = pl.col(value) if isinstance(value, str) else value
-    magnitude = value.abs()
-    return pl.concat_str([
-        pl.when(value < 0).then(pl.lit("-")).otherwise(pl.lit("")),
-        (magnitude // 100).cast(pl.String), pl.lit("."),
-        (magnitude % 100).cast(pl.String).str.pad_start(2, "0"),
-    ])
 
 
 def cash_name() -> pl.Expr:
