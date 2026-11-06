@@ -161,17 +161,20 @@ def cash_messages(stream, day, start_offset=0):
 
 
 class Dataset:
-    """Load a validated manifest and verify only the public source-file trees."""
+    """Check validation policy, then verify only the public source-file trees."""
 
-    def __init__(self, root):
+    def __init__(self, root, *, allow_unvalidated=False):
         """Check metadata and exact cadence before any remote client is opened."""
         self.root = Path(root).resolve()
         if self.root.name.endswith(".partial"):
             raise PublisherError("A partial generator run cannot be published.")
         self._regular_path("manifest.json")
         manifest = read_json(self.root / "manifest.json")
-        if not isinstance(manifest, dict) or manifest.get("status") != "validated":
-            raise PublisherError("The generator manifest must have validated status.")
+        self.generator_status = manifest.get("status") if isinstance(manifest, dict) else None
+        self.allow_unvalidated = allow_unvalidated
+        accepted = ("validated", "generated-unvalidated") if allow_unvalidated else ("validated",)
+        if self.generator_status not in accepted:
+            raise PublisherError("The generator manifest must have validated status; use --allow-unvalidated only for a generated-unvalidated dataset.")
         self.dataset_id = manifest.get("dataset_id")
         if not isinstance(self.dataset_id, str) or not re.fullmatch(r"[0-9a-f]{64}", self.dataset_id):
             raise PublisherError("The manifest must contain a SHA-256 dataset identity.")
@@ -298,6 +301,7 @@ class Dataset:
                     if count != item.rows:
                         raise PublisherError("Saved stream row count does not match its manifest.")
         return {"status": "verified", "dataset_id": self.dataset_id, "files": len(self.files),
+                "generator_status": self.generator_status, "allow_unvalidated": self.allow_unvalidated,
                 "offline_bytes": sum(item.size for item in self.files.values() if item.path.startswith("offline/")),
                 "stream_bytes": sum(item.size for item in self.files.values() if item.path.startswith("stream/"))}
 
