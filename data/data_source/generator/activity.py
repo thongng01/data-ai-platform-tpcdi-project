@@ -876,17 +876,24 @@ class BusinessSimulation:
 
 def _run_group(config_dict: dict, root_string: str, first_customer: int, last_customer: int, planner_factory=None, recorder_factory=SourceRecorder) -> dict:
     """Execute one disjoint customer group and publish its actual lifetimes."""
+    from .checkpoints import existing_checkpoints
     from .config import Config
     from .generation import Generation
     from .market import Market
 
     config = Config(**config_dict)
     root = Path(root_string)
+    checkpoints = existing_checkpoints(root)
     customers = np.load(root / "_work/population/customers.npy", mmap_mode="r+")
     accounts = np.load(root / "_work/population/accounts.npy", mmap_mode="r+")
     left, right = np.searchsorted(accounts["customer_id"], [first_customer, last_customer])
-    group_customers = customers[first_customer - 1:last_customer - 1].copy()
-    group_accounts = accounts[left:right].copy()
+    # A failed group can have flushed actual lifetimes before its final seal.
+    # Retry from immutable planned rows, never from those partly changed rows.
+    initial = root / "_work" / "population-initial"
+    planned_customers = np.load(initial / "customers.npy", mmap_mode="r") if checkpoints else customers
+    planned_accounts = np.load(initial / "accounts.npy", mmap_mode="r") if checkpoints else accounts
+    group_customers = planned_customers[first_customer - 1:last_customer - 1].copy()
+    group_accounts = planned_accounts[left:right].copy()
     generation = Generation(config, root, group_id=first_customer)
     if recorder_factory is not SourceRecorder:
         generation.recorder = recorder_factory(generation)
@@ -913,8 +920,11 @@ def _run_group(config_dict: dict, root_string: str, first_customer: int, last_cu
     frame.write_parquet(hidden / f"accounts-{first_customer:011d}.parquet")
     if hasattr(simulation.planner, "records") and simulation.planner.records:
         pl.DataFrame(simulation.planner.records, schema=ATTRITION_RECORD_SCHEMA).write_parquet(hidden / f"attrition-{first_customer:011d}.parquet")
-    generation.finish()
-    return result
+    completion = checkpoints.completion(result) if checkpoints else None
+    generation.finish(completion=completion)
+    # Saved JSON receipts use text keys. Normalize fresh summaries too, so a
+    # replay combines the same security counters as newly completed groups.
+    return json.loads(json.dumps(result)) if checkpoints else result
 
 
 def generate_activity(generation, market, population, planner_factory=None, recorder_factory=SourceRecorder) -> dict:
@@ -922,9 +932,13 @@ def generate_activity(generation, market, population, planner_factory=None, reco
     from concurrent.futures import ProcessPoolExecutor, as_completed
     from multiprocessing import get_context
 
+    from .checkpoints import existing_checkpoints
+
     config = generation.config
     root = generation.root
-    for path in (root / "summary" / "hidden").glob("accounts-*.parquet"):
+    checkpoints = existing_checkpoints(root)
+    pattern = "accounts-??????.parquet" if checkpoints else "accounts-*.parquet"
+    for path in (root / "summary" / "hidden").glob(pattern):
         path.unlink()
     maximum_customer = int(population.customers["customer_id"].max())
     groups = [(first, min(maximum_customer + 1, first + config.customer_group_size)) for first in range(1, maximum_customer + 1, config.customer_group_size)]
@@ -935,15 +949,27 @@ def generate_activity(generation, market, population, planner_factory=None, reco
     temporary_schedule.write_text(json.dumps([first for first, _ in groups]) + "\n", encoding="ascii")
     temporary_schedule.replace(schedule)
     summaries = []
-    if config.workers == 1 or len(groups) == 1:
-        for first, last in groups:
+    pending = []
+    for first, last in groups:
+        name = f"group-{first:011d}"
+        receipt = checkpoints.part(name) if checkpoints else None
+        if receipt is not None:
+            summaries.append(receipt["result"])
+            continue
+        if checkpoints:
+            checkpoints.discard_part(name)
+            for prefix in ("accounts", "attrition"):
+                (root / "summary" / "hidden" / f"{prefix}-{first:011d}.parquet").unlink(missing_ok=True)
+        pending.append((first, last))
+    if config.workers == 1 or len(pending) <= 1:
+        for first, last in pending:
             summaries.append(_run_group(config.as_dict(), str(root), first, last, planner_factory, recorder_factory))
     else:
         # The pool takes the next group as soon as a process becomes free.
         # The coordinator only combines results, so groups have no wave barrier.
-        with ProcessPoolExecutor(max_workers=min(config.workers, len(groups)), mp_context=get_context("spawn")) as executor:
+        with ProcessPoolExecutor(max_workers=min(config.workers, len(pending)), mp_context=get_context("spawn")) as executor:
             futures = [executor.submit(_run_group, config.as_dict(), str(root), first, last,
-                                       planner_factory, recorder_factory) for first, last in groups]
+                                       planner_factory, recorder_factory) for first, last in pending]
             try:
                 for future in as_completed(futures):
                     summaries.append(future.result())

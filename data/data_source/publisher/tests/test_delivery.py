@@ -60,6 +60,47 @@ def test_clean_delivery_preserves_keys_payloads_and_generated_files(saved_datase
     assert all((saved_dataset / path).read_bytes() == content for path, content in before.items())
 
 
+def test_unvalidated_delivery_requires_override_and_records_it(saved_dataset, tmp_path, settings):
+    """Keep all preflight checks and retain explicit unvalidated delivery evidence."""
+    path = saved_dataset / "manifest.json"
+    manifest = json.loads(path.read_text())
+    manifest["status"] = "generated-unvalidated"
+    path.write_text(json.dumps(manifest))
+    with pytest.raises(PublisherError, match="allow-unvalidated"):
+        Dataset(saved_dataset)
+    dataset = Dataset(saved_dataset, allow_unvalidated=True)
+    state = tmp_path / "override"
+    with Journal(state, dataset, settings.destination_id) as journal:
+        report = publish(dataset, journal, MemoryS3, MemoryKafka)
+    assert report["generator_status"] == "generated-unvalidated"
+    assert report["allow_unvalidated"] is True
+    assert report["unvalidated_delivery_segments"] == 1
+    assert report["latest_clock_segment"]["allow_unvalidated"] == 1
+    assert json.loads((state / "report.json").read_text()) == report
+    # A later validated delivery keeps the earlier override in the same journal.
+    manifest["status"] = "validated"
+    path.write_text(json.dumps(manifest))
+    with Journal(state, Dataset(saved_dataset), settings.destination_id) as journal:
+        report = publish(Dataset(saved_dataset), journal, MemoryS3, MemoryKafka)
+    assert report["allow_unvalidated"] is False
+    assert report["unvalidated_delivery_segments"] == 1
+
+
+def test_unvalidated_override_does_not_skip_preflight(saved_dataset, tmp_path, settings):
+    """Reject changed bytes even when the caller accepts the lack of full validation."""
+    path = saved_dataset / "manifest.json"
+    manifest = json.loads(path.read_text())
+    manifest["status"] = "generated-unvalidated"
+    path.write_text(json.dumps(manifest))
+    (saved_dataset / "offline/initial/Trade.txt").write_bytes(b"changed")
+    dataset = Dataset(saved_dataset, allow_unvalidated=True)
+    s3, kafka = MemoryS3(), MemoryKafka()
+    with Journal(tmp_path / "override-corrupt", dataset, settings.destination_id) as journal:
+        with pytest.raises(PublisherError, match="hash"):
+            publish(dataset, journal, lambda: s3, lambda: kafka)
+    assert not s3.deliveries and not kafka.deliveries
+
+
 def test_successful_resume_sends_nothing_again(saved_dataset, tmp_path, settings):
     """A repeated command reuses acknowledged identities rather than resending them."""
     state = tmp_path / "state"

@@ -12,7 +12,7 @@ Run commands from the repository root with Python 3.14. If `.venv` does not exis
 uv pip install --python .venv/bin/python -r data/data_source/generator/requirements.txt
 ```
 
-Each run needs a new output directory. The small configuration covers `2018-12-20` through `2019-02-03`, with a fractional scale factor and a small market:
+Each new run needs a new output directory. The small configuration covers `2018-12-20` through `2019-02-03`, with a fractional scale factor and a small market:
 
 ```bash
 .venv/bin/python -m data.data_source.generator run \
@@ -21,6 +21,17 @@ Each run needs a new output directory. The small configuration covers `2018-12-2
 .venv/bin/python -m data.data_source.generator validate local/runs/small
 .venv/bin/python -m pytest data/data_source/generator/tests -q
 ```
+
+`run` performs full saved-file validation by default. For a repeat run of unchanged code, `--skip-validation` omits only that full validator. Export still checks source contracts, ordering, duplicate keys, and expected file coverage, and records counts, byte sizes, and hashes. The runner publishes the final directory with `status: generated-unvalidated` in both `manifest.json` and `summary.json`. Independent error measurements and Trade schema counts stay null until validation succeeds. The flag is a command choice, not a configuration setting, so it does not change dataset identity.
+
+```bash
+.venv/bin/python -m data.data_source.generator run \
+  --config data/data_source/generator/configs/small.yaml \
+  --output local/runs/small-unvalidated --skip-validation
+.venv/bin/python -m data.data_source.generator validate local/runs/small-unvalidated
+```
+
+`validate` reads the saved dataset without regeneration and records `status: validated` in both reports only after every check passes. The publisher refuses `generated-unvalidated` datasets unless the caller supplies `--allow-unvalidated`; its delivery report records that override.
 
 To check repeatability, run the same business configuration into another directory and compare the saved bytes:
 
@@ -126,7 +137,19 @@ Customer-update and watch-count draws use arrays with the same named keys as sca
 
 A cash account cannot spend below zero. A margin account cannot exceed its borrowing limit. Reservations prevent two proposals from using the same money or shares. Each completed trade produces one cash transaction and one holding change. A full sale ends the holding; a later buy starts a new origin. No short selling occurs.
 
-The runner refuses an existing output directory or its `.partial` counterpart. It writes under `.partial`, samples aggregate process-tree RSS every 0.1 seconds and disk use every two seconds, and stops the process group if a budget fails. Sampling is not a kernel memory limit. A failed run retains logs and partial evidence. A successful run passes validation before the runner removes temporary files and renames the directory.
+The runner refuses an existing output directory or its `.partial` counterpart for a new run. It writes under `.partial`, samples aggregate process-tree RSS every 0.1 seconds and disk use every two seconds, and stops the process group if a budget fails. Sampling is not a kernel memory limit. A failed run retains logs, checkpoints, and partial evidence. A successful run passes full validation before the runner removes temporary files and renames the directory, unless `--skip-validation` explicitly selects the unvalidated state.
+
+Resume a retained run with its saved configuration, or supply `--config` to change permitted runtime settings:
+
+```bash
+.venv/bin/python -m data.data_source.generator run --resume local/runs/small.partial
+```
+
+Each completed step binds its result to `_checkpoints/context.json` through a SHA-256 context digest. That file records implementation file hashes, semantic configuration, `customer_group_size`, and `export_rows`. Resume refuses a changed code version, semantic configuration, or intermediate layout before it changes files. Worker count, thread count, resource budgets, and the ignored `merge_fan_in` setting can change. Reference records, market arrays, the population plan, each customer group, prospects, the coordinator part, export, and validation have completion receipts. Group receipts retain business counts and commit last, after actual lifetimes, hidden records, and sealed source files. Incomplete groups restart from immutable planned population rows, not partly changed lifetimes.
+
+Resume keeps completed steps and redoes incomplete steps. If export did not complete, it deletes `offline/`, `stream/`, and `summary/data_errors.jsonl` before exporting all sealed parts again. It keeps hidden records and sealed parts. If export completed but validation failed, resume runs only validation. `run --resume <dataset>` also validates a final `generated-unvalidated` dataset without its temporary files. Resume always performs full validation and does not accept `--skip-validation`. Run only one command against a retained directory at a time.
+
+`timeout_seconds` defaults to 7,200 seconds and applies separately to each run attempt, including validation. Keep it in the run configuration because workload size and machine speed determine the needed budget. A factor 100 full-calendar run is estimated to need more than 10 hours; set a budget above that estimate before starting it. This estimate is not a measured factor 100 runtime.
 
 ## One Simulated Day
 
@@ -194,7 +217,8 @@ Only `offline/` files become objects in `upstream`, with that prefix removed fro
   summary/data_errors.jsonl           # Exact data-error evidence
   config.json
   manifest.json
-  validation.json
+  validation.json                    # Present after full validation succeeds
+  _checkpoints/                      # Run context and completed-step receipts
   supervision.json
   worker.log
   _work/                             # Typed source parts, native spill, and state
@@ -245,7 +269,8 @@ Tests cover deterministic personal fields, XML omission and empty text, ledger a
 | --- | --- |
 | `manifest.json` | Semantic identity, configuration, dependency and code versions, file counts, byte totals, hashes, and phase times |
 | `summary.json` | Counts and bytes by family, date, and delivery; business activity, cash transaction types, profile counts, rejected proposals, skew, and state peaks |
-| `validation.json` | Saved-file validation results |
+| `validation.json` | Saved-file validation results, written after a successful full check |
+| `_checkpoints/` | Code and configuration context, completed-step receipts, and retained phase timings |
 | `summary/signal_check.json` | Sample size, chronological split counts, model and rule metrics, or the reason for insufficient data |
 | `supervision.json` | Sampled aggregate RSS, process count, disk use, temporary disk peaks, and sampling intervals |
 
