@@ -12,6 +12,7 @@ from data.data_source.generator.activity import BusinessSimulation, Stage1Intent
 from data.data_source.generator.attrition import AttritionPlanner, LeavingPeriod, ReturnHistory, risk_factors, three_months_before
 from data.data_source.generator.business import BusinessDay, Intent, IntentKind, LIQUIDATION_SECOND
 from data.data_source.generator.config import Config
+from data.data_source.generator.formats import load_sources
 from data.data_source.generator.population import ACCOUNT_DTYPE, CUSTOMER_DTYPE
 from data.data_source.generator.random_values import uniform, uniforms
 from data.data_source.generator.signal_check import AccountLifetime, CashObservation, FEATURES, evaluate, observations
@@ -40,8 +41,17 @@ def simulation_for_test(config, planner=None, account_count=1):
     accounts["tax_status"] = 1
     accounts["broker_id"] = 1
     emitted, cash = [], []
-    sink = SimpleNamespace(config=config, emit=lambda *args: emitted.append(args), cash=lambda *args: cash.append(args),
-                           text=lambda *args: None, record_fault=lambda *args: None)
+    sources = load_sources()
+
+    def record(source, day, values, **metadata):
+        """Capture typed source values while keeping source errors outside business tests."""
+        if source == "CashTransaction":
+            cash.append((day, *values))
+        elif source in sources:
+            row = dict(zip(sources[source].columns, values, strict=True))
+            emitted.append((source, day, [row]))
+
+    sink = SimpleNamespace(config=config, sources=sources, record=record, _record_fault=lambda *args: None)
     prices = {"close": np.array([10000]), "high": np.array([11000]), "low": np.array([9000]),
               "dividends": np.array([0]), "trading": True, "close_second": 57600, "shock": False}
     market = SimpleNamespace(day=lambda day: prices, sessions_per_year={year: 252 for year in range(config.start.year, config.end.year + 1)})
@@ -254,7 +264,7 @@ def test_staged_cancel_precedes_new_sale_in_saved_time():
     simulation.holdings.change(1, 0, 100, 1, 10000)
     simulation.holdings.row(1, 0)[5] = 1
     old = Order(1000001, 0, 0, 1, 10000, "TLS", 0, 999, False, 0, "PNDG", 34200)
-    simulation.orders[old.trade_id] = old
+    simulation._add_order(old)
     simulation.trade_ordinals[0] = 1
     day = BusinessDay(simulation.config.day(1), 1, prices, (), (), (), set(), np.array([0]),
                       [Intent(LIQUIDATION_SECOND, 1, 50, IntentKind.LIQUIDATE, 0)])
@@ -283,16 +293,17 @@ def test_customer_warning_closes_all_accounts_and_watches_together():
     config = config_for_test(initial_end="2018-01-10", daily_start="2018-01-11", daily_end="2018-01-12", account_watch_cancel_share=1)
     planner = ForcedCustomerExit()
     simulation, emitted, cash, _ = simulation_for_test(config, planner, 2)
-    simulation.watches[1] = {0: 100}
+    simulation._add_watch(1, 0, 100)
     simulation.run()
     assert np.all(simulation.closed)
     assert np.all(simulation.accounts["close_day"] == 10)
     assert np.all(simulation.ledger.balance == 0)
     assert not simulation.watches[1]
     cancellations = [row for source, _, rows in emitted if source == "WatchHistory" for row in rows if row["W_ACTION"] == "CNCL"]
-    assert cancellations[0]["W_DTS"].startswith(str(config.day(1)))
+    canceled_day = cancellations[0]["W_DTS"] // 86400
+    assert canceled_day == (config.day(1) - date(1970, 1, 1)).days
     assert planner.leaving[0] == planner.leaving[1]
-    assert not any(args[-1] == "Deposit" and args[0] > config.start for args in cash)
+    assert not any(args[-1] == "Deposit" and args[0] > 0 for args in cash)
 
 
 def test_observation_windows_exclude_future_and_censored_labels():

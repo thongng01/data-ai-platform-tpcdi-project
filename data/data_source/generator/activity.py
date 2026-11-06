@@ -4,13 +4,14 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+import json
 import math
 import heapq
 
 import numpy as np
 import polars as pl
 
-from .customers import account_values, customer_birth_year, customer_values, xml_action
+from .customers import account_values, customer_birth_year, customer_values
 from .random_values import uniform, uniforms
 from .business import (
     BusinessDay, Intent, IntentKind, MarketDayCache, plan_daily_activity, DAY_KEY_STRIDE, ATTRITION_HORIZON_DAYS,
@@ -28,12 +29,6 @@ ATTRITION_RECORD_SCHEMA = {
     "classification": pl.String, "final_plan": pl.Boolean,
     "actual_close_day": pl.Int64, "outcome_day": pl.Int64,
 }
-
-
-def decimal_cents(cents: int) -> str:
-    """Format signed integer cents without binary floating-point rounding."""
-    cents = int(cents)
-    return f"{'-' if cents < 0 else ''}{abs(cents) // 100}.{abs(cents) % 100:02d}"
 
 
 def timestamp(day: date, seconds: int) -> str:
@@ -154,6 +149,8 @@ class Order:
     status: str
     seconds: int
     transition: int = 0
+    # Local insertion order is separate from business IDs and named draw keys.
+    sequence: int = 0
 
     @property
     def sell(self) -> bool:
@@ -218,7 +215,7 @@ class Stage1IntentPlanner:
 
 class BusinessSimulation:
     """Plan brokerage days and execute money and holdings in time order."""
-    def __init__(self, generation, market, customers, accounts, planner=None, recorder=None):
+    def __init__(self, generation, market, customers, accounts, planner=None):
         """Attach planners and recorders and allocate bounded per-group state."""
         self.generation = generation
         self.config = generation.config
@@ -229,11 +226,19 @@ class BusinessSimulation:
             from .attrition import AttritionPlanner
             planner = AttritionPlanner()
         self.planner = planner or Stage1IntentPlanner()
-        self.recorder = recorder or SourceRecorder(generation)
+        self.recorder = getattr(generation, "recorder", None) or SourceRecorder(generation)
+        self.start_epoch_day = (self.config.start - date(1970, 1, 1)).days
+        self.start_epoch_second = self.start_epoch_day * 86400
         self.ledger = Ledger(accounts)
         self.holdings = HoldingBook()
         self.orders = {}
+        self.orders_by_account = defaultdict(dict)
+        self.order_due_days = []
+        self.due_orders = {}
+        self.order_sequence = 0
         self.watches = {}
+        self.watch_due_days = defaultdict(dict)
+        self.watch_count = 0
         self.cash_ordinals = np.zeros(len(accounts), dtype=np.int64)
         self.trade_ordinals = np.zeros(len(accounts), dtype=np.int64)
         self.account_versions = np.zeros(len(accounts), dtype=np.int64)
@@ -265,16 +270,19 @@ class BusinessSimulation:
         key = (day + 1) * DAY_KEY_STRIDE + int(identity)
         return uniform(key, self.config.seed, f"{purpose}:{ordinal}")
 
-    def cash(self, day: date, second: int, index: int, amount: int, name: str) -> None:
-        """Apply correct money first, then emit its source cash transaction."""
+    def cash(self, day: date, second: int, index: int, amount: int, name: str, *, reference: int = 0) -> None:
+        """Apply correct money, then capture its kind and numeric source reference."""
         if not amount:
             return
         self.ledger.apply(index, amount)
         self.planner.observe_cash(self, index, amount, name)
         self.cash_ordinals[index] += 1
         account = int(self.accounts[index]["account_id"])
-        self.generation.cash(day, timestamp(day, second), account, int(self.cash_ordinals[index]), int(amount), name)
-        kind = "Settlement" if name.startswith("Trade settlement ") else "Dividend" if name.startswith("Dividend ") else name
+        offset = (day - self.config.start).days
+        self.generation.record("CashTransaction", offset,
+                               (account, self.start_epoch_second + offset * 86400 + second, int(amount), name),
+                               order=(int(self.cash_ordinals[index]), int(reference)))
+        kind = "Settlement" if name == "Trade settlement" else name
         self.cash_type_counts[kind] += 1
 
     def account_fields(self, index: int, inactive: bool = False) -> dict:
@@ -298,62 +306,56 @@ class BusinessSimulation:
 
     def action(self, kind: str, day: date, second: int, customer: int, indices=(), ordinal: int = 0) -> None:
         """Record one customer-management action in the dated source form."""
-        ts = timestamp(day, second)
         inactive = kind in ("INACT", "CLOSEACCT")
         cv = self.customer_fields(customer, kind == "INACT")
         av = [self.account_fields(i, inactive) for i in indices]
-        key = f"{ts}/{customer:011d}/{ordinal:08d}/{kind}"
+        offset = (day - self.config.start).days
+        epoch_second = self.start_epoch_second + offset * 86400 + second
         if day <= self.config.cutover:
-            if hasattr(self.recorder, "xml_action"):
-                self.recorder.xml_action(kind, ts.replace(" ", "T"), customer, cv, av, key)
-            else:
-                payload = xml_action(kind, ts.replace(" ", "T"), customer, cv, av)
-                self.generation.text("offline/initial/CustomerMgmt.xml", [(key, payload)])
+            # XML is the small, exact scalar encoder exception. Ordinary daily
+            # customer and account records enter the same typed export buffers.
+            self.recorder.xml_action(kind, timestamp(day, second).replace(" ", "T"), customer,
+                                     cv, av, ordinal=ordinal)
         else:
             if kind in ("NEW", "UPDCUST", "INACT"):
-                self.recorder.record("Customer", day, cv, key, "I" if kind == "NEW" else "U")
+                values = tuple((date.fromisoformat(cv[field.name]) - date(1970, 1, 1)).days
+                               if field.name == "C_DOB" else cv[field.name]
+                               for field in self.generation.sources["Customer"].fields)
+                self.generation.record("Customer", offset, values,
+                                       order=(epoch_second, ordinal, kind), flag="I" if kind == "NEW" else "U")
             if kind != "UPDCUST":
-                for i, fields in zip(indices, av):
-                    self.recorder.record("Account", day, fields, f"{ts}/{fields['CA_ID']:011d}/{ordinal:08d}", "I" if kind in ("NEW", "ADDACCT") else "U")
+                for fields in av:
+                    values = tuple(fields[field.name] for field in self.generation.sources["Account"].fields)
+                    self.generation.record("Account", offset, values, order=(epoch_second, ordinal),
+                                           flag="I" if kind in ("NEW", "ADDACCT") else "U")
         self.metrics[kind] += 1
 
-    def trade_fields(self, order: Order, day: date, seconds: int, status: str, price: int | None = None) -> dict:
-        """Build correct trade fields, leaving unfinished execution amounts empty."""
+    def record_trade(self, order: Order, offset: int, seconds: int, status: str,
+                     price: int | None = None, flag: str = "I", *, value_day: int | None = None) -> None:
+        """Capture one typed trade version before its mutable order can change."""
         account = self.accounts[order.account_index]
         charge, commission = self.fees(order.quantity, price) if price is not None else (None, None)
-        return {
-            "T_ID": order.trade_id, "T_DTS": timestamp(day, seconds), "T_ST_ID": status,
-            "T_TT_ID": order.kind, "T_IS_CASH": int(account["is_cash"]),
-            "T_S_SYMB": f"S{order.security + 1:010d}", "T_QTY": order.quantity,
-            "T_BID_PRICE": decimal_cents(order.bid), "T_CA_ID": int(account["account_id"]),
-            "T_EXEC_NAME": "Alex Broker", "T_TRADE_PRICE": decimal_cents(price) if price is not None else "",
-            "T_CHRG": decimal_cents(charge) if charge is not None else "",
-            "T_COMM": decimal_cents(commission) if commission is not None else "",
-            "T_TAX": "0.00" if price is not None else "",
-        }
-
-    def record_trade(self, order: Order, day: date, fields: dict, key: str, flag: str = "I") -> None:
-        """Give source recording explicit observable identity and profile context."""
-        if isinstance(self.recorder, SourceRecorder):
-            account = self.accounts[order.account_index]
-            context = {"profile": int(account["profile"]), "account_id": int(account["account_id"]),
-                       "customer_id": int(account["customer_id"])}
-            self.recorder.record("Trade", day, fields, key, flag, context=context)
-        else:
-            self.recorder.record("Trade", day, fields, key, flag)
+        epoch_second = self.start_epoch_second + (offset if value_day is None else value_day) * 86400 + seconds
+        values = (order.trade_id, epoch_second, status, order.kind, int(account["is_cash"]),
+                  order.security + 1, order.quantity, order.bid, int(account["account_id"]),
+                  "Alex Broker", price, charge, commission, 0 if price is not None else None)
+        self.generation.record("Trade", offset, values, order=(order.transition,), flag=flag,
+                               profile=int(account["profile"]))
 
     def transition(self, order: Order, day: date, seconds: int, status: str, price: int | None = None, creation: bool = False) -> None:
         """Record one legal status change and its stable equal-time ordinal."""
         order.status = status
         order.seconds = seconds
-        fields = self.trade_fields(order, day, seconds, status, price)
         order.transition += 1
+        offset = (day - self.config.start).days
         if day <= self.config.cutover:
-            self.recorder.record("TradeHistory", day, {"TH_T_ID": order.trade_id, "TH_DTS": fields["T_DTS"], "TH_ST_ID": status}, f"{order.trade_id:015d}/{fields['T_DTS']}/{order.transition:08d}")
+            epoch_second = self.start_epoch_second + offset * 86400 + seconds
+            self.generation.record("TradeHistory", offset, (order.trade_id, epoch_second, status),
+                                   order=(order.transition,))
             if status in ("CMPT", "CNCL"):
-                self.record_trade(order, day, fields, f"{order.trade_id:015d}")
+                self.record_trade(order, offset, seconds, status, price)
         else:
-            self.record_trade(order, day, fields, f"{fields['T_DTS']}/{order.trade_id:015d}/{order.transition:08d}", "I" if creation else "U")
+            self.record_trade(order, offset, seconds, status, price, "I" if creation else "U")
         if status in ("CMPT", "CNCL"):
             self.metrics[status] += 1
 
@@ -373,11 +375,33 @@ class BusinessSimulation:
         else:
             self.ledger.reserved[index] -= order.reservation
 
+    def _add_order(self, order: Order) -> None:
+        """Index a live order by account and due day in its insertion order."""
+        self.order_sequence += 1
+        order.sequence = self.order_sequence
+        self.orders[order.trade_id] = order
+        self.orders_by_account[order.account_index][order.trade_id] = order
+        heapq.heappush(self.order_due_days, (order.due_day, order.trade_id))
+
+    def _remove_order(self, order: Order) -> None:
+        """Remove live indexes; the due heap discards canceled entries when due."""
+        self.orders.pop(order.trade_id, None)
+        account_orders = self.orders_by_account[order.account_index]
+        account_orders.pop(order.trade_id, None)
+        if not account_orders:
+            del self.orders_by_account[order.account_index]
+        self.due_orders.pop(order.trade_id, None)
+
+    def orders_for_accounts(self, indices) -> list[Order]:
+        """Select account orders without changing their global insertion order."""
+        orders = [order for index in indices for order in self.orders_by_account.get(index, {}).values()]
+        return sorted(orders, key=lambda order: order.sequence)
+
     def cancel(self, order: Order, day: date, second: int) -> None:
         """Release an order and record its cancellation before removing it."""
         self.release(order)
         self.transition(order, day, second, "CNCL")
-        self.orders.pop(order.trade_id, None)
+        self._remove_order(order)
 
     def complete(self, order: Order, day: date, second: int, prices: dict) -> bool:
         """Execute inside market and limit bounds, then settle and change holdings."""
@@ -396,12 +420,15 @@ class BusinessSimulation:
         delta = amount - charge - commission if order.sell else -amount - charge - commission
         if order.sell and delta <= 0:
             raise ValueError("Sell proceeds must cover the configured fees.")
-        self.cash(day, second, order.account_index, delta, f"Trade settlement {order.trade_id}")
+        self.cash(day, second, order.account_index, delta, "Trade settlement", reference=order.trade_id)
         account = int(self.accounts[order.account_index]["account_id"])
         origin, before, after = self.holdings.change(account, order.security, order.trade_id, -order.quantity if order.sell else order.quantity, amount + charge + commission)
         self.transition(order, day, second, "CMPT", price)
-        self.recorder.record("HoldingHistory", day, {"HH_H_T_ID": origin, "HH_T_ID": order.trade_id, "HH_BEFORE_QTY": before, "HH_AFTER_QTY": after}, f"{timestamp(day, second)}/{account:011d}/{int(self.cash_ordinals[order.account_index]):012d}")
-        self.orders.pop(order.trade_id, None)
+        offset = (day - self.config.start).days
+        self.generation.record("HoldingHistory", offset, (origin, order.trade_id, before, after),
+                               order=(self.start_epoch_second + offset * 86400 + second,
+                                      account, int(self.cash_ordinals[order.account_index])))
+        self._remove_order(order)
         return True
 
     def choose_security(self, account: int, offset: int, ordinal: int) -> int:
@@ -484,7 +511,7 @@ class BusinessSimulation:
         if kind in ("TLB", "TLS") and outcome >= 1 - self.config.limit_open_share:
             due = self.total_days + 1
         order = Order(trade_id, index, security, quantity, bid, kind, offset, due, cancel, reservation, "", second)
-        self.orders[trade_id] = order
+        self._add_order(order)
         self.transition(order, day, second, "SBMT" if kind in ("TMB", "TMS") else "PNDG", creation=True)
         self.account_trade_counts[account] += 1
         self.security_trade_counts[security] += 1
@@ -495,10 +522,8 @@ class BusinessSimulation:
 
     def close_accounts(self, day: date, offset: int, indices: tuple[int, ...], prices: dict) -> None:
         """Cancel, liquidate, repay borrowing, withdraw, and mark each account closed."""
-        closing = set(indices)
-        for order in list(self.orders.values()):
-            if order.account_index in closing:
-                self.cancel(order, day, MARKET_OPEN_SECOND)
+        for order in self.orders_for_accounts(indices):
+            self.cancel(order, day, MARKET_OPEN_SECOND)
         for index in indices:
             account = int(self.accounts[index]["account_id"])
             for ordinal, security in enumerate(sorted(self.holdings.by_account[account])):
@@ -515,7 +540,9 @@ class BusinessSimulation:
 
     def watch(self, customer: int, security: int, day: date, second: int, action: str) -> None:
         """Record a watch change with a stable customer and security identity."""
-        self.recorder.record("WatchHistory", day, {"W_C_ID": customer, "W_S_SYMB": f"S{security + 1:010d}", "W_DTS": timestamp(day, second), "W_ACTION": action}, f"{timestamp(day, second)}/{customer:011d}/{security:010d}/{action}")
+        offset = (day - self.config.start).days
+        self.generation.record("WatchHistory", offset,
+                               (customer, security + 1, self.start_epoch_second + offset * 86400 + second, action))
         self.metrics[f"watch_{action}"] += 1
 
     def _schedule_lifetimes(self) -> tuple:
@@ -590,7 +617,7 @@ class BusinessSimulation:
         for position in np.flatnonzero(dividends):
             account, security, _, quantity = rows[position, :4]
             self.cash(day.date, DIVIDEND_SECOND, self.account_indices[int(account)],
-                      int(dividends[position]) * int(quantity), f"Dividend S{security + 1:010d}")
+                      int(dividends[position]) * int(quantity), "Dividend", reference=int(security) + 1)
 
     def _plan_cash(self, day: BusinessDay, index: int, deposit: bool, withdrawal: bool) -> None:
         """Apply profile amounts and planner restrictions to ordinary cash proposals."""
@@ -630,18 +657,23 @@ class BusinessSimulation:
         """Schedule existing orders after the market opens, except final-day orders."""
         if not day.prices["trading"]:
             return
+        # An unfilled limit order remains eligible on later sessions. The heap
+        # admits newly due orders; the ready index retains only unfinished ones.
+        while self.order_due_days and self.order_due_days[0][0] <= day.offset:
+            _, trade_id = heapq.heappop(self.order_due_days)
+            if trade_id in self.orders:
+                self.due_orders[trade_id] = self.orders[trade_id]
         closing = set(day.closes)
-        for order in list(self.orders.values()):
-            if order.due_day <= day.offset and order.account_index not in closing:
+        for order in sorted(self.due_orders.values(), key=lambda order: order.sequence):
+            if order.account_index not in closing:
                 account = int(self.accounts[order.account_index]["account_id"])
                 day.intents.append(Intent(ORDER_DUE_SECOND, account, order.trade_id, IntentKind.DUE,
                                           order.account_index, order=order))
 
     def _liquidate(self, day: BusinessDay, intent: Intent) -> list[Intent]:
         """Cancel orders now and schedule sales later, preserving source causality."""
-        for order in list(self.orders.values()):
-            if order.account_index == intent.index:
-                self.cancel(order, day.date, intent.second)
+        for order in self.orders_for_accounts((intent.index,)):
+            self.cancel(order, day.date, intent.second)
         sales = []
         for ordinal, security in enumerate(sorted(self.holdings.by_account[intent.account_id])):
             quantity = int(self.holdings.row(intent.account_id, security)[3])
@@ -707,40 +739,91 @@ class BusinessSimulation:
                 else:
                     self.complete(intent.order, day.date, second, day.prices)
 
-    def _update_watches(self, day: BusinessDay, identifier: int, closing_customers: set) -> None:
-        """Cancel due watches and create new watches only for active customers."""
-        for security, due in sorted(list(self.watches.get(identifier, {}).items())):
+    def _add_watch(self, identifier: int, security: int, due: int) -> None:
+        """Index one new live watch without changing its dictionary position."""
+        self.watches.setdefault(identifier, {})[security] = due
+        self.watch_due_days[due].setdefault(identifier, set()).add(security)
+        self.watch_count += 1
+
+    def _remove_watch(self, identifier: int, security: int) -> None:
+        """Remove a live watch and any future cancellation scheduled for it."""
+        due = self.watches[identifier].pop(security)
+        self.watch_count -= 1
+        # The day step detaches today's bucket before applying its changes.
+        bucket = self.watch_due_days.get(due)
+        if bucket is not None:
+            bucket[identifier].remove(security)
+            if not bucket[identifier]:
+                del bucket[identifier]
+            if not bucket:
+                del self.watch_due_days[due]
+
+    def _update_watches(self, day: BusinessDay, identifier: int, closing_customers: set,
+                        count: int, due_securities: set) -> None:
+        """Visit only due watches, except when an account or customer leaves."""
+        watches = self.watches.get(identifier, {})
+        # Closure draws apply to all live watches once. Ordinary days need only
+        # today's due securities. Sorting keeps customer and security event ties.
+        securities = watches if identifier in closing_customers or identifier in day.inactive_customers else due_securities
+        for security in sorted(securities):
+            due = watches[security]
             share = self.planner.watch_cancel_share(self, identifier, day.offset, self.config.account_watch_cancel_share)
             cancel_for_account = identifier in closing_customers and self.draw(identifier, day.offset, "close-watch", security) < share
             if due <= day.offset or identifier in day.inactive_customers or cancel_for_account:
                 self.watch(identifier, security, day.date, WATCH_CANCEL_SECOND, "CNCL")
-                del self.watches[identifier][security]
+                self._remove_watch(identifier, security)
         if identifier in day.inactive_customers:
             indices = [i for i in day.closes if int(self.accounts[i]["customer_id"]) == identifier]
             self.action("INACT", day.date, CLOSE_SECOND, identifier, indices)
             return
-        count = poisson(self.config.watch_daily_rate, self.draw(identifier, day.offset, "watch-count"))
         for ordinal in range(count):
             security = self.choose_security(identifier, day.offset, 1000 + ordinal)
             watches = self.watches.setdefault(identifier, {})
             if security not in watches:
                 self.watch(identifier, security, day.date, WATCH_ADD_SECOND + ordinal, "ACTV")
-                watches[security] = day.offset + self.config.watch_lifetime_min_days + int(self.draw(identifier, day.offset, "watch-duration", ordinal) * (self.config.watch_lifetime_max_days - self.config.watch_lifetime_min_days + 1))
+                due = day.offset + self.config.watch_lifetime_min_days + int(self.draw(identifier, day.offset, "watch-duration", ordinal) * (self.config.watch_lifetime_max_days - self.config.watch_lifetime_min_days + 1))
+                self._add_watch(identifier, security, due)
 
     def _update_customers(self, day: BusinessDay) -> None:
         """Record customer updates, watch changes, and final lifetime actions."""
         closing_customers = {int(self.accounts[i]["customer_id"]) for i in day.closes}
         closing_customers |= self.planner.leaving_customers(self, day.offset)
         eligible = (self.customers["open_day"] <= day.offset) & (self.customers["inactivation_day"] >= day.offset)
-        for customer in self.customers[eligible]:
-            identifier = int(customer["customer_id"])
-            if identifier not in day.inactive_customers and self.draw(identifier, day.offset, "customer-update") < self.config.annual_customer_update / 365.2425:
+        indices = np.flatnonzero(eligible)
+        identifiers = self.customers["customer_id"][indices]
+        keys = identifiers.astype(np.uint64) + np.uint64((day.offset + 1) * DAY_KEY_STRIDE)
+        updates = uniforms(keys, self.config.seed, "customer-update:0") < self.config.annual_customer_update / 365.2425
+        # This inverse CDF uses the scalar math.exp and recurrence, including its
+        # rounding at each threshold. Only the comparisons run over arrays.
+        draws = uniforms(keys, self.config.seed, "watch-count:0")
+        counts = np.zeros(len(keys), dtype=np.int64)
+        probability = math.exp(-self.config.watch_daily_rate)
+        total = probability
+        active_customers = ~np.isin(identifiers, list(day.inactive_customers))
+        pending = active_customers & (draws >= total)
+        count = 0
+        while np.any(pending):
+            count += 1
+            if count >= 10000:
+                raise ValueError("The daily event expansion exceeds its checked bound.")
+            counts[pending] = count
+            probability *= self.config.watch_daily_rate / count
+            total += probability
+            pending = active_customers & (draws >= total)
+        due = self.watch_due_days.pop(day.offset, {})
+        special = set(due) | closing_customers | day.inactive_customers
+        selected = updates | (counts > 0)
+        if special:
+            selected |= np.isin(identifiers, list(special))
+        for position in np.flatnonzero(selected):
+            identifier = int(identifiers[position])
+            if identifier not in day.inactive_customers and updates[position]:
                 step = -1 if self.draw(identifier, day.offset, "tier-step") < .5 else 1
                 self.tiers[identifier] = max(1, min(3, self.tiers[identifier] + step))
-                self.tier_array[int(np.searchsorted(self.customers["customer_id"], identifier))] = self.tiers[identifier]
+                self.tier_array[indices[position]] = self.tiers[identifier]
                 self.customer_versions[identifier] += 1
                 self.action("UPDCUST", day.date, 3, identifier, ordinal=self.customer_versions[identifier])
-            self._update_watches(day, identifier, closing_customers)
+            self._update_watches(day, identifier, closing_customers, int(counts[position]), due.get(identifier, set()))
         for index in day.closes:
             customer = int(self.accounts[index]["customer_id"])
             if customer not in day.inactive_customers:
@@ -750,9 +833,11 @@ class BusinessSimulation:
         """Save the cutover trade snapshot and record peak live state."""
         if day.date == self.config.cutover:
             for order in self.orders.values():
-                self.record_trade(order, day.date, self.trade_fields(order, self.config.day(order.created_day), order.seconds, order.status), f"{order.trade_id:015d}")
+                # The initial pending snapshot keeps the original creation date
+                # with the order's last recorded second and status.
+                self.record_trade(order, day.offset, order.seconds, order.status, value_day=order.created_day)
         self.maximum_open_orders = max(self.maximum_open_orders, len(self.orders))
-        self.maximum_watches = max(self.maximum_watches, sum(len(w) for w in self.watches.values()))
+        self.maximum_watches = max(self.maximum_watches, self.watch_count)
         self.planner.after_day(self, day)
 
     def run(self) -> dict:
@@ -789,7 +874,7 @@ class BusinessSimulation:
         }
 
 
-def _run_group(config_dict: dict, root_string: str, first_customer: int, last_customer: int, planner_factory=None, recorder_factory=SourceRecorder) -> tuple[str, dict]:
+def _run_group(config_dict: dict, root_string: str, first_customer: int, last_customer: int, planner_factory=None, recorder_factory=SourceRecorder) -> dict:
     """Execute one disjoint customer group and publish its actual lifetimes."""
     from .config import Config
     from .generation import Generation
@@ -802,10 +887,11 @@ def _run_group(config_dict: dict, root_string: str, first_customer: int, last_cu
     left, right = np.searchsorted(accounts["customer_id"], [first_customer, last_customer])
     group_customers = customers[first_customer - 1:last_customer - 1].copy()
     group_accounts = accounts[left:right].copy()
-    group_root = root / "_work/groups" / f"{first_customer:011d}"
-    generation = Generation(config, group_root)
+    generation = Generation(config, root, group_id=first_customer)
+    if recorder_factory is not SourceRecorder:
+        generation.recorder = recorder_factory(generation)
     simulation = BusinessSimulation(generation, Market(root, config), group_customers, group_accounts,
-                                    planner=planner_factory() if planner_factory else None, recorder=recorder_factory(generation))
+                                    planner=planner_factory() if planner_factory else None)
     if config.attrition_enabled and hasattr(simulation.planner, "normalizer"):
         simulation.planner.normalizer = np.load(root / "_work/population/risk_normalizer.npy", mmap_mode="r")
     result = simulation.run()
@@ -827,13 +913,13 @@ def _run_group(config_dict: dict, root_string: str, first_customer: int, last_cu
     frame.write_parquet(hidden / f"accounts-{first_customer:011d}.parquet")
     if hasattr(simulation.planner, "records") and simulation.planner.records:
         pl.DataFrame(simulation.planner.records, schema=ATTRITION_RECORD_SCHEMA).write_parquet(hidden / f"attrition-{first_customer:011d}.parquet")
-    generation.close()
-    return str(group_root), result
+    generation.finish()
+    return result
 
 
 def generate_activity(generation, market, population, planner_factory=None, recorder_factory=SourceRecorder) -> dict:
-    """Run bounded groups, adopt their sorted output, and combine measured counts."""
-    from concurrent.futures import ProcessPoolExecutor
+    """Seal bounded customer groups and combine counts without moving their typed parts."""
+    from concurrent.futures import ProcessPoolExecutor, as_completed
     from multiprocessing import get_context
 
     config = generation.config
@@ -842,26 +928,31 @@ def generate_activity(generation, market, population, planner_factory=None, reco
         path.unlink()
     maximum_customer = int(population.customers["customer_id"].max())
     groups = [(first, min(maximum_customer + 1, first + config.customer_group_size)) for first in range(1, maximum_customer + 1, config.customer_group_size)]
+    parts = root / "_work" / "source-parts"
+    parts.mkdir(parents=True, exist_ok=True)
+    schedule = parts / "scheduled-groups.json"
+    temporary_schedule = schedule.with_suffix(".json.tmp")
+    temporary_schedule.write_text(json.dumps([first for first, _ in groups]) + "\n", encoding="ascii")
+    temporary_schedule.replace(schedule)
     summaries = []
-    if config.workers == 1:
+    if config.workers == 1 or len(groups) == 1:
         for first, last in groups:
-            path, summary = _run_group(config.as_dict(), str(root), first, last, planner_factory, recorder_factory)
-            generation.adopt(Path(path))
-            summaries.append(summary)
+            summaries.append(_run_group(config.as_dict(), str(root), first, last, planner_factory, recorder_factory))
     else:
-        # The coordinator also simulates groups. Only one additional worker runs.
-        with ProcessPoolExecutor(max_workers=1, mp_context=get_context("spawn")) as executor:
-            for offset in range(0, len(groups), 2):
-                first, last = groups[offset]
-                future = executor.submit(_run_group, config.as_dict(), str(root), first, last, planner_factory, recorder_factory)
-                if offset + 1 < len(groups):
-                    a, b = groups[offset + 1]
-                    path, summary = _run_group(config.as_dict(), str(root), a, b, planner_factory, recorder_factory)
-                    generation.adopt(Path(path))
-                    summaries.append(summary)
-                path, summary = future.result()
-                generation.adopt(Path(path))
-                summaries.append(summary)
+        # The pool takes the next group as soon as a process becomes free.
+        # The coordinator only combines results, so groups have no wave barrier.
+        with ProcessPoolExecutor(max_workers=min(config.workers, len(groups)), mp_context=get_context("spawn")) as executor:
+            futures = [executor.submit(_run_group, config.as_dict(), str(root), first, last,
+                                       planner_factory, recorder_factory) for first, last in groups]
+            try:
+                for future in as_completed(futures):
+                    summaries.append(future.result())
+            except BaseException:
+                # Stop queued groups. Running groups finish and seal their own
+                # evidence before pool shutdown returns the original failure.
+                for future in futures:
+                    future.cancel()
+                raise
     counters = {name: Counter() for name in ("account_trade_counts", "security_trade_counts", "daily_trade_counts", "cash_transaction_types", "profile_counts")}
     totals = Counter()
     peaks = Counter()

@@ -61,11 +61,18 @@ class ProspectCapture:
         self.snapshots = {}
         self.batch_sizes = []
 
-    def emit(self, name, day, rows):
-        """Record each bounded block at its source snapshot date."""
+    def record_batch(self, name, day, columns, *, order=None, flag="I"):
+        """Consume direct prospect arrays and retain their numeric ordering metadata."""
         assert name == "Prospect"
-        self.batch_sizes.append(len(rows))
-        self.snapshots.setdefault(day, []).extend(rows)
+        assert tuple(columns) == tuple(load_sources()[name].columns)
+        assert isinstance(day, int)
+        size = len(columns["AgencyID"])
+        assert all(len(column) == size for column in columns.values())
+        np.testing.assert_array_equal(order["_identity"],
+                                      [int(value.removeprefix("AG")) for value in columns["AgencyID"]])
+        rows = [{name: column[index].item() for name, column in columns.items()} for index in range(size)]
+        self.batch_sizes.append(size)
+        self.snapshots.setdefault(self.config.day(day), []).extend(rows)
 
 
 @pytest.mark.parametrize("seed", [0, 7, 2**63 - 1])
@@ -158,6 +165,7 @@ def test_prospect_arrays_keep_scalar_fields_and_business_values():
     snapshot = date(2019, 1, 1)
     years = np.asarray([1941, 1959, 1970, 1984])
     columns = _prospect_columns(identifiers, identities, snapshot, 7, years)
+    assert tuple(columns) == tuple(load_sources()["Prospect"].columns)
     for index, (identifier, identity) in enumerate(zip(identifiers, identities, strict=True)):
         row = _prospect_values(int(identifier), int(identity), snapshot, 7, int(years[index]))
         assert list(row) == list(columns)

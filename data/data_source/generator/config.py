@@ -146,12 +146,14 @@ class Config:
     price_min_cents: int = 1000
     price_max_cents: int = 30000
     market_volatility: float = .015
-    customer_group_size: int = 2048
-    workers: int = 1
+    customer_group_size: int = 1024
+    workers: int = 4
     threads: int = 2
     export_rows: int = 8192
+    # Accept old run configurations, but native export has no merge fan-in tree.
+    # Reports mark this setting as ignored; it remains outside dataset identity.
     merge_fan_in: int = 16
-    memory_limit_mb: int = 2048
+    memory_limit_mb: int = 8192
     disk_limit_mb: int = 65536
     timeout_seconds: int = 43200
     customer_tier_error_rate: float = .002
@@ -254,8 +256,8 @@ class Config:
             raise ConfigError("positions_per_account must be zero or between 1 and 64.")
         if self.companies > self.securities:
             raise ConfigError("There must be at least one security per company.")
-        if not 1 <= self.workers <= 2 or not 2 <= self.merge_fan_in <= 64:
-            raise ConfigError("workers must be 1 or 2; merge_fan_in must be between 2 and 64.")
+        if not 1 <= self.workers <= 8 or not 2 <= self.merge_fan_in <= 64:
+            raise ConfigError("workers must be between 1 and 8; merge_fan_in must be between 2 and 64.")
         if not 0 <= self.seed < 2**63:
             raise ConfigError("seed must fit a nonnegative signed 64-bit integer.")
         if self.prospects_per_account <= 0 or rounded_count(self.cutover_customers * 1.67, self.prospects_per_account) < 1:

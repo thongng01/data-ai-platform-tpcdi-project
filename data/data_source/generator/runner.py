@@ -107,12 +107,20 @@ def run(config: Config, output: Path):
     partial = output.with_name(output.name + ".partial")
     if output.exists() or partial.exists() or output.is_symlink() or partial.is_symlink():
         raise FileExistsError("The output or partial directory already exists. Choose a new run directory.")
-    if not 1 <= config.workers <= 2:
-        raise ValueError("A run permits at most two worker processes, including the coordinator.")
+    if not 1 <= config.workers <= 8:
+        raise ValueError("A run permits between one and eight business worker processes.")
+    # One worker executes in the coordinator. Parallel runs keep a separate
+    # coordinator plus at most `workers` pool processes in a parallel phase.
+    process_limit = 1 if config.workers == 1 else config.workers + 1
     partial.mkdir(parents=True)
     config_path = partial / "config.json"
     write_json(config_path, config.as_dict())
-    environment = {**os.environ, "POLARS_MAX_THREADS": str(config.threads), "OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1"}
+    from .output import native_environment
+
+    # Set private engine controls before the new process imports Polars. The
+    # output module owns these version-specific names and conservative budgets.
+    environment = {**os.environ, **native_environment(config, partial),
+                   "OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1"}
     started = time.monotonic()
     maximum_rss = 0
     maximum_disk = 0
@@ -140,7 +148,7 @@ def run(config: Config, output: Path):
                     next_disk_check = elapsed + 2
                 if maximum_rss > config.memory_limit_mb * 1024**2:
                     failure = "The aggregate process-tree RSS exceeded the memory budget."
-                elif maximum_workers > config.workers:
+                elif maximum_workers > process_limit:
                     failure = "The process tree exceeded the configured worker count."
                 elif maximum_disk > config.disk_limit_mb * 1024**2:
                     failure = "The sampled disk usage exceeded the disk budget."
@@ -249,13 +257,25 @@ def worker(config: Config, output: Path):
     implementation_files = implementation_hashes(package)
     generation = Generation(config, output)
     timings = {}
+    phase_cpu = {}
+
+    def cpu_times():
+        """Count this process and reaped children, including native worker threads."""
+        records = [resource.getrusage(kind) for kind in (resource.RUSAGE_SELF, resource.RUSAGE_CHILDREN)]
+        return {"user": sum(item.ru_utime for item in records),
+                "system": sum(item.ru_stime for item in records)}
 
     def phase(name, function, *args):
-        """Measure and announce one named stage without changing its return value."""
+        """Measure complete phase wall and CPU time without changing its return value."""
         print(f"Starting {name}.", flush=True)
+        before = cpu_times()
         started = time.monotonic()
         result = function(*args)
         timings[name] = time.monotonic() - started
+        after = cpu_times()
+        # Each phase joins its children before returning, so RUSAGE_CHILDREN
+        # includes their work. CPU totals can exceed elapsed time in parallel.
+        phase_cpu[name] = {key: after[key] - before[key] for key in before}
         print(f"Completed {name} in {timings[name]:.6f} seconds.", flush=True)
         return result
 
@@ -271,16 +291,18 @@ def worker(config: Config, output: Path):
                 ("polars", "numpy", "PyYAML", "exchange-calendars", "psutil")}
     measured = inventory_summary(inventory)
     offline = sum(measured["deliveries"][name]["bytes"] for name in ("initial", "daily"))
+    # Export metrics describe the native batch path. Keep the old setting visible
+    # for saved configurations without implying that a Python merge tree ran.
+    export_metrics = {**generation.output.metrics, "backend": "polars",
+                      "ignored_legacy_settings": {"merge_fan_in": config.merge_fan_in}}
     manifest = {
         "status": "validated", "implementation": FORMAT_VERSION, "config": config.as_dict(),
         "implementation_files": implementation_files,
         "dataset_id": semantic_dataset_id(config, FORMAT_VERSION, implementation_files, market.fingerprint),
         "runtime": {"python": sys.version, **versions}, "calendar": market.calendar_metadata,
-        "timings_seconds": timings, "peak_rss_bytes": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024,
-        "maximum_generation_frame_rows": generation.output.maximum_frame_rows,
-        "maximum_export_buffer_rows": generation.output.maximum_buffer_rows,
-        "maximum_merge_inputs": generation.output.maximum_merge_inputs,
-        "maximum_retained_run_paths": generation.output.maximum_retained_run_paths,
+        "timings_seconds": timings, "phase_cpu_seconds": phase_cpu,
+        "peak_rss_bytes": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024,
+        "export": export_metrics,
         "source_bytes": offline, "stream_bytes": measured["deliveries"]["stream"]["bytes"],
         "source_records": sum(item["rows"] for item in inventory if item["path"].startswith("offline/")),
         "stream_records": measured["deliveries"]["stream"]["rows"], "files": inventory, "validation": validation,
@@ -289,10 +311,8 @@ def worker(config: Config, output: Path):
                "data_errors": {**generation.recording_summary, "measurements": validation["source_recording"]["errors"]},
                "trade_recording": validation["source_recording"]["trade_schemas"],
                "calendar": market.calendar_metadata, "runtime": {"python": sys.version, "dependencies": versions,
-               "timings_seconds": timings,
-               "peak_rss_bytes": manifest["peak_rss_bytes"], "maximum_export_buffer_rows": generation.output.maximum_buffer_rows,
-               "maximum_merge_inputs": generation.output.maximum_merge_inputs,
-               "maximum_retained_run_paths": generation.output.maximum_retained_run_paths}}
+               "timings_seconds": timings, "phase_cpu_seconds": phase_cpu,
+               "peak_rss_bytes": manifest["peak_rss_bytes"], "export": export_metrics}}
     write_json(output / "summary.json", summary)
     write_json(output / "manifest.json", manifest)
     print(f"Validated {manifest['source_records']} offline records and {manifest['stream_records']} stream records.", flush=True)

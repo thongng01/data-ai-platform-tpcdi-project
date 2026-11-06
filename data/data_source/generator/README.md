@@ -64,7 +64,7 @@ Start with `runner.worker`, which calls the generation phases in order. Then rea
 | Daily business execution | `business.py`, `activity.py`; `BusinessDay`, `Intent`, `BusinessSimulation`, `Ledger`, `HoldingBook` | Select account-wide proposals in arrays and execute ordered money and holding changes |
 | Attrition signal | `attrition.py`; `AttritionPlanner`, `ReturnHistory` | Select exits from observed history, add leaving and partial-outflow intents, and classify observed outcomes |
 | Source recording | `customers.py`, `recording.py`; `SourceRecorder` | Encode CMS actions, customer and account fields, prospect snapshots, data errors, and trade channels |
-| Bounded export | `generation.py`, `sorting.py`, `formats.py`, `definitions/`; `Generation`, `SortedOutput` | Check dated contracts, spool sorted runs, merge bounded inputs, and assign source sequences |
+| Bounded export | `generation.py`, `output.py`, `output_formats.py`, `formats.py`, `definitions/`; `Generation`, `TypedOutput` | Buffer typed records, seal source parts, order and check native batches, assign sequences, and write source bytes |
 | Saved-file validation | `validation.py`, `validation_faults.py`; `FaultAudit` | Parse saved bytes, verify exact data-error evidence, and replay business invariants |
 | Sampled signal check | `signal_check.py`; `check_signal` | Build source-observed features and compare a logistic model with the outflow rule using chronological splits |
 
@@ -88,9 +88,10 @@ Configuration holds numbers and distribution choices. Source definitions hold fi
 | Data-error settings | Five independent rates, listed under Source Recording below |
 | `trade_channel_start` | First daily delivery date with `T_CHANNEL`; default `2019-07-01` |
 | Market settings | Companies, securities, prices, volatility, popularity, shock days, and dividend rules, independent of firm size |
-| `customer_group_size`, `workers`, `threads` | Customer group bound, one or two business worker processes, and Polars thread count |
-| `export_rows`, `merge_fan_in` | Aggregate export row buffer and maximum inputs to one merge |
-| Resource settings | Aggregate process-tree memory, disk, and elapsed-time budgets |
+| `customer_group_size`, `workers`, `threads` | Customer group bound, up to eight business worker processes, and Polars thread count; defaults 1,024, 4, and 2 |
+| `export_rows` | Aggregate typed-record buffer and maximum delivered native batch rows |
+| `merge_fan_in` | Accepted for configuration compatibility; native export ignores this setting and reports its value |
+| Resource settings | Aggregate process-tree memory, disk, and elapsed-time budgets; memory defaults to 8,192 MiB |
 
 The expected cutover customer count is `scale_factor * customers_per_unit`. With the default account shares, each customer has 1.67 accounts on average. Factor 1 therefore anchors about 3,601 customers and 6,014 accounts; factor 100 anchors about 360,100 customers and 601,367 accounts. These are planning expectations, not exact realized populations.
 
@@ -99,6 +100,20 @@ Profile arrays use this order: dormant, long-term investor, retiree, active trad
 With a positive `positions_per_account` value N, each account draws N fixed security selections from stable keys. Slots can select the same security, so the account's buy universe contains up to N distinct securities. Later buys use that same universe, including after a full sale; this setting does not simply cap simultaneous positions while allowing new securities over time.
 
 NumPy arrays hold mutable customer and account state. The simulation selects daily activity over account arrays, while Polars builds export batches, hidden-state Parquet files, and validation queries. Shared memory-mapped market arrays and a bounded day cache avoid scalar reads from disk for each event. Each customer and all related accounts stay in one group, so one worker owns every change to an account.
+
+With `workers: 1`, the coordinator simulates groups directly. With more workers and more than one group, a process pool simulates up to `workers` groups at once. The coordinator waits for results and does not simulate a group. Each free process takes the next group without waiting for other processes. A worker error cancels pending groups; running groups finish and retain their sealed parts before the error returns. The runner retains partial output and does not publish it.
+
+The defaults use four workers and 1,024 customers per group. A factor 1 measurement over `2018-10-01` through `2019-07-31`, with two Polars threads and an 8 GiB memory budget, gives these single-run activity results. RSS includes the generator coordinator, pool workers, and resource tracker, but not the measurement wrapper.
+
+| Workers | Customers per group | Groups | Activity wall seconds | Activity CPU seconds | Peak activity RSS MiB |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 4 | 1,024 | 4 | 8.744 | 35.410 | 1,167.29 |
+| 4 | 512 | 8 | 8.787 | 34.638 | 1,144.43 |
+| 8 | 512 | 8 | 8.126 | 61.743 | 2,012.98 |
+
+Four workers limit CPU and memory cost while retaining most of the measured wall-time benefit. The 1,024-customer group bound uses fewer groups than 512 without a material activity-time difference in this measurement. Eight workers remain available up to the configured limit. These bounded measurements do not establish larger-workload memory limits; the sampled 8 GiB process-tree guard remains active for every run.
+
+Customer-update and watch-count draws use arrays with the same named keys as scalar draws. The simulation visits customers only when an update, watch addition, due cancellation, or lifetime action can occur. Due-day indexes select watch cancellations and newly due orders. Account indexes select orders for leaving and liquidation. Unfilled due orders remain eligible on later trading days because the day's price range can permit execution.
 
 | Retained state | Contents and lifetime |
 | --- | --- |
@@ -182,7 +197,7 @@ Only `offline/` files become objects in `upstream`, with that prefix removed fro
   validation.json
   supervision.json
   worker.log
-  _work/                             # Temporary sorted runs and state
+  _work/                             # Typed source parts, native spill, and state
 ```
 
 Every expected file exists, including a zero-record file for no activity. Prospects arrive at cutover and on the first day of each later month. HR and the six reference families load once. FINWIRE uses posting-quarter filenames; Q1 reports released April 30 belong to `FINWIREyyyyQ2`. Market history includes the calendar year before `initial_start`.
@@ -194,7 +209,7 @@ NYSE sessions come from pinned `exchange-calendars`, calendar `XNYS`. The fixed 
 | Customers and accounts | Stable customer ordinals and account slots; IDs are not reused |
 | Trades | Account ID times 1,000,000 plus lifetime trade ordinal; checked bounds below `10^15` |
 | Initial trades and history | Trade ID, with history timestamp and transition order |
-| Initial CMS actions | Action timestamp, customer ID, and action ordinal; omitted and empty fields stay distinct |
+| Initial CMS actions | Action timestamp, customer ID, action ordinal, action kind, and account ID as the final tie-breaker; omitted and empty fields stay distinct |
 | Cash transactions | Global `CT_ID` sequence in timestamp, account, local ordinal, and kind order, continuing across cutover |
 | Daily CDC rows | `CDC_DSN` from 1 through N within each file after business-order sorting |
 | FINWIRE | Posting timestamp, then company, security, and financial dependency order, then natural ID |
@@ -202,13 +217,27 @@ NYSE sessions come from pinned `exchange-calendars`, calendar `XNYS`. The fixed 
 
 Named random keys include entity identity, date, purpose, and local ordinal. The [personal word lists](definitions/README.md) also use stable keys, so matching prospects share customer names and addresses. No worker shares a mutable random stream. Group size, worker count, threads, export buffer size, merge fan-in, and output path do not change the source bytes for the same semantic settings.
 
-`Generation` bounds the aggregate row buffer by `export_rows`. `SortedOutput` keeps sorted runs and a disk-backed catalog. Multilevel merges open at most `merge_fan_in` inputs; duplicate complete sort keys fail export. Final writers apply dated source contracts, assign sequences, and measure rows, bytes, and SHA-256 hashes. The semantic dataset identity includes business settings, seed, format version, source definitions, word lists, and calendar fingerprint. The manifest also records implementation hashes and dependency versions.
+`Generation` accepts typed tuples and named columns for all 18 source families. Money stays in integer cents, timestamps stay in epoch seconds, dates stay in epoch days, and security symbols use numeric IDs until export. `SourceRecorder` applies batch data errors and channel selection to a separate recorded frame. XML and FINWIRE keep their format-specific encoders.
+
+`TypedOutput` bounds the aggregate row buffer by `export_rows` and writes typed Parquet fragments. Each customer group owns an isolated directory and publishes its completion marker only after it seals its parts. Export checks the scheduled groups, consolidates each family's fragments, and lets Polars order the records with disk spill. Duplicate complete sort keys fail export, including duplicates across native batch boundaries.
+
+Each bounded contract batch undergoes native formatting and field checks before it splits into delivery files. Cash IDs continue across cutover; CDC sequences restart within each file. Writers measure rows, bytes, and SHA-256 hashes as they write. Native spill settings stay inside `output.py`; the runner installs them before it starts workers. Spill budgets and sampled process-tree guards do not constitute a hard RAM limit. Population arrays and business state also consume memory.
+
+The semantic dataset identity includes business settings, seed, format version, source definitions, word lists, and calendar fingerprint. The manifest also records implementation hashes and dependency versions.
 
 ## Validation and Measurements
 
-Validation reads the saved files and stream messages, derives its own expected-file list, and checks coverage, cadence, field widths, encoding, hashes, and identities. It stages typed records into bounded Parquet blocks, partitions replay by account and customer, and joins market prices by date. Every partition undergoes checks for legal trade transitions, settlement, cash and margin limits, holding conservation, dividends, watches, and lifetimes.
+Validation reads the saved files and stream messages, derives its own expected-file list, and checks coverage, cadence, field widths, encoding, hashes, and identities. It stages typed records into bounded Parquet blocks, partitions replay by account and customer, and joins market prices by date.
 
-Hidden account files supply traits and lifetime attributes. They do not supply balances as proof: the validator reconstructs balances and holdings from source records after it verifies any audited data errors. Parquet staging buffers have an aggregate row allowance. The source-byte partition target is an average, not a hard memory bound for one unusually large account history.
+The `workers` setting also controls validation parsing and replay processes. Independent files parse into separate staged blocks. The coordinator checks their first and last cash and market keys in file order, so global sequences and order remain exact. It accepts file hashes and counts in that same order and reports an earlier boundary failure before a later row failure. XML, FINWIRE, Customer, and Trade stay in the coordinator because one `FaultAudit` connection owns fault restoration and one-time audit consumption.
+
+Trade pricing uses one streaming left join on market date and symbol. The join builds its hash state from only the market date, symbol, low price, and high price. This state grows with securities and sessions, not with customer scale. Missing market rows leave null prices for the coverage and replay checks. Market metadata cannot replace a trade's account partition, delivery day, or source order.
+
+All customer partitions finish before account replay starts because accounts read the saved customer lifetimes. One worker runs inline. Multiple workers use spawned processes and report the error from the lowest failing partition, in the same order as serial replay. Every partition undergoes checks for legal trade transitions, settlement, cash and margin limits, holding conservation, dividends, watches, and lifetimes.
+
+Hidden account files supply traits and lifetime attributes. They do not supply balances as proof: the validator reconstructs balances and holdings from source records after it verifies any audited data errors. It reads every `accounts-*.parquet` file regardless of the group count. The signal check reads source-visible lifetimes and cash transactions, not hidden plans.
+
+Replay uses a 16 MiB average source-byte target with a ceiling of 1,024 partitions. This ceiling limits small files and directories as source volume grows. Each parse stage buffers at most 8,192 rows. `maximum_parse_buffer_rows` reports the largest single-stage peak, not the sum across parsing processes. Partition writers share a 262,144-row allowance and a 64 MiB estimated Arrow-data allowance, based on source field widths and staging metadata. These writer allowances exclude the market join state, encoder memory, and engine overhead. The source-byte target is an average, not a hard memory bound for one unusually large account history. Above the partition ceiling, average replay memory grows with source volume; worker count and the sampled RSS guard still need a measured resource budget.
 
 Tests cover deterministic personal fields, XML omission and empty text, ledger and holding conservation, profile planning, attrition behavior, dated trade schemas, exact data-error evidence, corruption detection, resource failures, and repeatability across execution settings.
 
@@ -220,24 +249,21 @@ Tests cover deterministic personal fields, XML omission and empty text, ledger a
 | `summary/signal_check.json` | Sample size, chronological split counts, model and rule metrics, or the reason for insufficient data |
 | `supervision.json` | Sampled aggregate RSS, process count, disk use, temporary disk peaks, and sampling intervals |
 
-Phase times cover references, market, population, activity, prospects, final export, and validation. Buffer flushes and intermediate merges count toward the phase that emits their records. The final export phase measures final merges and writes, not all export work.
+Phase times cover references, market, population, activity, prospects, final export, and validation. Buffer flushes and group sealing count toward the phase that emits their records. Final export measures native ordering, formatting, checks, and writes, not all export work. Reports include phase user and system CPU seconds, native batch bounds, fragment counts, sealed bytes, and spool, seal, and sort-write times. Export subphase totals can include work from multiple processes; they are not separate elapsed phases to add to generation time.
+
+`customer_groups` reports execution grouping. `peak_active_watches`, `peak_live_holdings`, and `peak_open_trades` report the largest per-group peaks, not whole-dataset peaks. These values and `numeric_state_buffer_bytes` can change with group size even when source bytes and business records remain identical. Hidden file names and counts also follow group boundaries; compare their typed records in stable account and event order when group sizes differ.
 
 ### Full-Calendar Measurements
 
 These runs cover generation stages 1 to 3 over 2014-01-01 through 2025-12-31, with two workers, two Polars threads per worker, seed `20261029`, 1,250 companies, and 2,000 securities. Each run passes full saved-file validation. Generation seconds sum the measured phases before validation; peak RSS covers the supervisor and all descendants. Disk sampling occurs every two seconds, so temporary storage is a sampled peak.
 
-| Factor | Customers per unit | Offline bytes | Stream bytes | Generation seconds | Validation seconds | Peak RSS MiB | Peak temporary GiB |
-| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 | 3,300 | 1,346,693,500 | 307,655,539 | 954.77 | 753.54 | 1,374.79 | 2.426 |
-| 1 | 3,601 | 1,438,704,592 | 339,074,412 | 896.26 | 829.15 | 1,434.32 | 2.585 |
+| Measurement | Factor | Customers per unit | Cutover customers | Cutover accounts | Offline bytes | Stream bytes | Generation seconds | Validation seconds | Peak RSS MiB | Peak temporary GiB |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Calibration input | 1 | 3,300 | 3,278 | 5,488 | 1,346,693,500 | 307,655,539 | | | | |
+| Calibrated volume | 1 | 3,601 | 3,597 | 6,028 | 1,438,704,592 | 339,074,412 | | | | |
+| Runtime | 1 | 3,601 | 3,597 | 6,028 | 1,438,704,592 | 339,074,412 | 470.48 | 831.70 | 1,774.40 | 3.463 |
 
-### Original Stage 1 Reference Measurement
-
-This historical measurement covers the full 2014 through 2025 reference calendar with two workers and 3,300 cutover customers per unit. It records the original stage 1 behavior and source format, before the attrition and source-recording stages. It is not a runtime or volume guarantee for another configuration.
-
-| Factor | Customers per unit | Offline bytes | Stream bytes | Generation seconds | Validation seconds | Peak RSS MiB | Peak temporary GiB |
-| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 | 3,300 | 1,302,815,601 | 561,699,602 | 1,284.40 | 948.49 | 1,279.64 | 2.562 |
+The runtime measurement covers all 18,051 source files, 5,574 audit rows, and eight ordered typed hidden files. Its full command takes 1,304.80 seconds, including validation. This single run does not establish larger-factor throughput. The RSS column covers the generator supervisor and descendants; including the separate measurement wrapper raises the sampled peak to 1,909.45 MiB.
 
 ### Volume Calibration
 

@@ -1,12 +1,16 @@
 """Exercise business state, deterministic planning, and chronological spending."""
 
+from datetime import date
 from types import SimpleNamespace
 
 from hypothesis import given, settings, strategies as st
 import numpy as np
+import polars as pl
 import pytest
 
-from data.data_source.generator.activity import BusinessSimulation, HoldingBook, Ledger, SourceRecorder, Stage1IntentPlanner, decimal_cents, poisson
+from data.data_source.generator.activity import BusinessSimulation, HoldingBook, Ledger, Order, SourceRecorder, Stage1IntentPlanner, poisson
+from data.data_source.generator.config import Config
+from data.data_source.generator.formats import load_sources
 from data.data_source.generator.random_values import scalar, values
 
 
@@ -71,17 +75,18 @@ def test_sell_cannot_create_a_holding():
 
 def test_recording_cannot_mutate_business_fields():
     """A recorder may change output fields but cannot change correct business values."""
-    emitted = []
-    generation = SimpleNamespace(emit=lambda *args: emitted.append(args))
-    original = {"T_CHRG": "1.00"}
+    generation = SimpleNamespace(config=Config())
+    original = pl.DataFrame({"T_ID": [1], "T_ST_ID": ["PNDG"], "T_CHRG": [100], "_record_day": [0]})
     def transform(source, day, fields):
-        """Reject mutation of the immutable input while returning a changed recorded value."""
+        """Reject mutation of the immutable input while returning a changed typed value."""
+        assert source == "Trade" and day == generation.config.start
         with pytest.raises(TypeError):
-            fields["T_CHRG"] = "200.00"
-        return {**fields, "T_CHRG": "200.00"}
-    SourceRecorder(generation, transform).record("Trade", 0, original, "key")
-    assert original == {"T_CHRG": "1.00"}
-    assert emitted[0][2][0]["T_CHRG"] == "200.00"
+            fields["T_CHRG"] = 20000
+        return {**fields, "T_CHRG": 20000}
+    recorded, audit = SourceRecorder(generation, transform).apply("Trade", original)
+    assert original["T_CHRG"].to_list() == [100]
+    assert recorded["T_CHRG"].to_list() == [20000]
+    assert not audit
 
 
 def test_intent_planner_controls_cash_trades_and_closure(tmp_path):
@@ -112,9 +117,10 @@ def test_intent_planner_controls_cash_trades_and_closure(tmp_path):
             """Record the trade-policy call and reject the optional trade proposal."""
             calls.append((kind, day))
             return False
-    cash = []
-    generation = SimpleNamespace(config=config, cash=lambda *args: cash.append(args),
-                                 emit=lambda *args: None, text=lambda *args: None)
+    records = []
+    generation = SimpleNamespace(config=config, sources=load_sources(),
+                                 record=lambda family, day, values, **metadata: records.append((family, day, values, metadata)),
+                                 _record_fault=lambda entry: None)
     prices = {"close": np.array([100]), "low": np.array([90]), "high": np.array([110]),
               "dividends": np.array([0]), "trading": True, "close_second": 57600, "shock": False}
     market = SimpleNamespace(day=lambda day: prices, sessions_per_year={2019: 252})
@@ -123,7 +129,7 @@ def test_intent_planner_controls_cash_trades_and_closure(tmp_path):
     assert ("close", 0) in calls
     assert ("Deposit", 0) in calls
     assert accounts[0]["close_day"] == config.total_days
-    assert len(cash) == 1  # Opening funding remains a business requirement.
+    assert sum(family == "CashTransaction" for family, *_ in records) == 1  # Opening funding remains a business requirement.
     simulation.submit(0, config.start, 0, 34200, prices, 1)
     assert not simulation.orders
     assert simulation.metrics["rejected_by_intent_planner"] == 1 or simulation.metrics["rejected_no_holding"] == 1
@@ -166,13 +172,6 @@ def test_typed_intents_preserve_equal_time_order():
     assert sorted([trade, cash], key=lambda intent: intent.sort_key) == [cash, trade]
 
 
-def test_decimal_cent_encoding():
-    """Format zero and signed cents without dropping the two decimal places."""
-    assert decimal_cents(-1) == "-0.01"
-    assert decimal_cents(12345) == "123.45"
-    assert decimal_cents(0) == "0.00"
-
-
 @settings(max_examples=50)
 @given(st.floats(min_value=0, max_value=20, allow_nan=False, allow_infinity=False), st.floats(min_value=0, max_value=.99999999, allow_nan=False, allow_infinity=False))
 def test_poisson_draw_is_bounded_integer(rate, draw):
@@ -180,3 +179,61 @@ def test_poisson_draw_is_bounded_integer(rate, draw):
     result = poisson(rate, draw)
     assert isinstance(result, int)
     assert 0 <= result < 10000
+
+
+def _captured_simulation():
+    """Build one small account with a typed capture instead of an export backend."""
+    from data.data_source.generator.population import ACCOUNT_DTYPE, CUSTOMER_DTYPE
+
+    config = Config(initial_start="2019-06-25", initial_end="2019-06-27",
+                    daily_start="2019-06-28", daily_end="2019-07-02", securities=2, companies=1,
+                    scale_factor=.001, attrition_enabled=False)
+    customers = np.array([(1, 0, config.total_days, 3)], dtype=CUSTOMER_DTYPE)
+    accounts = np.array([(4, 1, 0, config.total_days, 4, True, 100000, 0, 1, 1)], dtype=ACCOUNT_DTYPE)
+    captured = []
+    generation = SimpleNamespace(config=config, sources=load_sources(),
+                                 record=lambda family, day, values, **metadata: captured.append((family, day, values, metadata)),
+                                 _record_fault=lambda entry: None)
+    prices = {"close": np.array([100, 100]), "low": np.array([90, 90]), "high": np.array([110, 110]),
+              "dividends": np.array([3, 5]), "trading": True, "close_second": 57600, "shock": False}
+    market = SimpleNamespace(day=lambda day: prices, sessions_per_year={2019: 252})
+    return BusinessSimulation(generation, market, customers, accounts, planner=Stage1IntentPlanner()), captured, prices
+
+
+def test_typed_cutover_trade_captures_original_timestamp_and_pending_nulls():
+    """The cutover copy cannot follow later mutations of the same live order."""
+    from data.data_source.generator.business import BusinessDay
+
+    simulation, captured, prices = _captured_simulation()
+    order = Order(4000001, 0, 1, 10, 100, "TLB", 0, 5, False, 1000, "PNDG", 35000, transition=1)
+    simulation.orders[order.trade_id] = order
+    config = simulation.config
+    day = BusinessDay(config.cutover, 2, prices, (), (), (), set(), np.array([0]))
+    simulation._finish_day(day)
+    family, offset, values, metadata = captured[0]
+    assert family == "Trade" and offset == 2
+    assert values[1] == (config.start - date(1970, 1, 1)).days * 86400 + 35000
+    assert values[2] == "PNDG" and values[5] == 2
+    assert values[10:] == (None, None, None, None)
+    assert metadata == {"order": (1,), "flag": "I", "profile": 4}
+    simulation.transition(order, config.daily_start_date, 36000, "SBMT", creation=True)
+    order.quantity = 999
+    assert values[6] == 10 and values[2] == "PNDG"
+    assert captured[1][1] == 3 and captured[1][3]["flag"] == "I"
+    assert captured[1][3]["order"] == (2,)
+
+
+def test_typed_dividends_preserve_holding_insertion_order_and_cash_ordinals():
+    """Native name formatting receives references without reordering same-account dividends."""
+    from data.data_source.generator.business import BusinessDay
+
+    simulation, captured, prices = _captured_simulation()
+    simulation.holdings.change(4, 1, 11, 5, 500)
+    simulation.holdings.change(4, 0, 12, 7, 700)
+    day = BusinessDay(simulation.config.start, 0, prices, (), (), (), set(), np.array([0]))
+    simulation._pay_dividends(day)
+    assert [record[3]["order"] for record in captured] == [(1, 2), (2, 1)]
+    assert [record[2][2:] for record in captured] == [(25, "Dividend"), (21, "Dividend")]
+    assert all(record[0] == "CashTransaction" for record in captured)
+    assert simulation.ledger.balance[0] == 46
+    assert simulation.cash_type_counts == {"Dividend": 2}
