@@ -1,20 +1,21 @@
-"""Own bounded typed spools, native ordering, exact source writers, and group seals."""
+"""Seal bounded typed source parts and publish ordered, checked source files."""
 
 import hashlib
 import json
 import time
-from datetime import date, timedelta
+from datetime import timedelta
 from pathlib import Path
+from typing import NamedTuple
 
 import polars as pl
 
-from .output_formats import (ORDER_COLUMNS, RAW_FAMILIES, cash_name, input_fields,
-                             input_schema, native_contract, order_key)
+from .output_formats import (ORDER_COLUMNS, RAW_FAMILIES, input_fields,
+                             input_schema, order_key)
+from .output_policy import family_policies
 
 
 XML_OPEN = '<?xml version="1.0" encoding="UTF-8"?>\n<TPCDI:Actions xmlns:TPCDI="http://www.tpc.org/tpc-di">\n'
 XML_CLOSE = "</TPCDI:Actions>\n"
-CASH_NAME_PATTERN = r"^(?:Deposit|Withdrawal|Trade settlement [1-9][0-9]{0,14}|Dividend [A-Za-z0-9._-]{1,15})$"
 
 
 def native_environment(config, root: Path) -> dict[str, str]:
@@ -87,12 +88,32 @@ class BinaryWriter:
         self.stream.close()
 
 
-class TypedOutput:
-    """Hide buffering, part lifecycle, spill sorting, and final encoding from producers."""
+class RecordMetadata(NamedTuple):
+    """Name the fixed columns shared by scalar records and borrowed column batches."""
 
-    def __init__(self, owner, group_id: int | None, *, part_name=None, reuse=False):
-        """Allocate one bounded producer buffer or reopen a sealed export input."""
-        self.owner, self.config, self.root = owner, owner.config, owner.root
+    record_day: int
+    flag: str
+    profile: int
+    delivery_rank: int
+    relative: str
+
+
+class Publication(NamedTuple):
+    """Return source inventory and the separate audit receipt to the coordinator."""
+
+    inventory: list[dict]
+    audit: dict
+
+
+class PartWriter:
+    """Buffer correct tuples, record source-only changes, and seal one producer part."""
+
+    def __init__(self, config, root, sources, route, apply_recording, record_fault,
+                 group_id: int | None, *, part_name=None, reuse=False):
+        """Accept explicit recording dependencies or reopen a completed producer seal."""
+        self.config, self.root = config, Path(root)
+        self.route, self.apply_recording, self.record_fault = route, apply_recording, record_fault
+        self.policies = family_policies(config, sources)
         if group_id is not None and (type(group_id) is not int or group_id < 1):
             raise ValueError("A group ID must be a positive first-customer ordinal.")
         self.group_id = group_id
@@ -103,14 +124,13 @@ class TypedOutput:
         self.part = self.parts / name
         if not reuse:
             self.part.mkdir(parents=True, exist_ok=False)
-        self.schemas = {family: input_schema(family, owner.sources)
-                        for family in (*owner.sources, "CustomerMgmt", "FINWIRE", "__audit")}
-        self.fields = {family: input_fields(family, owner.sources) for family in self.schemas}
+        self.schemas = {family: input_schema(family, sources)
+                        for family in (*sources, "CustomerMgmt", "FINWIRE", "__audit")}
+        self.fields = {family: input_fields(family, sources) for family in self.schemas}
         self.buffers = {}
         self.buffer_rows = self.sequence = 0
         self.closed = False
         self.families = set()
-        self.cash_sequence = 0
         self.metrics = {"maximum_buffer_rows": 0, "maximum_frame_rows": 0,
                         "maximum_stream_batch_rows": 0, "part_fragments": 0,
                         "sealed_bytes": 0, "spool_seconds": 0.0, "seal_seconds": 0.0,
@@ -125,31 +145,30 @@ class TypedOutput:
         if self.closed:
             raise ValueError("A sealed source part cannot accept more records.")
 
-    def _metadata(self, family, day, order, flag, profile):
-        """Build fixed metadata without formatting a key or copying a row dictionary."""
+    def _metadata(self, family, day, flag, profile):
+        """Name fixed metadata in one tuple, with no extra per-record mapping."""
         if family not in self.schemas:
             raise ValueError(f"Unknown source family: {family}")
         if type(day) is not int:
             raise ValueError("A recording day must be an integer offset from config.start.")
         if flag not in ("I", "U"):
             raise ValueError("A source CDC flag must be I or U.")
-        names = ORDER_COLUMNS.get(family, ())
-        if family == "CashTransaction" and len(order) == 1:
-            order = (*order, 0)
-        if len(order) != len(names):
-            raise ValueError(f"Incorrect ordering metadata in {family}: expected {names}.")
         day_value = self.config.start + timedelta(days=day)
-        relative = self.owner._path(family, day_value)
-        return (*order, day, flag, 1 if profile is None else profile,
-                0 if family == "__audit" else int(day_value > self.config.cutover), relative)
+        return RecordMetadata(day, flag, 1 if profile is None else profile,
+                              0 if family == "__audit" else int(day_value > self.config.cutover),
+                              self.route(family, day_value))
 
     def record(self, family, day, values, *, order=(), flag="I", profile=None):
         """Buffer one typed tuple until the shared row allowance triggers a flush."""
         self._require_open()
         if family not in self.fields or not isinstance(values, tuple) or len(values) != len(self.fields[family]):
             raise ValueError(f"Incorrect typed source tuple in {family}.")
-        metadata = self._metadata(family, day, order, flag, profile)
-        self.buffers.setdefault(family, []).append((*values, *metadata))
+        metadata = self._metadata(family, day, flag, profile)
+        order = self.policies[family].complete_order(order)
+        names = ORDER_COLUMNS.get(family, ())
+        if len(order) != len(names):
+            raise ValueError(f"Incorrect ordering metadata in {family}: expected {names}.")
+        self.buffers.setdefault(family, []).append((*values, *order, *metadata))
         self.buffer_rows += 1
         self.metrics["maximum_buffer_rows"] = max(self.metrics["maximum_buffer_rows"], self.buffer_rows)
         if self.buffer_rows >= self.config.export_rows:
@@ -173,7 +192,7 @@ class TypedOutput:
                 valid = getattr(source_dtype, "kind", None) in ("i", "u")
             if not valid:
                 raise ValueError(f"{name} requires integral source values.")
-        if TypedOutput._array_length(value) is None:
+        if PartWriter._array_length(value) is None:
             value = [value] * count
         return pl.Series(name, value, dtype=dtype, strict=True)
 
@@ -185,8 +204,8 @@ class TypedOutput:
         metadata = dict(order or {})
         profile = metadata.pop("_profile", 1)
         names = ORDER_COLUMNS.get(family, ())
-        if family == "CashTransaction":
-            metadata.setdefault("_reference", 0)
+        for name, value in self.policies[family].order_defaults.items():
+            metadata.setdefault(name, value)
         if set(metadata) != set(names):
             raise ValueError(f"Incorrect ordering columns in {family}: expected {names}.")
         lengths = {length for value in (*columns.values(), *metadata.values(), profile)
@@ -199,11 +218,11 @@ class TypedOutput:
         # Pending scalar tuples and an independent input frame never share the
         # active row allowance. Borrowed arrays are not retained after this call.
         self.flush()
-        meta_values = self._metadata(family, day, tuple(0 for _ in names), flag, 1)
+        context = self._metadata(family, day, flag, 1)
         data = dict(columns)
         data.update(metadata)
-        data.update(zip(("_record_day", "_flag", "_profile", "_delivery_rank", "_relative"), meta_values[len(names):]))
-        data["_profile"] = profile
+        data.update(_record_day=context.record_day, _flag=context.flag, _profile=profile,
+                    _delivery_rank=context.delivery_rank, _relative=context.relative)
         if not count:
             return
         series = {name: self._series(name, data[name], dtype, count)
@@ -225,20 +244,10 @@ class TypedOutput:
         started = time.monotonic()
         self.metrics["maximum_frame_rows"] = max(self.metrics["maximum_frame_rows"], frame.height)
         if family not in RAW_FAMILIES:
-            frame, faults = self.owner.recorder.apply(family, frame)
+            frame, faults = self.apply_recording(family, frame)
             for entry in faults:
-                self.owner._record_fault(entry)
-        if family == "Trade" and "T_CHANNEL" not in frame.columns:
-            frame = frame.with_columns(pl.lit(None, dtype=pl.String).alias("T_CHANNEL"))
-        if family == "CashTransaction":
-            frame = frame.with_columns(cash_name().alias("CT_NAME"))
-            first_epoch_day = (self.config.start - date(1970, 1, 1)).days
-            invalid = ((pl.col("CT_CA_ID") <= 0) | (pl.col("CT_CA_ID") >= 10**11) |
-                       (pl.col("_ordinal") < 0) | (pl.col("_ordinal") >= 10**15) |
-                       (pl.col("_record_day") < 0) | (pl.col("_record_day") >= self.config.total_days) |
-                       (pl.col("CT_DTS") // 86400 != first_epoch_day + pl.col("_record_day")))
-            if frame.select(invalid.fill_null(True).any()).item():
-                raise ValueError("A cash timestamp or identity exceeds the recording contract.")
+                self.record_fault(entry)
+        frame = self.policies[family].prepare(frame)
         frame = frame.with_columns(order_key(family).alias("_key"))
         bad_key = (pl.col("_key").is_null() | (pl.col("_key") == "") |
                    pl.col("_key").str.contains(r"[^\x00-\x7F]|[\r\n\t]"))
@@ -285,6 +294,19 @@ class TypedOutput:
         temporary.replace(self.part / "complete.json")
         self.closed = True
         return marker
+
+
+class SourcePublisher:
+    """Discover sealed producers, order their records, and write final source files."""
+
+    def __init__(self, config, root, sources, coordinator_part, metrics):
+        """Accept sealed input paths and counters without a live producer or recorder."""
+        self.config, self.root = config, Path(root)
+        self.part = coordinator_part
+        self.parts = self.part.parent
+        self.families = set(sources) | RAW_FAMILIES
+        self.policies = family_policies(config, sources)
+        self.metrics = metrics
 
     def discover(self):
         """Require exactly the scheduled completed group namespaces before final export."""
@@ -347,15 +369,16 @@ class TypedOutput:
 
     def _contract_chunks(self, family, frame):
         """Split only at initial, daily CDC, or dated Trade schema changes."""
-        if family in RAW_FAMILIES or (family != "CashTransaction" and not self.owner.sources[family].cdc):
+        policy = self.policies[family]
+        if not policy.cdc:
             yield 0, frame
             return
-        channel_day = (date.fromisoformat(self.config.trade_channel_start) - self.config.start).days
+        dated_start = policy.dated_start
 
         def kind(index):
             """Resolve one endpoint without building another native plan for the usual case."""
             rank = int(frame["_delivery_rank"][index])
-            return 2 if family == "Trade" and rank and int(frame["_record_day"][index]) >= channel_day else rank
+            return 2 if dated_start is not None and rank and int(frame["_record_day"][index]) >= dated_start else rank
 
         first, last = kind(0), kind(-1)
         if first == last:
@@ -365,8 +388,8 @@ class TypedOutput:
         # daily v2 Trade ranges stay contiguous. Endpoint checks are sufficient
         # because a later path cannot return to an earlier contract version.
         expression = pl.col("_delivery_rank")
-        if family == "Trade":
-            expression = pl.when((expression > 0) & (pl.col("_record_day") >= channel_day)).then(2).otherwise(expression)
+        if dated_start is not None:
+            expression = pl.when((expression > 0) & (pl.col("_record_day") >= dated_start)).then(2).otherwise(expression)
         chunks = frame.with_columns(expression.alias("_write_kind")).partition_by(
             "_write_kind", include_key=False, as_dict=True, maintain_order=True)
         for (write_kind,), chunk in chunks.items():
@@ -377,39 +400,7 @@ class TypedOutput:
         if family in RAW_FAMILIES:
             self._check_raw(family, batch)
             return batch.select("_payload", "_relative"), "|"
-        source = self.owner.sources[family]
-        if family == "CashTransaction":
-            if batch.select((~pl.col("CT_NAME").str.contains(CASH_NAME_PATTERN)).fill_null(True).any()).item():
-                raise ValueError("Invalid CT_NAME.")
-            batch = batch.with_columns(pl.int_range(
-                self.cash_sequence + 1, self.cash_sequence + batch.height + 1).alias("CT_ID"))
-            self.cash_sequence += batch.height
-        elif family == "Trade" and write_kind == 2:
-            source = source.daily_version
-        frame = native_contract(source).format(batch).with_columns(batch["_relative"])
-        if family == "CashTransaction" and write_kind:
-            fields = [pl.col("CT_ID").cast(pl.Int64).alias("ct_id"),
-                      pl.col("CT_CA_ID").cast(pl.Int64).alias("ct_ca_id"),
-                      (pl.col("CT_DTS").str.replace(" ", "T", literal=True) + "Z").alias("ct_dts"),
-                      pl.col("CT_AMT").alias("ct_amt"), pl.col("CT_NAME").alias("ct_name"),
-                      pl.lit(1).alias("schema_version")]
-            # CPython ensure_ascii escapes ASCII DEL, while serde leaves it
-            # literal. Keep that rule even though legal cash names exclude DEL.
-            frame = frame.select(pl.struct(fields).struct.json_encode().str.replace_all(
-                "\x7f", "\\u007f", literal=True).alias("_payload"), "_relative")
-        elif source.cdc and write_kind:
-            # Only the first source file can continue the previous batch's open
-            # file. All later groups start at one. This window is bounded by the
-            # admitted batch, never by a complete family or source-file history.
-            carried = (pl.when(pl.col("_relative") == writer.relative).then(writer.rows).otherwise(0)
-                       if writer is not None else pl.lit(0))
-            cdc = batch.select(pl.col("_flag").alias("CDC_FLAG"),
-                (pl.col("_relative").cum_count().over("_relative").cast(pl.Int64) + carried).alias("CDC_DSN"))
-            if cdc["CDC_DSN"].max() >= 10**12:
-                raise ValueError("CDC_DSN exceeds NUM(12).")
-            frame = frame.with_columns(cdc["CDC_FLAG"], cdc["CDC_DSN"]).select(
-                "CDC_FLAG", "CDC_DSN", *source.columns, "_relative")
-        return frame, source.separator
+        return self.policies[family].encode(batch, write_kind, writer)
 
     def write_family(self, family, paths, expected):
         """Sort one family with native spill and write contiguous source-file segments."""
@@ -471,16 +462,16 @@ class TypedOutput:
         for part in parts:
             marker = json.loads((part / "complete.json").read_text(encoding="ascii"))
             for family, name in marker["families"].items():
-                if family not in self.schemas or Path(name).name != name or not (part / name).is_file():
+                if family not in self.families or Path(name).name != name or not (part / name).is_file():
                     raise ValueError("Invalid sealed source file in completion marker.")
                 family_paths.setdefault(family, []).append(str(part / name))
         expected = set(expected_paths)
         inventory = []
         audit = self.write_family("__audit", family_paths.pop("__audit"), {audit_path}) if "__audit" in family_paths else []
-        self.owner.recording_summary = audit[0] if audit else BinaryWriter(self.root, audit_path).close()
+        audit_receipt = audit[0] if audit else BinaryWriter(self.root, audit_path).close()
         for family, paths in sorted(family_paths.items()):
             inventory.extend(self.write_family(family, paths, expected))
         written = {item["path"] for item in inventory}
         for relative in sorted(expected - written):
             inventory.append(BinaryWriter(self.root, relative, xml=relative.endswith("CustomerMgmt.xml")).close())
-        return sorted(inventory, key=lambda item: item["path"])
+        return Publication(sorted(inventory, key=lambda item: item["path"]), audit_receipt)

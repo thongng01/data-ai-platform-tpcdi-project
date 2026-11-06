@@ -11,7 +11,7 @@ import pytest
 from data.data_source.generator import __main__, activity, runner
 from data.data_source.generator.checkpoints import Checkpoints
 from data.data_source.generator.config import Config
-from data.data_source.generator.output import TypedOutput
+from data.data_source.generator.output import PartWriter, SourcePublisher
 
 
 @pytest.fixture(scope="module")
@@ -84,7 +84,7 @@ def test_completed_groups_survive_failure_and_resume(tmp_path, config, uninterru
 def test_unsealed_mutated_group_restarts_from_planned_population(tmp_path, config, uninterrupted, monkeypatch):
     """Retry after actual lifetimes flush but before the group's last marker commits."""
     root = tmp_path / "unsealed"
-    original = TypedOutput.seal
+    original = PartWriter.seal
     failed = False
 
     def interrupt(output, **kwargs):
@@ -95,7 +95,7 @@ def test_unsealed_mutated_group_restarts_from_planned_population(tmp_path, confi
             raise RuntimeError("Injected pre-seal failure")
         return original(output, **kwargs)
 
-    monkeypatch.setattr(TypedOutput, "seal", interrupt)
+    monkeypatch.setattr(PartWriter, "seal", interrupt)
     with pytest.raises(RuntimeError, match="pre-seal"):
         runner.worker(config, root)
     runner.worker(config, root)
@@ -105,7 +105,7 @@ def test_unsealed_mutated_group_restarts_from_planned_population(tmp_path, confi
 def test_partial_export_is_removed_before_retry(tmp_path, config, uninterrupted, monkeypatch):
     """Redo export as one step without recreating completed business parts."""
     root = tmp_path / "export"
-    original = TypedOutput.write_family
+    original = SourcePublisher.write_family
     failed = False
 
     def interrupt(output, family, *args):
@@ -117,7 +117,7 @@ def test_partial_export_is_removed_before_retry(tmp_path, config, uninterrupted,
             raise RuntimeError("Injected export failure")
         return result
 
-    monkeypatch.setattr(TypedOutput, "write_family", interrupt)
+    monkeypatch.setattr(SourcePublisher, "write_family", interrupt)
     with pytest.raises(RuntimeError, match="export failure"):
         runner.worker(config, root)
     assert list((root / "offline").rglob("*.txt"))

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .config import Config
 from .formats import load_sources
-from .output import TypedOutput
+from .output import PartWriter, SourcePublisher
 from .recording import AUDIT_PATH, SourceRecorder
 
 
@@ -94,7 +94,9 @@ class Generation:
         # retain finished groups and their recording state throughout a large run.
         self._path = lru_cache(maxsize=2048)(self._source_path)
         self.recorder = SourceRecorder(self)
-        self.output = TypedOutput(self, group_id, part_name=part_name, reuse=reuse)
+        self.output = PartWriter(config, self.root, self.sources, self._path,
+                                 self.recorder.apply, self._record_fault, group_id,
+                                 part_name=part_name, reuse=reuse)
 
     def _source_path(self, family, day):
         """Resolve raw family variants internally without exposing arbitrary paths."""
@@ -126,4 +128,8 @@ class Generation:
         receipt = self.output.seal(completion=completion) if not self.output.closed else None
         if self.output.group_id is not None or self.output.part.name != "coordinator":
             return receipt
-        return self.output.publish(expected_file_list(self.config), AUDIT_PATH)
+        publisher = SourcePublisher(self.config, self.root, self.sources,
+                                    self.output.part, self.output.metrics)
+        result = publisher.publish(expected_file_list(self.config), AUDIT_PATH)
+        self.recording_summary = result.audit
+        return result.inventory

@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 from datetime import date, timedelta
+from functools import partial
 from pathlib import Path
 import threading
 from xml.etree import ElementTree as ET
@@ -13,9 +14,11 @@ import numpy as np
 import polars as pl
 import pytest
 
-from data.data_source.generator.formats import Field, Source
-from data.data_source.generator.generation import Generation
-from data.data_source.generator.output import native_batches, native_environment
+from data.data_source.generator.formats import Field, Source, load_sources
+from data.data_source.generator.generation import Generation, expected_file_list, source_path
+from data.data_source.generator.money import cents_text
+from data.data_source.generator.output import PartWriter, SourcePublisher, native_batches, native_environment
+from data.data_source.generator.recording import AUDIT_PATH
 from data.data_source.generator.output_formats import NativeContract, field_dtype, lexical_invalid, order_key
 from data.data_source.generator.tests.test_export import config
 
@@ -48,8 +51,10 @@ def test_native_lexical_contract_matches_scalar(datatype, values, nullable):
 def test_native_cents_keep_sign_and_two_fractional_digits():
     """Keep the production native money format exact without float conversion."""
     source = Source("Example", "example.txt", "|", (Field("amount", "SNUM(8,2)"),))
-    formatted = NativeContract(source).format(pl.DataFrame({"amount": [-1, 12345, 0]}))
-    assert formatted["amount"].to_list() == ["-0.01", "123.45", "0.00"]
+    values = [-99999999, -101, -100, -99, -1, 0, 1, 99, 100, 101, 12345, 99999999]
+    formatted = NativeContract(source).format(pl.DataFrame({"amount": values}))
+    assert formatted["amount"].to_list() == [cents_text(value) for value in values]
+    assert [cents_text(value) for value in (-1, 12345, 0)] == ["-0.01", "123.45", "0.00"]
 
 
 def test_native_contract_rejects_unsupported_numeric_scale():
@@ -92,6 +97,33 @@ def test_borrowed_mutable_columns_are_consumed_before_return(tmp_path):
     dates[0], prices[0] = 0, 999
     generation.finish()
     assert (tmp_path / "offline/initial/DailyMarket.txt").read_text() == "2018-12-28|S0000000001|1.23|2.00|0.50|3\n"
+
+
+def test_sealed_part_publishes_without_a_generation_owner(tmp_path):
+    """Use explicit recording inputs and publish only sealed paths and receipts."""
+    settings, sources = config(), load_sources()
+
+    def record_values(family, frame):
+        """Keep this reference record correct without a business-state owner."""
+        assert family == "StatusType"
+        return frame, []
+
+    def reject_fault(entry):
+        """Fail if the reference-only probe unexpectedly produces fault evidence."""
+        raise AssertionError(entry)
+
+    part = PartWriter(settings, tmp_path, sources, partial(source_path, settings),
+                      record_values, reject_fault, None)
+    part.record("StatusType", 0, ("ACTV", "Active"))
+    marker = part.seal(completion={"context_sha256": "sealed-context", "result": {"rows": 1}})
+    part_path, metrics = part.part, part.metrics
+    del part
+    publisher = SourcePublisher(settings, tmp_path, sources, part_path, metrics)
+    result = publisher.publish(expected_file_list(settings), AUDIT_PATH)
+    assert (tmp_path / "offline/initial/StatusType.txt").read_text() == "ACTV|Active\n"
+    assert {item["path"] for item in result.inventory} == set(expected_file_list(settings))
+    assert result.audit["path"] == AUDIT_PATH and result.audit["rows"] == 0
+    assert json.loads((part_path / "complete.json").read_text()) == marker
 
 
 @pytest.mark.parametrize("schedule,marker", [([1, 1], True), ([1], False), ([2], True), (None, True)])
