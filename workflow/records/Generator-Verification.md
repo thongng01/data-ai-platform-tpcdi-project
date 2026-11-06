@@ -33,6 +33,65 @@ The test and review fixes cover the following conditions:
 - Fixture guards require the exact 13-file inventory, positive integer line counts, and nonblank records. Refresh reads and validates every bounded sample before any write. Missing, empty, or blank samples leave all existing output bytes unchanged and create no new output tree. Tests do not refresh committed fixtures.
 - Publisher tests cover independent cadence and hash checks, source snapshots, ordered saved cash messages, acknowledgment checkpoints, uncertain retries, replay timing, destination binding, and secret redaction. These tests use SDK stubs, not live S3 or Kafka services.
 
+## Whole-Generator Typed Runtime
+
+The runtime redesign covers all 18 source families. It keeps business execution, named random draws, financial arithmetic, attrition rules, source contracts, and the independent saved-file validator. High-volume financial producers emit typed tuples; market, prospect, HR, time, and reference producers emit bounded columns. Source recording applies errors and channels to separate frames. XML, FINWIRE, and selected audit rows retain their format-specific Python encoders.
+
+The selected Polars path replaces the SQLite catalog, sorted text spools, multilevel fan-in, Python merge heap, and catalog adoption. Each group seals typed Parquet parts. Native ordering, bounded contract-batch formatting and checks, and final file writers share one output lifecycle. No dependency was added. DuckDB-owned storage and ordering were evaluated as a genuine replacement, not as another sorter behind the old exporter. A compiled financial executor remains a possible later change; causal dependencies do not require Python, but preserving event ties, holding insertion order, and floating-point operation order needs separate evidence.
+
+### Bounded Comparison
+
+The bounded calendar covers initial dates 2018-10-01 through 2018-12-31 and daily dates 2019-01-01 through 2019-07-31. It uses factor 1, anchor 3,601, seed `20261029`, 1,250 companies, 2,000 securities, two workers, two Polars threads, a sampled 4 GiB RSS guard, and a 16 GiB disk guard. Generation timing includes construction, recording, temporary writes, ordering, formatting, checks, source writes, and hashing. Comparison and saved-file validation run outside that timer.
+
+| Run | Generation and export seconds | Final export seconds | Separate validation seconds |
+| --- | ---: | ---: | ---: |
+| Improved text control, opening | 37.5767 | 8.8201 | Not rerun |
+| Whole typed candidate, per-file formatting | 34.9408 | 10.5246 | 75.8044, passed |
+| Improved text control, closing | 50.4143 | 12.1489 | Not rerun |
+| Whole typed candidate, batch formatting | 31.3051 | 5.9550 | 53.9252, passed |
+
+Every run matches the validated reference's 1,515 actual source files, 2,057,139 rows, 150,184,502 bytes, 441 audited fault fields, ordered typed hidden records, and normalized business summary. The only excluded business field is the implementation-specific `numeric_state_buffer_bytes`. The opening control's hidden comparison was added as separate read-only evidence after independent review found that omission in the harness. Its original measurement remains unchanged. Neither control is labeled newly validated.
+
+The one adjustment moves formatting and checks from file segments to bounded contract batches. A regression verifies that 40 rows across 20 files require six formatting calls with a seven-row bound, while each file retains CDC sequences 1 and 2. Mixed initial and daily Trade versions, global cash IDs across cutover, duplicate keys across batches, and invalid fields before file writes have separate regressions.
+
+The adjusted candidate uses 903,962,624 sampled peak RSS bytes and 208,510,380 sampled peak temporary bytes during generation. Both controls and candidates remain below their guards without observed swap. The large control-time variation prevents a precise speedup estimate; Windows host load was not measured. The adjusted candidate is faster than both observed controls, and the replacement removes custom catalog and merge mechanisms. These bounded results do not establish full-calendar or factor 100 performance.
+
+Evidence lives under `local/tmp/generator-whole/measurements/{improved1,candidate1,improved2,candidate2}/`; outputs live under `local/runs/generator-whole/`. The frozen improved control and source hashes remain under `local/tmp/generator-whole/baseline/` and `baseline-snapshot.json`. Design comparisons remain in `local/tmp/generator-whole/design-*.md`.
+
+### Resource and Test Evidence
+
+An actual fresh-process native spill probe processes 65,536 rows with about 64 MB of payload and a 1 MB out-of-core threshold. It observes 86,674,152 spill bytes and delivered batches no larger than 4,096 rows. With a 1 MB spill-disk budget, the query fails, retains the sealed input, and produces no final XML file or dataset manifest. Evidence is in `local/tmp/generator-whole/backend-probes/`.
+
+Polars 2.0.0's batch iterator has no close or stop method in this environment. The backend therefore uses synchronous batch callbacks, stops on a captured failure, and propagates that failure. Private native settings stay in `output.py`. Spill budgets and sampled RSS guards are not a hard memory guarantee; population arrays, live business state, and native work also consume memory.
+
+The integrated generator and publisher suite passes 435 tests with 188 Pandas dependency warnings in 117.66 seconds. The command is the same isolated-SDK command above; its log is `local/tmp/generator-whole/full-suite.log`. The changed Python files have module, class, and function docstrings. Three independent cross-file reviews cover all changed source and test files against base `352fac1`, through source freeze `682659c`. They report no material standards or specification findings. Reviewers checked callback failure propagation, partial-run retention, group completion, and publication after validation as well as source semantics.
+
+The final-run wrapper's six tests cover explicit authorization, changed-source rejection, actual file counts and coverage, XML record counting, and ordered typed hidden comparisons. The authorized full-calendar run uses source digest `8820b38a0ceb9f77e77b54634152af1031d94bb73f47bda36dccfd915aa0a4cf`. Its output is `local/runs/generator-whole/final-factor1`; evidence is under `local/tmp/generator-whole/final/`.
+
+### Final Typed-Runtime Factor 1 Result
+
+Exactly one full-calendar candidate run completed from source freeze `682659c`. The normal public generator passed full saved-file validation and renamed the dataset. The measurement wrapper exited 0 with no failures, then independently counted and rehashed all 18,051 source files against `factor1-3601-calibrated`. All 23,488,236 source records, 5,574 audit rows, and eight ordered typed hidden files match. Offline bytes remain 1,438,704,592; stream bytes remain 339,074,412. The separate `business-comparison.json` also confirms identical activity summaries, excluding only `numeric_state_buffer_bytes`. Reference metadata and actual contents remain unchanged; the 29-file source digest matches before and after.
+
+| Measure | Historical stock, calibrated anchor | Typed native export |
+| --- | ---: | ---: |
+| Generation phase seconds | 896.26 | 470.48 |
+| Activity phase seconds | 442.52 | 369.18 |
+| Final export phase seconds | 389.17 | 72.73 |
+| Market phase seconds | 43.65 | 19.90 |
+| Prospect phase seconds | 20.02 | 7.85 |
+| Full validation seconds | 829.15 | 831.70 |
+| Generator command seconds | 1,726.97 | 1,304.80 |
+| Sampled runner-tree peak RSS MiB | 1,434.32 | 1,774.40 |
+| Sampled peak temporary GiB | 2.585 | 3.463 |
+
+The observed generation time is 47.5% lower and command time is 24.4% lower than the historical stock run. Validation time is essentially unchanged. These are single-run historical comparisons, not a controlled estimate of the native replacement's isolated gain. The improved text control has no full-calendar measurement; its comparison belongs to the bounded table above. Validation remains a separate required phase, not a performance option removed by this change.
+
+The measurement wrapper brings sampled peak RSS to 1,909.45 MiB. Total sampled run disk peaks at 4.623 GiB. No swap use or resource-guard failure was observed. Native export reports 2,879 delivered batches, maximum buffer, frame, and stream-batch sizes of 8,192 rows, 16,731 fragments, and 1,823,415,364 sealed bytes. Its spool, seal, and sort-write totals are 67.76, 8.77, and 70.42 seconds; process totals overlap generation phases and must not be added to elapsed generation time. The manifest retains phase user and system CPU measurements.
+
+The implementation adds a net 528 production Python lines against base `352fac1`, excluding tests and documentation. The added typed schemas, native checks, and failure handling replace custom catalog and merge code rather than retaining a second production exporter. It adds no dependency. Remaining Python work includes causal execution, sparse state updates, customer and account field helpers, XML and FINWIRE encoding, selected-error audit dictionaries, and file dispatch. Activity is the largest phase, but it includes recording and temporary writes, so its timing does not isolate the executor.
+
+The final report is `local/tmp/generator-whole/final/run/measurement.json`; it links the candidate manifest, samples, source inventories, reference checks, and command log. The independent business comparison sits beside it. The full-suite spill evidence for this source freeze is preserved under `local/tmp/generator-whole/backend-probes/final-freeze/`. Factors 5 and 100 remain unmeasured. Native spill and bounded output batches do not establish a hard total-memory bound or large-factor throughput; population and hidden-state arrays remain part of the resource requirement.
+
 ## Full-Calendar Factor 1 Runs
 
 Both runs use seed `20261029`, two workers, two Polars threads per worker, 1,250 companies, and 2,000 securities. Their configurations differ only in `customers_per_unit`: 3,300 for `factor1-3300-first` and 3,601 for `factor1-3601-calibrated`. The initial-load period is 2014-01-01 through 2018-12-31; daily delivery covers 2019-01-01 through 2025-12-31. Each runner completes generation and full validation before the final dataset rename.
