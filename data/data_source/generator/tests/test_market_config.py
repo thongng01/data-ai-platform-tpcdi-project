@@ -84,7 +84,7 @@ def test_decimal_population_rounding(half):
 
 @pytest.mark.parametrize("settings", [
     {"scale_factor": True}, {"scale_factor": float("inf")}, {"scale_factor": float("nan")},
-    {"scale_factor": .00001}, {"workers": 3}, {"workers": 0}, {"seed": -1}, {"seed": 2**63},
+    {"scale_factor": .00001}, {"workers": 9}, {"workers": 0}, {"seed": -1}, {"seed": 2**63},
     {"annual_growth": True}, {"account_shares": [.5, .5, True]}, {"profile_shares": [.5] * 5},
     {"annual_trade_rates": [1, 2, 3, 4, float("nan")]}, {"annual_trade_rates": [1, 2, 3, 4, 1e9]},
     {"margin_share": 1.1}, {"margin_limit_min": .8}, {"wealth_min": 3000000},

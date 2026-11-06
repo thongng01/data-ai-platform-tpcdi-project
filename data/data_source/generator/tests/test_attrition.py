@@ -264,7 +264,7 @@ def test_staged_cancel_precedes_new_sale_in_saved_time():
     simulation.holdings.change(1, 0, 100, 1, 10000)
     simulation.holdings.row(1, 0)[5] = 1
     old = Order(1000001, 0, 0, 1, 10000, "TLS", 0, 999, False, 0, "PNDG", 34200)
-    simulation.orders[old.trade_id] = old
+    simulation._add_order(old)
     simulation.trade_ordinals[0] = 1
     day = BusinessDay(simulation.config.day(1), 1, prices, (), (), (), set(), np.array([0]),
                       [Intent(LIQUIDATION_SECOND, 1, 50, IntentKind.LIQUIDATE, 0)])
@@ -293,7 +293,7 @@ def test_customer_warning_closes_all_accounts_and_watches_together():
     config = config_for_test(initial_end="2018-01-10", daily_start="2018-01-11", daily_end="2018-01-12", account_watch_cancel_share=1)
     planner = ForcedCustomerExit()
     simulation, emitted, cash, _ = simulation_for_test(config, planner, 2)
-    simulation.watches[1] = {0: 100}
+    simulation._add_watch(1, 0, 100)
     simulation.run()
     assert np.all(simulation.closed)
     assert np.all(simulation.accounts["close_day"] == 10)

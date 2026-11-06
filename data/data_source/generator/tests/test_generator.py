@@ -43,7 +43,7 @@ def test_complete_dataset_has_only_expected_paths(complete_run):
             assert len(line.split("|")) == 17
 
 
-@pytest.mark.parametrize("group,workers,threads,fan_in", [(1, 1, 1, 2), (7, 2, 2, 4), (2048, 2, 1, 16)])
+@pytest.mark.parametrize("group,workers,threads,fan_in", [(1, 1, 1, 2), (7, 2, 2, 4), (7, 4, 2, 4), (2048, 2, 1, 16)])
 def test_source_bytes_repeat_across_execution_settings(tmp_path, short_config, complete_run, group, workers, threads, fan_in):
     """Require identical source and audit bytes across group and worker settings."""
     config = replace(short_config, customer_group_size=group, workers=workers,

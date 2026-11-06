@@ -88,10 +88,10 @@ Configuration holds numbers and distribution choices. Source definitions hold fi
 | Data-error settings | Five independent rates, listed under Source Recording below |
 | `trade_channel_start` | First daily delivery date with `T_CHANNEL`; default `2019-07-01` |
 | Market settings | Companies, securities, prices, volatility, popularity, shock days, and dividend rules, independent of firm size |
-| `customer_group_size`, `workers`, `threads` | Customer group bound, one or two business worker processes, and Polars thread count |
+| `customer_group_size`, `workers`, `threads` | Customer group bound, up to eight business worker processes, and Polars thread count; defaults 1,024, 4, and 2 |
 | `export_rows` | Aggregate typed-record buffer and maximum delivered native batch rows |
 | `merge_fan_in` | Accepted for configuration compatibility; native export ignores this setting and reports its value |
-| Resource settings | Aggregate process-tree memory, disk, and elapsed-time budgets |
+| Resource settings | Aggregate process-tree memory, disk, and elapsed-time budgets; memory defaults to 8,192 MiB |
 
 The expected cutover customer count is `scale_factor * customers_per_unit`. With the default account shares, each customer has 1.67 accounts on average. Factor 1 therefore anchors about 3,601 customers and 6,014 accounts; factor 100 anchors about 360,100 customers and 601,367 accounts. These are planning expectations, not exact realized populations.
 
@@ -100,6 +100,20 @@ Profile arrays use this order: dormant, long-term investor, retiree, active trad
 With a positive `positions_per_account` value N, each account draws N fixed security selections from stable keys. Slots can select the same security, so the account's buy universe contains up to N distinct securities. Later buys use that same universe, including after a full sale; this setting does not simply cap simultaneous positions while allowing new securities over time.
 
 NumPy arrays hold mutable customer and account state. The simulation selects daily activity over account arrays, while Polars builds export batches, hidden-state Parquet files, and validation queries. Shared memory-mapped market arrays and a bounded day cache avoid scalar reads from disk for each event. Each customer and all related accounts stay in one group, so one worker owns every change to an account.
+
+With `workers: 1`, the coordinator simulates groups directly. With more workers and more than one group, a process pool simulates up to `workers` groups at once. The coordinator waits for results and does not simulate a group. Each free process takes the next group without waiting for other processes. A worker error cancels pending groups; running groups finish and retain their sealed parts before the error returns. The runner retains partial output and does not publish it.
+
+The defaults use four workers and 1,024 customers per group. A factor 1 measurement over `2018-10-01` through `2019-07-31`, with two Polars threads and an 8 GiB memory budget, gives these single-run activity results. RSS includes the generator coordinator, pool workers, and resource tracker, but not the measurement wrapper.
+
+| Workers | Customers per group | Groups | Activity wall seconds | Activity CPU seconds | Peak activity RSS MiB |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 4 | 1,024 | 4 | 8.744 | 35.410 | 1,167.29 |
+| 4 | 512 | 8 | 8.787 | 34.638 | 1,144.43 |
+| 8 | 512 | 8 | 8.126 | 61.743 | 2,012.98 |
+
+Four workers limit CPU and memory cost while retaining most of the measured wall-time benefit. The 1,024-customer group bound uses fewer groups than 512 without a material activity-time difference in this measurement. Eight workers remain available up to the configured limit. These bounded measurements do not establish larger-workload memory limits; the sampled 8 GiB process-tree guard remains active for every run.
+
+Customer-update and watch-count draws use arrays with the same named keys as scalar draws. The simulation visits customers only when an update, watch addition, due cancellation, or lifetime action can occur. Due-day indexes select watch cancellations and newly due orders. Account indexes select orders for leaving and liquidation. Unfilled due orders remain eligible on later trading days because the day's price range can permit execution.
 
 | Retained state | Contents and lifetime |
 | --- | --- |
@@ -215,7 +229,7 @@ The semantic dataset identity includes business settings, seed, format version, 
 
 Validation reads the saved files and stream messages, derives its own expected-file list, and checks coverage, cadence, field widths, encoding, hashes, and identities. It stages typed records into bounded Parquet blocks, partitions replay by account and customer, and joins market prices by date. Every partition undergoes checks for legal trade transitions, settlement, cash and margin limits, holding conservation, dividends, watches, and lifetimes.
 
-Hidden account files supply traits and lifetime attributes. They do not supply balances as proof: the validator reconstructs balances and holdings from source records after it verifies any audited data errors. Parquet staging buffers have an aggregate row allowance. The source-byte partition target is an average, not a hard memory bound for one unusually large account history.
+Hidden account files supply traits and lifetime attributes. They do not supply balances as proof: the validator reconstructs balances and holdings from source records after it verifies any audited data errors. It reads every `accounts-*.parquet` file regardless of the group count. The signal check reads source-visible lifetimes and cash transactions, not hidden plans. Parquet staging buffers have an aggregate row allowance. The source-byte partition target is an average, not a hard memory bound for one unusually large account history.
 
 Tests cover deterministic personal fields, XML omission and empty text, ledger and holding conservation, profile planning, attrition behavior, dated trade schemas, exact data-error evidence, corruption detection, resource failures, and repeatability across execution settings.
 
@@ -228,6 +242,8 @@ Tests cover deterministic personal fields, XML omission and empty text, ledger a
 | `supervision.json` | Sampled aggregate RSS, process count, disk use, temporary disk peaks, and sampling intervals |
 
 Phase times cover references, market, population, activity, prospects, final export, and validation. Buffer flushes and group sealing count toward the phase that emits their records. Final export measures native ordering, formatting, checks, and writes, not all export work. Reports include phase user and system CPU seconds, native batch bounds, fragment counts, sealed bytes, and spool, seal, and sort-write times. Export subphase totals can include work from multiple processes; they are not separate elapsed phases to add to generation time.
+
+`customer_groups` reports execution grouping. `peak_active_watches`, `peak_live_holdings`, and `peak_open_trades` report the largest per-group peaks, not whole-dataset peaks. These values and `numeric_state_buffer_bytes` can change with group size even when source bytes and business records remain identical. Hidden file names and counts also follow group boundaries; compare their typed records in stable account and event order when group sizes differ.
 
 ### Full-Calendar Measurements
 
