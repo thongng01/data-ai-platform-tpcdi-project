@@ -1,5 +1,6 @@
 """Reject source-contract gaps without relying on saved inventory hashes."""
 
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
@@ -166,14 +167,14 @@ def test_customer_inactivation_requires_account_evidence(closed):
     accounts = {1: {"owner": 1, "closed": None, "close_date": date.fromisoformat(closed[:10])}}
     customers = {1: {"closed": closed}}
     with pytest.raises(v.ValidationError, match="explicit account closure evidence"):
-        v._account_closures(accounts, customers)
+        v._account_closures(accounts, customers, {closed[:10]})
 
 
 def test_already_closed_account_needs_no_second_closure():
     """Customer inactivation keeps an earlier explicit account closure legal."""
     closed = "2018-12-03 23:59:59"
     accounts = {1: {"owner": 1, "closed": closed, "close_date": date(2018, 12, 3)}}
-    assert len(v._account_closures(accounts, {1: {"closed": "2019-01-03 23:59:59"}})) == 1
+    assert len(v._account_closures(accounts, {1: {"closed": "2019-01-03 23:59:59"}}, {closed[:10]})) == 1
 
 
 @pytest.mark.parametrize("kind,status", [("TMB", "PNDG"), ("TMS", "PNDG"), ("TLB", "SBMT"), ("TLS", "SBMT"), ("TSL", "SBMT")])
@@ -235,6 +236,85 @@ def _open_order_replay(root, config, kind):
     with patch.object(v._AccountReplay, "__init__", initial_holding):
         return v._account_replay(stage, 0, config, {"S0000000001": [(created, 0, "ACTV")]},
                                  {str(config.start): "16:00:00"}, {1})
+
+
+@pytest.mark.parametrize("field", ["Gender", "MaritalStatus", "OwnOrRentFlag"])
+def test_prospect_enums_match_source_contract(exported, tmp_path, field):
+    """A valid-width value still fails when the Prospect enum excludes it."""
+    original, config, _ = exported
+    source = load_sources()["Prospect"]
+    path = tmp_path / "offline/initial/Prospect.csv"
+    path.parent.mkdir(parents=True)
+    row = (original / "offline/initial/Prospect.csv").read_text().splitlines()[0].split(",")
+    row[source.columns.index(field)] = "X"
+    path.write_text(",".join(row) + "\n")
+    with pytest.raises(v.ValidationError, match="Invalid Prospect enum"):
+        _parse_reference(tmp_path, config, "Prospect.csv")
+
+
+def test_hr_manager_must_exist(exported, tmp_path):
+    """A manager identifier must resolve in the delivered employee roster."""
+    original, config, _ = exported
+    path = tmp_path / "offline/initial/HR.csv"
+    path.parent.mkdir(parents=True)
+    lines = (original / "offline/initial/HR.csv").read_text().splitlines()
+    row = lines[0].split(",")
+    row[1] = "99999999999"
+    lines[0] = ",".join(row)
+    path.write_text("\n".join(lines) + "\n")
+    with pytest.raises(v.ValidationError, match="HR manager is missing"):
+        _parse_reference(tmp_path, config, "HR.csv")
+
+
+@pytest.mark.parametrize("closed", ["2018-11-18 23:59:59", "2019-01-06 23:59:59"])
+def test_account_closure_requires_session(exported, monkeypatch, closed):
+    """Initial and daily account closures cannot occur on a closed-market date."""
+    _, config, _ = exported
+    accounts = {1: {"owner": 1, "closed": closed, "close_date": date.fromisoformat(closed[:10])}}
+    customers = {1: {"closed": None}}
+    monkeypatch.setattr(v, "_replay_accounts", lambda *args: (accounts, customers))
+    monkeypatch.setattr(v, "_replay_inputs", lambda *args: ([], {}, [], {}))
+    with pytest.raises(v.ValidationError, match="closure must fall on an NYSE session"):
+        v._account_replay(None, 0, config, {}, {"2018-11-19": "16:00:00"}, set())
+
+
+@pytest.mark.parametrize("price", [50, 100, 101])
+def test_sell_proceeds_must_be_positive(exported, price):
+    """A completed sell must add money after fees, including the zero-proceeds boundary."""
+    _, original, _ = exported
+    config = replace(original, charge_cents=100, commission_basis_points=0)
+    timestamp = str(config.start) + " 10:00:00"
+    row = {"T_ID": 1, "T_CA_ID": 1, "T_DTS": timestamp, "T_TT_ID": "TMS", "T_QTY": 1,
+           "T_S_SYMB": "S0000000001", "T_TRADE_PRICE": price, "T_CHRG": 100, "T_COMM": 0, "T_TAX": 0,
+           "_market_low": price, "_market_high": price}
+    changes = {1: {"HH_H_T_ID": 99, "HH_BEFORE_QTY": 1, "HH_AFTER_QTY": 0, "_day": "initial"}}
+    settlements = {1: {"CT_CA_ID": 1, "CT_DTS": timestamp, "CT_AMT": price - 100}}
+    replay = v._AccountReplay({}, changes, settlements, config, {}, {})
+    state = replay.holding_state if hasattr(replay, "holding_state") else replay.positions
+    state[1, row["T_S_SYMB"]] = 99, 1
+    account = {"is_cash": False, "margin_limit_cents": 1000}
+    if price <= 100:
+        with pytest.raises(v.ValidationError, match="Sell proceeds must be positive after fees"):
+            replay.complete_trade(row, account)
+    else:
+        replay.complete_trade(row, account)
+        assert replay.balances[1] == 1
+
+
+@pytest.mark.parametrize("kind,mutation", [("CMP", "missing"), ("SEC", "missing"), ("CMP", "extra"), ("SEC", "extra")])
+def test_finwire_requires_company_security_posting_grid(exported, tmp_path, kind, mutation):
+    """Every configured company and security appears exactly at promised postings."""
+    config, paths = _finwire_copy(exported, tmp_path)
+    path = paths[-1]
+    lines = path.read_text().splitlines()
+    index = next(index for index, line in enumerate(lines) if line[15:18] == kind and "BAD" not in line)
+    if mutation == "missing":
+        lines.pop(index)
+    else:
+        lines.append(lines[index][:9] + "000001" + lines[index][15:])
+    path.write_text("\n".join(lines) + "\n")
+    errors = _finwire_errors(tmp_path, config, paths)
+    assert len(errors) == 1 and "posting coverage" in str(errors[0])
 
 
 def test_market_completion_uses_creation_timestamp(exported):

@@ -483,6 +483,15 @@ def _expected_financial_reports(config):
             for company in range(1, config.companies + 1)}
 
 
+def _expected_finwire_postings(config):
+    """Derive initial identities and every released-period posting without market helpers."""
+    ordinal = _quarter(config.start) - 5
+    first = date(ordinal // 4, ordinal % 4 * 3 + 1, 1)
+    return {first.strftime("%Y%m%d-000000")} | {
+        _release(period).strftime("%Y%m%d-000000")
+        for period in range(ordinal, _quarter(config.end) + 1) if _release(period) <= config.end}
+
+
 def _decode_finwire(line, path, layouts, config):
     """Decode fixed widths and check the posting timestamp and delivery envelope."""
     kind = line[15:18]
@@ -510,6 +519,7 @@ def _finwire(root, paths, config, industries, audit, saved):
     companies = {}
     securities = defaultdict(list)
     reports = set()
+    company_postings, security_postings = set(), set()
     counts = defaultdict(int)
     results = {}
     slices = audit.slices({path.relative_to(root).as_posix() for path in paths})
@@ -532,11 +542,13 @@ def _finwire(root, paths, config, industries, audit, saved):
                     _require(values["Status"] in {"ACTV", "INAC"} and values["CIK"].isdigit(), "Invalid company identity or status.")
                     _require(values["IndustryID"] in industries, "Company industry is missing.")
                     _require(values["SPrating"] in {"AAA", "AA+", "AA", "AA-", "A+", "A", "A-", "BBB+", "BBB", "BBB-", "BB+", "BB", "BB-", "B+", "B", "B-", "CCC+", "CCC", "CCC-", "CC", "C", "D"}, "Invalid company credit rating.")
+                    company_postings.add((int(values["CIK"]), values["PTS"]))
                     companies[int(values["CIK"])] = posted.strftime("%Y-%m-%d %H:%M:%S")
                 elif kind == "SEC":
                     _require(values["CoNameOrCIK"].isdigit() and int(values["CoNameOrCIK"]) in companies, "Security company is missing.")
                     dividend = _cents(values["Dividend"])
                     _require(dividend is not None and dividend >= 0 and values["Status"] in {"ACTV", "INAC"}, "Invalid security dividend or status.")
+                    security_postings.add((values["Symbol"], values["PTS"]))
                     securities[values["Symbol"]].append((posted.strftime("%Y-%m-%d %H:%M:%S"), dividend, values["Status"]))
                 else:
                     quarter, year = int(values["Quarter"]), int(values["Year"])
@@ -564,6 +576,13 @@ def _finwire(root, paths, config, industries, audit, saved):
         try:
             _require(all(counts[kind] for kind in ("CMP", "SEC", "FIN")), "Every FINWIRE record type must be present.")
             _require(reports == _expected_financial_reports(config), "Financial company-period coverage is incomplete or unexpected.")
+            # Market._emit_finwire posts every configured company and security at
+            # the initial quarter start and at each financial release, at midnight.
+            postings = _expected_finwire_postings(config)
+            _require(company_postings == {(company, stamp) for company in range(1, config.companies + 1) for stamp in postings},
+                     "Company posting coverage is incomplete or unexpected.")
+            _require(security_postings == {(f"S{security:010d}", stamp) for security in range(1, config.securities + 1) for stamp in postings},
+                     "Security posting coverage is incomplete or unexpected.")
         except Exception as error:
             result.error = error
     for versions in securities.values():
@@ -855,7 +874,7 @@ def _replay_accounts(stage, partition, brokers):
     return accounts, customers
 
 
-def _account_closures(accounts, customers):
+def _account_closures(accounts, customers, sessions):
     """Check actual closure dates and create explicit replay boundary events."""
     account_events = []
     for identifier, account in accounts.items():
@@ -870,6 +889,8 @@ def _account_closures(accounts, customers):
                  (hidden_close is not None and account["closed"] is not None and str(hidden_close) == account["closed"][:10]),
                  "Hidden account closure differs from source closure.")
         if account["closed"]:
+            # Activity.run requires an open market for liquidation in both periods.
+            _require(account["closed"][:10] in sessions, "Account closure must fall on an NYSE session date.")
             account_events.append(ReplayEvent(account["closed"], 10**20, identifier, "close", identifier))
 
     return account_events
@@ -1096,6 +1117,8 @@ class _AccountReplay:
         settlement = self.settlements.get(identifier)
         sell = row["T_TT_ID"] in {"TMS", "TLS", "TSL"}
         expected = (1 if sell else -1) * row["T_QTY"] * price - charge - commission - tax
+        # Activity.complete rejects zero and negative proceeds, not only losses.
+        _require(not sell or expected > 0, "Sell proceeds must be positive after fees.")
         _require(settlement is not None and (settlement["CT_CA_ID"], settlement["CT_DTS"], settlement["CT_AMT"]) ==
                  (account_id, timestamp, expected), "Settlement does not match trade account, timestamp, value, or fees.")
         self.balances[account_id] += expected
@@ -1123,7 +1146,7 @@ class _AccountReplay:
 def _account_replay(stage, partition, config, securities, sessions, brokers):
     """Prepare source-proven inputs and replay each named account event in order."""
     accounts, customers = _replay_accounts(stage, partition, brokers)
-    closures = _account_closures(accounts, customers)
+    closures = _account_closures(accounts, customers, sessions)
     trades, holding_changes, cash_transactions, settlements = _replay_inputs(stage, partition, config, sessions, securities)
     replay = _AccountReplay(accounts, holding_changes, settlements, config, securities, sessions)
     for event in _replay_events(closures, trades, cash_transactions, settlements):
@@ -1320,7 +1343,7 @@ def _parse_reference_rows(rows, source, day, stage, config, result):
     """Check physical lookup rows and stage Prospect snapshot identities."""
     name = source.name
     count, previous_employee = 0, -1
-    seen = set()
+    seen, managers = set(), set()
     first = _reference_start(config) if name == "Date" else None
     sessions = _sessions(config, first) if name == "Date" else None
     for number, row in enumerate(rows, 1):
@@ -1333,6 +1356,7 @@ def _parse_reference_rows(rows, source, day, stage, config, result):
             employee = int(row["EmployeeID"])
             _require(employee > previous_employee, "HR employee IDs must be increasing.")
             previous_employee = employee
+            managers.add(int(row["ManagerID"]))
             if row["EmployeeJobCode"] == "314":
                 result.brokers.add(employee)
         elif name == "Time":
@@ -1341,13 +1365,19 @@ def _parse_reference_rows(rows, source, day, stage, config, result):
         elif name == "Date":
             _check_date_reference(row, first + timedelta(days=number - 1), sessions)
         elif name == "Prospect":
+            # Personal and Prospect column builders emit these source-contract codes.
+            _require(row["Gender"] in {"M", "F", "U"} and row["MaritalStatus"] in {"S", "M", "D", "W", "U"}
+                     and row["OwnOrRentFlag"] in {"O", "R", "U"}, "Invalid Prospect enum value.")
             identity = row["AgencyID"]
             bucket = int.from_bytes(hashlib.blake2b(identity.encode("ascii"), digest_size=8).digest(), "big") % stage.partitions
             schema = {"identity": pl.String, "date": pl.String, "_partition": pl.String}
             stage.add("ProspectIdentity", {"identity": identity, "date": day, "_partition": str(bucket)}, schema)
     if name != "Prospect":
         _require(count > 0, f"{name} reference must not be empty.")
-    if name == "StatusType":
+    if name == "HR":
+        # Reference.employee_columns assigns manager 0 and includes employee 0.
+        _require(managers <= {int(identifier) for identifier in seen}, "HR manager is missing from employee roster.")
+    elif name == "StatusType":
         _require({"ACTV", "INAC", "PNDG", "SBMT", "CMPT", "CNCL"} <= seen,
                  "StatusType reference is missing a replay status.")
     elif name == "TradeType":
@@ -1616,4 +1646,5 @@ def validate(root: Path, config: Config, inventory=None):
                        "source-visible order reservations", "settlements", "position holding history", "NYSE session and price bounds",
                        "start-of-day dividend amounts", "watch lifecycles and inactivation", "source error audit and correct-value replay", "dated trade channels",
                        "explicit account closures", "FINWIRE values and financial coverage", "reference meanings and coverage",
-                       "market order completion", "HR and initial watch order"]}
+                       "market order completion", "HR and initial watch order", "Prospect enums and HR managers",
+                       "closure sessions and positive sell proceeds", "company and security posting coverage"]}
