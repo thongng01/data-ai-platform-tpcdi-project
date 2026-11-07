@@ -231,7 +231,7 @@ def _open_order_replay(root, config, kind):
     def initial_holding(replay, *args):
         """Supply shares solely for the open sell reservation in this fixture."""
         original(replay, *args)
-        replay.positions[(1, "S0000000001")] = (999, 1)
+        replay.holding_state[(1, "S0000000001")] = (999, 1)
     with patch.object(v._AccountReplay, "__init__", initial_holding):
         return v._account_replay(stage, 0, config, {"S0000000001": [(created, 0, "ACTV")]},
                                  {str(config.start): "16:00:00"}, {1})
