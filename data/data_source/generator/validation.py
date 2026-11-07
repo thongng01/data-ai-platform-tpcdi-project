@@ -1607,6 +1607,11 @@ def _finwire_wave(root, expected, config, industries, saved, audit):
             securities, finwire_counts, finwire_results = executor.submit(_parse_finwire_files, finwire_inputs).result()
     else:
         securities, finwire_counts, finwire_results = _parse_finwire_files(finwire_inputs)
+    # Later market checks need these security versions. Report the failed
+    # dependency before a missing-version symptom or any ordinary-file failure.
+    for result in finwire_results.values():
+        if result.error is not None:
+            raise result.error
     return securities, finwire_counts, finwire_results
 
 

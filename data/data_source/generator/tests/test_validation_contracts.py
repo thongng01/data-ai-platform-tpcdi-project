@@ -147,6 +147,21 @@ def test_finwire_optional_values_and_nonliteral_names_stay_legal(exported, tmp_p
     assert not _finwire_errors(tmp_path, config, paths)
 
 
+def test_finwire_envelope_failure_precedes_dependent_market(exported, tmp_path):
+    """An invalid first posting reports its cause instead of missing security versions."""
+    original, config, _ = exported
+    root = tmp_path / "corrupt"
+    shutil.copytree(original, root, ignore=shutil.ignore_patterns("_work"))
+    path = sorted((root / "offline/initial").glob("FINWIRE*"))[0]
+    lines = path.read_text().splitlines()
+    lines[0] = lines[0][:15] + "BAD" + lines[0][18:]
+    path.write_text("\n".join(lines) + "\n")
+    for workers in (1, 2):
+        with pytest.raises(v.ValidationError, match="Invalid FINWIRE record type"):
+            v.validate(root, replace(config, workers=workers))
+        assert not list(root.glob("validation-*"))
+
+
 def test_finwire_requires_each_company_period(exported, tmp_path):
     """A surviving FIN report must not hide a missing report for another company."""
     config, paths = _finwire_copy(exported, tmp_path)
