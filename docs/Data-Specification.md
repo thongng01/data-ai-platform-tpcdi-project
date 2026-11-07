@@ -126,7 +126,7 @@ The TPC-DI specification does not define a Silver zone. Silver is the project's 
 | `CustomerMgmt.xml` + `Customer.txt` | Apply XML actions, then CDC rows. Add tax rates, phone numbers (PDF 4.5.4, 4.6.4), and prospect data; keep daily SCD2 versions. | `dim_customer` |
 | `CustomerMgmt.xml` + `Account.txt` | Same pattern. Resolve customer and broker keys; add a version when the customer changes. | `dim_account` |
 | `HR.csv` | Keep employees with job code 314. | `dim_broker` |
-| FINWIRE (`CMP`, `SEC`) | Parse fixed-width records in posting order; build histories; link securities to companies by Central Index Key (CIK) or name. | `dim_company`, `dim_security` |
+| FINWIRE (`CMP`, `SEC`) | Parse fixed-width records in posting order; build histories; link securities to companies by numeric Central Index Key (CIK). | `dim_company`, `dim_security` |
 | FINWIRE (`FIN`) | Copy the report year and quarter from the record; resolve the company at `PTS`; use only reports released by the as-of date. | `financial` |
 | `Trade.txt` + `TradeHistory.txt` | Insert each trade, then update its status. Keys are set at creation and kept at close. | `dim_trade` |
 | `CashTransaction.txt` and streamed cash transactions in Silver | Deduplicate by `CT_ID`; parse `CT_NAME`; resolve dimension keys. dbt builds the cash transaction fact, then adds each day's net amount to the prior balance. | `fact_cash_transactions`, `fact_cash_balances` |
@@ -175,7 +175,7 @@ The entity relationship diagram (ERD) shows all 19 warehouse tables in the `gold
 After the initial load, cash transactions arrive only through Kafka. Flink Job 1 writes Bronze and Silver and publishes clean messages. Job 2 consumes the clean topic, updates live tables, produces cash-flow features, and requests rescoring after large withdrawals. Cash-flow features and batch features support the 30-day account attrition model.
 
 ### 7.1 Cash Transaction Stream (Kafka and Flink)
-Cash transactions after the initial load arrive as Kafka messages and follow the handoff rules in [Section 2.4](#24-batch-to-stream-handoff). The table maps original source fields to the lowercase JSON keys in the [cash transaction message contract](Data-Platform.md#topics-and-cash-transaction-contract). Source file types remain in Section 9.2; JSON amounts use decimal text rather than floating-point numbers.
+Cash transactions after the initial load arrive as Kafka messages and follow the handoff rules in [Section 2.4](#24-batch-to-stream-handoff). The table maps original source fields to the lowercase JSON keys in the [cash transaction message contract](Data-Platform.md#topics-and-cash-transaction-contract). Source file types remain in Section 9.2; JSON amounts use decimal text rather than floating-point numbers. Messages keep this key order: `ct_id`, `ct_ca_id`, `ct_dts`, `ct_amt`, `ct_name`, `schema_version`.
 
 | Source Field or Metadata | JSON Key or Kafka Metadata | Representation and Meaning |
 | --- | --- | --- |
@@ -242,7 +242,7 @@ The source dictionaries define parsing order and source formats. The Gold dictio
 - **Delimited Files**: `.txt` uses pipe (`|`), `.csv` uses comma (`,`). No header rows. An empty field represents `NULL` where allowed.
 - **CDC (Change Data Capture)**: Daily OLTP files start with `CDC_FLAG` (`I` insert, `U` update) and `CDC_DSN` (sequence number). Initial files omit both fields.
 - **Date and Time Formats**: Default is `YYYY-MM-DD` and `YYYY-MM-DD HH:MM:SS`. FINWIRE uses `YYYYMMDD` and `YYYYMMDD-HHMMSS`. `CustomerMgmt.xml` uses `YYYY-MM-DDTHH:MM:SS`. Interpret source timestamps without a time zone as UTC; keep their source text formats.
-- **FINWIRE Records**: Characters 1 to 15 are `PTS`; characters 16 to 18 are the record type (`CMP`, `SEC`, `FIN`). Record lengths: `CMP` 543, `SEC` 170 or 220, `FIN` 196 or 246 characters.
+- **FINWIRE Records**: Characters 1 to 15 are `PTS`; characters 16 to 18 are the record type (`CMP`, `SEC`, `FIN`). Record lengths: `CMP` 543, `SEC` 170, `FIN` 196 characters. Records use numeric CIKs and include full trailing padding.
 - **XML Null vs. Omitted**: Parsing keeps an omitted element distinct from an explicitly empty one, such as `<C_M_NAME/>`. [Historical Actions](#historical-actions-xml) defines what each means.
 
 ### 9.2 Source File Schemas
@@ -293,10 +293,10 @@ XML, initial load only. Actions in time order; namespace `http://www.tpc.org/tpc
 | Action Type | Meaning |
 | --- | --- |
 | `NEW` | New customer with one or more new accounts |
-| `ADDACCT` | One or more new accounts for an existing customer |
+| `ADDACCT` | Exactly one new account for an existing customer |
 | `UPDCUST` | Changes to an existing customer |
-| `UPDACCT` | Changes to one or more existing accounts |
-| `CLOSEACCT` | Closes one or more accounts |
+| `UPDACCT` | Changes to exactly one existing account |
+| `CLOSEACCT` | Closes exactly one account |
 | `INACT` | Makes a customer and its active accounts inactive |
 
 | Field | Element | Type | Restrictions | Description |
@@ -517,7 +517,7 @@ Pipe-delimited. The initial load is ordered by `W_DTS`; daily deliveries by `CDC
 
 #### FINWIRE
 
-Fixed-width, used in the initial load and in daily deliveries on release dates. One file per posting quarter (`FINWIRE2003Q1`); records in `PTS` order, types mixed. Text pads right with spaces, numbers pad left with spaces, CIKs pad left with zeroes; an empty field is all spaces. Samples can omit trailing padding.
+Fixed-width, used in the initial load and in daily deliveries on release dates. One file per posting quarter (`FINWIRE2003Q1`); records in `PTS` order, types mixed. Text pads right with spaces, numbers pad left with spaces, CIKs pad left with zeroes; an empty field is all spaces. Records include full trailing padding and use numeric CIKs, not company names.
 
 **CMP** (Company, 543 characters)
 
@@ -544,7 +544,7 @@ Fixed-width, used in the initial load and in daily deliveries on release dates. 
 | `CEOname` | `CHAR(46)` | Not empty | Name of company CEO |
 | `Description` | `CHAR(150)` | Not empty | Description of the company |
 
-**SEC** (Security, 170 characters with a CIK, 220 with a company name)
+**SEC** (Security, 170 characters with a numeric CIK)
 
 ```text
 19670427-161251SECAAAAAAAAAAAAAAACOMMONACTVDiIPnSJHqplAHTPKTGIhStBRNgEpVZYuRSRDlerURQYDcFPMaJ                    NASDAQ652346051    1905061019660302        1.850000000005
@@ -556,16 +556,16 @@ Fixed-width, used in the initial load and in daily deliveries on release dates. 
 | `RecType` | `CHAR(3)` | Not empty | “SEC” |
 | `Symbol` | `CHAR(15)` | Not empty | Security symbol |
 | `IssueType` | `CHAR(6)` | Not empty | Issue type |
-| `Status` | `CHAR(4)` | Not empty | ‘ACTV’ for Active security, ‘INAC’ for inactive |
+| `Status` | `CHAR(4)` | ‘ACTV’ | Securities remain active; no inactive versions |
 | `Name` | `CHAR(70)` | Not empty | Security name |
 | `ExID` | `CHAR(6)` | Not empty | ID of the exchange the security is traded on |
 | `ShOut` | `CHAR(13)` | Not empty | Number of shares outstanding |
 | `FirstTradeDate` | `CHAR(8)` | Not empty | Date of first trade as YYYYMMDD |
 | `FirstTradeExchg` | `CHAR(8)` | Not empty | Date of first trade on exchange as YYYYMMDD |
 | `Dividend` | `CHAR(12)` | Not empty | Dividend as VALUE_T |
-| `CoNameOrCIK` | `CHAR(60 or 10)` | Not empty | Company CIK number (if only digits, 10 chars) or name (if not only digits, 60 chars) |
+| `CoNameOrCIK` | `CHAR(10)` | Not empty; digits only | Company CIK number |
 
-**FIN** (Financial, 196 characters with a CIK, 246 with a company name)
+**FIN** (Financial, 196 characters with a numeric CIK)
 
 ```text
 19670401-063705FIN196721967040119670401    9288741181.53    2284183075.45       13.18       12.44        0.25     805819257.50  135871569610.30    4339544932.47    173262702    1836200100000000068
@@ -589,7 +589,7 @@ Fixed-width, used in the initial load and in daily deliveries on release dates. 
 | `Liabilities` | `CHAR(17)` | Not empty | Value of total liabilities at the end of quarter |
 | `ShOut` | `CHAR(13)` | Not empty | Average number of shares outstanding |
 | `DilutedShOut` | `CHAR(13)` | Not empty | Average number of shares outstanding (diluted) |
-| `CoNameOrCIK` | `CHAR(60 or 10)` | Not empty | Company CIK number (if only digits, 10 chars) or name (if not only digits, 60 chars) |
+| `CoNameOrCIK` | `CHAR(10)` | Not empty; digits only | Company CIK number |
 
 #### DailyMarket.txt
 
