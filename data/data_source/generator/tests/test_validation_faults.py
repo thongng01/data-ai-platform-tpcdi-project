@@ -34,7 +34,7 @@ def _fault_fixture(tmp_path):
     audit_path.write_text(json.dumps(entry) + "\n")
     audit = FaultAudit.load(tmp_path, config, _require)
     inputs = {"root": tmp_path, "temporary": tmp_path / "stage", "partitions": 1, "date_partitions": 1,
-              "config": config, "sessions": {}, "securities": {}, "saved": None, "audit_entries": audit.entries}
+              "config": config, "sessions": {}, "securities": {}, "saved": None}
     return config, relative, entry, audit, inputs
 
 
@@ -51,7 +51,7 @@ def test_duplicate_consumption_across_parser_workers_fails(tmp_path):
     # same evidence. No shared connection or shared mutable used flag hides it.
     with ProcessPoolExecutor(max_workers=2, max_tasks_per_child=1, mp_context=get_context("spawn"),
                              initializer=validation._initialize_parser, initargs=(inputs,)) as executor:
-        results = list(executor.map(_parse_in_worker, [(0, relative), (1, relative)]))
+        results = list(executor.map(_parse_in_worker, [(0, relative, audit.entries), (1, relative, audit.entries)]))
     assert len({pid for pid, _ in results}) == 2
     first, second = [result for _, result in results]
     assert first.error is second.error is None
@@ -73,9 +73,8 @@ def test_unconsumed_entry_fails_after_worker_results(tmp_path):
     with (tmp_path / "summary/data_errors.jsonl").open("a") as stream:
         stream.write(json.dumps(unused) + "\n")
     audit = FaultAudit.load(tmp_path, config, _require)
-    inputs["audit_entries"] = audit.entries
     validation._initialize_parser(inputs)
-    result = validation._parse_independent_file((0, relative))
+    result = validation._parse_independent_file((0, relative, audit.slices({relative})[relative]))
     assert result.error is None
     audit.accept(result.audit_used, result.audit_measurements)
     with pytest.raises(ValidationError, match="Unused fault audit evidence"):
@@ -84,12 +83,12 @@ def test_unconsumed_entry_fails_after_worker_results(tmp_path):
 
 def test_duplicate_consumption_inside_one_file_fails(tmp_path):
     """Retain one-time consumption within each worker as well as across workers."""
-    _, relative, _, _, inputs = _fault_fixture(tmp_path)
+    _, relative, _, audit, inputs = _fault_fixture(tmp_path)
     path = tmp_path / relative
     with path.open("a") as stream:
         stream.write(path.read_text().replace("I|1|", "I|2|", 1))
     validation._initialize_parser(inputs)
-    result = validation._parse_independent_file((0, relative))
+    result = validation._parse_independent_file((0, relative, audit.entries))
     assert isinstance(result.error, ValidationError)
     assert str(result.error) == "A fault audit entry was consumed more than once."
 
@@ -101,6 +100,49 @@ def test_duplicate_saved_evidence_still_fails(tmp_path):
         stream.write(json.dumps(entry) + "\n")
     with pytest.raises(ValidationError, match="Duplicate fault audit identity and field"):
         FaultAudit.load(tmp_path, config, _require)
+
+
+def test_audit_slices_route_only_expected_source_evidence(tmp_path):
+    """File slices exclude other sources and retain unmatched evidence for final rejection."""
+    config, relative, _, _, _ = _fault_fixture(tmp_path)
+    cases = [
+        ("CustomerMgmt", "2019-06-02", {"C_ID": "1", "ActionType": "UPDACCT", "ActionTS": "2019-06-02T00:00:02", "CA_ID": "11"}, "C_TIER", "offline/initial/CustomerMgmt.xml"),
+        ("Customer", "2019-06-24", {"C_ID": "1", "C_ST_ID": "ACTV", "CDC_FLAG": "I"}, "C_TIER", relative),
+        ("Trade", "2019-06-02", {"T_ID": "1", "T_DTS": "2019-06-02 10:00:00", "T_ST_ID": "CMPT"}, "T_CHRG", "offline/initial/Trade.txt"),
+        ("Trade", "2019-06-24", {"T_ID": "1", "T_DTS": "2019-06-24 10:00:00", "T_ST_ID": "CMPT"}, "T_COMM", "offline/daily/20190624/Trade_20190624.txt"),
+        ("FINWIRE:CMP", "2019-01-31", {"CIK": "1", "PTS": "20190131-000000"}, "SPrating", "offline/initial/FINWIRE2019Q1"),
+        ("Customer", "2020-01-01", {"C_ID": "2"}, "C_TIER", None),
+        ("FINWIRE:CMP", "invalid", {}, "SPrating", None),
+    ]
+    entries = {(FaultAudit._key(source, day, identity), field): ("correct", "recorded")
+               for source, day, identity, field, _ in cases}
+    audit = FaultAudit(config, _require, entries)
+    expected = {relative for *_, relative in cases if relative is not None}
+    slices = audit.slices(expected)
+    assert set(slices) == expected
+    for source, day, identity, field, relative in cases:
+        key = FaultAudit._key(source, day, identity), field
+        if relative is not None:
+            assert slices[relative] == {key: entries[key]}
+    assert len(audit.entries) == len(cases)
+    with pytest.raises(ValidationError, match="Unused fault audit evidence"):
+        audit.finish()
+
+
+def test_release_preserves_report_and_deferred_completeness(tmp_path):
+    """Dropping parse graphs must not turn unused evidence into a successful proof."""
+    _, _, _, audit, _ = _fault_fixture(tmp_path)
+    expected = audit.report()
+    count, report, complete = audit.release()
+    assert count == 1 and report == expected and not complete
+    assert not audit.entries and not audit.used
+
+
+def test_coordinator_rejects_unknown_consumed_evidence(tmp_path):
+    """A worker cannot authorize a key that the coordinator never loaded."""
+    _, _, _, audit, _ = _fault_fixture(tmp_path)
+    with pytest.raises(ValidationError, match="unknown fault audit evidence"):
+        audit.accept({("unknown", "C_TIER")}, audit.reader().measurements)
 
 
 def test_worker_measurements_sum_exactly(tmp_path):

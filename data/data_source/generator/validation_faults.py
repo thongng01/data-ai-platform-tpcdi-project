@@ -1,6 +1,6 @@
 """Verify each configured source error, then restore correct values for replay."""
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 import json
 from pathlib import Path
@@ -20,6 +20,9 @@ class FaultAudit:
         self.entries = entries
         self.used = set()
         self.count = len(entries)
+        self.rates = {"C_TIER": config.customer_tier_error_rate, "C_DOB": config.customer_dob_error_rate,
+                      "SPrating": config.company_rating_error_rate, "T_CHRG": config.trade_charge_error_rate,
+                      "T_COMM": config.trade_commission_error_rate}
         self.measurements = {field: {delivery: {"eligible": 0, "errors": 0} for delivery in ("initial", "daily")}
                              for field in ("C_TIER", "C_DOB", "SPrating", "T_CHRG", "T_COMM")}
 
@@ -44,9 +47,42 @@ class FaultAudit:
                     entries[key] = entry["correct"], entry["recorded"]
         return cls(config, require, entries)
 
-    def reader(self):
-        """Share the evidence without sharing a file's mutable consumption state."""
-        return FaultAudit(self.config, self.require, self.entries)
+    def reader(self, entries=None):
+        """Share selected evidence without sharing a file's mutable consumption state."""
+        return FaultAudit(self.config, self.require, self.entries if entries is None else entries)
+
+    def slices(self, expected):
+        """Route evidence to expected source files without discarding unmatched entries."""
+        result = {}
+        for key, evidence in self.entries.items():
+            source, day_text, identity = json.loads(key[0])
+            try:
+                day = date.fromisoformat(day_text)
+                if source == "CustomerMgmt":
+                    relative = "offline/initial/CustomerMgmt.xml" if self.config.start <= day <= self.config.cutover else None
+                elif source == "FINWIRE:CMP":
+                    posted = datetime.strptime(identity["PTS"], "%Y%m%d-%H%M%S")
+                    folder = "offline/initial" if day <= self.config.cutover else f"offline/daily/{day:%Y%m%d}"
+                    relative = f"{folder}/FINWIRE{posted.year}Q{(posted.month - 1) // 3 + 1}" if posted.date() == day else None
+                elif source in {"Customer", "Trade"}:
+                    if source == "Trade" and self.config.start <= day <= self.config.cutover:
+                        relative = "offline/initial/Trade.txt"
+                    else:
+                        relative = f"offline/daily/{day:%Y%m%d}/{source}_{day:%Y%m%d}.txt"
+                else:
+                    relative = None
+            except (KeyError, TypeError, ValueError):
+                relative = None
+            if relative in expected:
+                result.setdefault(relative, {})[key] = evidence
+        return result
+
+    def release(self):
+        """Save final measurements and completeness, then release parse-only proof graphs."""
+        result = self.count, self.report(), len(self.used) == self.count
+        self.entries.clear()
+        self.used.clear()
+        return result
 
     def accept(self, used, measurements):
         """Combine one file's verified keys and exact counts in source-file order."""
@@ -83,9 +119,6 @@ class FaultAudit:
             candidates = ("T_CHRG", "T_COMM")
         else:
             return row
-        rates = {"C_TIER": self.config.customer_tier_error_rate, "C_DOB": self.config.customer_dob_error_rate,
-                 "SPrating": self.config.company_rating_error_rate, "T_CHRG": self.config.trade_charge_error_rate,
-                 "T_COMM": self.config.trade_commission_error_rate}
         identifier = int(identity.get("C_ID", identity.get("T_ID", identity.get("CIK", 0))))
         discriminator = identity.get("ActionType", identity.get("C_ST_ID", identity.get("T_ST_ID", "")))
         identity_key = None
@@ -94,7 +127,7 @@ class FaultAudit:
                 continue
             # Recompute selection here, independently of the recorder. Evidence
             # cannot authorize a fault on a row that the configured draw excludes.
-            chosen = uniform(identifier, self.config.seed, f"source-error/{source}/{field}/{day}/{discriminator}") < rates[field]
+            chosen = uniform(identifier, self.config.seed, f"source-error/{source}/{field}/{day}/{discriminator}") < self.rates[field]
             delivery = "initial" if str(day) <= self.config.initial_end else "daily"
             bucket = self.measurements[field][delivery]
             bucket["eligible"] += 1
@@ -134,12 +167,9 @@ class FaultAudit:
     def report(self):
         """Report eligible rows, measured errors, and rates for each error type."""
         result = {}
-        rates = {"C_TIER": self.config.customer_tier_error_rate, "C_DOB": self.config.customer_dob_error_rate,
-                 "SPrating": self.config.company_rating_error_rate, "T_CHRG": self.config.trade_charge_error_rate,
-                 "T_COMM": self.config.trade_commission_error_rate}
         for field, deliveries in sorted(self.measurements.items()):
             totals = {name: sum(bucket[name] for bucket in deliveries.values()) for name in ("eligible", "errors")}
-            result[field] = {**totals, "configured_rate": rates[field], "rate": totals["errors"] / totals["eligible"] if totals["eligible"] else None,
+            result[field] = {**totals, "configured_rate": self.rates[field], "rate": totals["errors"] / totals["eligible"] if totals["eligible"] else None,
                              "deliveries": {delivery: {**bucket, "rate": bucket["errors"] / bucket["eligible"] if bucket["eligible"] else None}
                                             for delivery, bucket in deliveries.items()}}
         return result

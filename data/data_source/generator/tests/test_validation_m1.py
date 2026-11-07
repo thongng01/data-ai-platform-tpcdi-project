@@ -390,7 +390,7 @@ def test_projected_large_factor_caps_partitions_and_bounds_writer_bytes():
     assert validation._partition_count(0) == 1
     assert validation._partition_count(16 * 1024**2 + 1) == 2
     partitions = validation._partition_count(135_000_000_000)
-    assert partitions == 1024
+    assert partitions == 1021
     for source in (load_sources()["CashTransaction"], load_sources()["Customer"], load_sources()["Trade"].daily_version):
         schema = validation._source_schema(source)
         if source.name == "Customer":
@@ -418,6 +418,16 @@ def test_projected_large_factor_caps_partitions_and_bounds_writer_bytes():
         assert rows * partitions * validation._staged_row_bytes(schema) <= validation._PARQUET_BUFFER_BYTES
         if source.name == "CashTransaction":
             assert rows >= 128
+
+
+def test_account_stride_spreads_at_partition_ceiling():
+    """Every default account slot reaches every partition instead of a residue subset."""
+    partitions = validation._partition_count(135_000_000_000)
+    for slot in range(1, 4):
+        counts = [0] * partitions
+        for index in range(partitions * 4):
+            counts[(24 * index + slot) % partitions] += 1
+        assert counts == [4] * partitions
 
 
 def test_saved_hash_evidence_detects_unrelated_text_change(exported, tmp_path):

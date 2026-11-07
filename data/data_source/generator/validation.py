@@ -27,7 +27,9 @@ from .validation_faults import FaultAudit
 
 
 _VALIDATION_PARTITION_BYTES = 16 * 1024**2
-_VALIDATION_MAX_PARTITIONS = 1024
+# Account IDs advance by 24. This prime ceiling avoids routing those IDs
+# into only a fraction of the partitions, as a power-of-two ceiling would.
+_VALIDATION_MAX_PARTITIONS = 1021
 _PARQUET_BUFFER_BYTES = 64 * 1024**2
 
 
@@ -479,8 +481,9 @@ def _finwire(root, paths, config, industries, audit, saved):
     reports = set()
     counts = defaultdict(int)
     results = {}
+    slices = audit.slices({path.relative_to(root).as_posix() for path in paths})
     for path in sorted(paths, key=lambda item: (0 if item.parent.name == "initial" else 1, str(item))):
-        reader = audit.reader()
+        reader = audit.reader(slices.get(path.relative_to(root).as_posix(), {}))
         result = _ParsedFile(path.relative_to(root).as_posix())
         results[result.relative] = result
         before = sum(counts.values())
@@ -795,8 +798,9 @@ def _replay_accounts(stage, partition, brokers):
         row.update(_present=[name for name in row if name.startswith("CA_")],
                    _timestamp=row["_day"] + (" 23:59:59" if row["CA_ST_ID"] == "INAC" else " 00:00:00"), _kind="CDC")
         versions.append(row)
-    hidden = {row["account_id"]: row for row in stage.records("Hidden", partition)}
-    _require(len(hidden) == stage.frame("Hidden", partition).height, "Duplicate hidden account ID.")
+    hidden_frame = stage.frame("Hidden", partition)
+    hidden = {row["account_id"]: row for row in hidden_frame.iter_rows(named=True)}
+    _require(len(hidden) == hidden_frame.height, "Duplicate hidden account ID.")
     owners = list({row["CA_C_ID"] for row in versions})
     customers = {row["customer_id"]: row for row in pl.scan_parquet(stage.root / "customers" / "*.parquet")
                  .filter(pl.col("customer_id").is_in(owners)).collect(engine="streaming").iter_rows(named=True)}
@@ -1195,11 +1199,11 @@ def _initialize_parser(inputs):
 
 def _parse_independent_file(job):
     """Parse into an isolated stage and return fault keys and counts, not source rows."""
-    index, relative = job
+    index, relative, entries = job
     inputs = _PARSE_INPUTS
     stage = _Stage(inputs["temporary"] / "files" / str(index), inputs["partitions"], inputs["date_partitions"])
     result = _ParsedFile(relative)
-    audit = FaultAudit(inputs["config"], _require, inputs["audit_entries"])
+    audit = FaultAudit(inputs["config"], _require, entries)
     try:
         _parse_file(inputs["root"], relative, stage, inputs["config"], inputs["sources"], inputs["sessions"],
                     inputs["securities"], audit, inputs["saved"], result)
@@ -1423,11 +1427,13 @@ def _check_saved_file(root, saved, result):
 def _parse_files(root, expected, stage, config, sources, sessions, securities, audit, saved, finwire_results):
     """Parse independent files in workers and consume all evidence in source order."""
     files = sorted(expected, key=lambda name: (0 if name.startswith("offline/initial/") else 1 if name.startswith("offline/") else 2, name))
-    jobs = [(index, relative) for index, relative in enumerate(files) if not Path(relative).name.startswith("FINWIRE")]
+    slices = audit.slices(expected)
+    jobs = ((index, relative, slices.get(relative, {})) for index, relative in enumerate(files)
+            if not Path(relative).name.startswith("FINWIRE"))
     inputs = {"root": root, "temporary": stage.root, "partitions": stage.partitions,
               "date_partitions": stage.date_partitions, "config": config, "sessions": sessions,
-              "securities": securities, "saved": saved, "audit_entries": audit.entries}
-    workers = min(config.workers, len(jobs))
+              "securities": securities, "saved": saved}
+    workers = min(config.workers, sum(not Path(relative).name.startswith("FINWIRE") for relative in files))
     pool = (ProcessPoolExecutor(max_workers=workers, mp_context=get_context("spawn"),
                                 initializer=_initialize_parser, initargs=(inputs,)) if workers > 1 else nullcontext())
     counts, brokers, action_counts = {}, set(), {}
@@ -1444,7 +1450,7 @@ def _parse_files(root, expected, stage, config, sources, sessions, securities, a
                 result = next(results)
             else:
                 result = _ParsedFile(relative)
-                reader = audit.reader()
+                reader = audit.reader(slices.get(relative, {}))
                 try:
                     _parse_file(root, relative, stage, config, sources, sessions, securities, reader, saved, result)
                 except Exception as error:
@@ -1486,7 +1492,9 @@ def validate(root: Path, config: Config, inventory=None):
     audit = FaultAudit.load(root, config, _require)
     with tempfile.TemporaryDirectory(prefix="validation-", dir=root) as temporary:
         finwire_inputs = {"root": root, "files": [name for name in expected if Path(name).name.startswith("FINWIRE")],
-                          "config": config, "industries": industries, "saved": saved, "audit_entries": audit.entries}
+                          "config": config, "industries": industries, "saved": saved,
+                          "audit_entries": {key: evidence for key, evidence in audit.entries.items()
+                                            if json.loads(key[0])[0] == "FINWIRE:CMP"}}
         # FINWIRE checks posting dependencies across files. Its ordered parser
         # supplies the security versions that ordinary file parsers need. Keep
         # this dependency wave separate; never share writable audit state.
@@ -1510,6 +1518,12 @@ def validate(root: Path, config: Config, inventory=None):
                     stage.add("Hidden", row, hidden_schema)
         counts, brokers, cash_sequence, trade_schemas, action_counts = _parse_files(
             root, expected, stage, config, sources, sessions, securities, audit, saved, finwire_results)
+        # Parsing owns audit keys. Preserve the final unused-evidence failure's
+        # place after replay while dropping every catalog and consumed-key owner.
+        fault_count, error_measurements, audit_complete = audit.release()
+        finwire_results.clear()
+        finwire_inputs.clear()
+        del audit
         stage.finish()
         for market_date in sessions:
             if not str(_prior_year(config.start)) <= market_date <= str(config.end):
@@ -1521,9 +1535,7 @@ def validate(root: Path, config: Config, inventory=None):
             observed_symbols = set(observed["DM_S_SYMB"].to_list()) if not observed.is_empty() else set()
             _require(observed_symbols == required_symbols, f"Market coverage is incomplete for {market_date}.")
         customers, totals = _replay_partitions(stage, config, securities, sessions, brokers, tax_rates)
-        audit.finish()
-        fault_count = audit.count
-        error_measurements = audit.report()
+        _require(audit_complete, "Unused fault audit evidence has no configured source fault.")
         peak_rows = stage.peak_rows
     return {"status": "passed", "files": len(expected), "rows": sum(counts.values()), "bytes": total_bytes,
             "customers": customers, "accounts": totals[0], "trades": totals[1], "completed_trades": totals[2],
