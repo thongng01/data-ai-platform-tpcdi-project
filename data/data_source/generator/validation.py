@@ -438,6 +438,39 @@ def _xml(stage, path, sources, config, audit=None):
     return dict(counts)
 
 
+def _finwire_values(kind, values):
+    """Check required FINWIRE values, date text, and numeric field syntax."""
+    optional = {"FoundingDate", "AddrLine2", "Country"} if kind == "CMP" else set()
+    for name, value in values.items():
+        _require(value != "" or name in optional, f"Missing required FINWIRE {kind}.{name}.")
+    dates = {"CMP": ("FoundingDate",), "SEC": ("FirstTradeDate", "FirstTradeExchg"),
+             "FIN": ("QtrStartDate", "PostingDate")}
+    for name in dates[kind]:
+        if values[name]:
+            try:
+                parsed = datetime.strptime(values[name], "%Y%m%d").date()
+                _require(parsed.strftime("%Y%m%d") == values[name], f"Invalid FINWIRE {kind}.{name} date.")
+            except ValueError as error:
+                raise ValidationError(f"Invalid FINWIRE {kind}.{name} date.") from error
+    integers = {"CMP": ("CIK",), "SEC": ("ShOut", "CoNameOrCIK"),
+                "FIN": ("Year", "Quarter", "ShOut", "DilutedShOut", "CoNameOrCIK")}
+    for name in integers[kind]:
+        _require(re.fullmatch(r"[0-9]+", values[name]) is not None, f"Invalid FINWIRE {kind}.{name} integer.")
+    numbers = {"CMP": (), "SEC": ("Dividend",),
+               "FIN": ("Revenue", "Earnings", "EPS", "DilutedEPS", "Margin", "Inventory", "Assets", "Liabilities")}
+    for name in numbers[kind]:
+        _require(re.fullmatch(r"-?[0-9]+(?:\.[0-9]+)?", values[name]) is not None,
+                 f"Invalid FINWIRE {kind}.{name} number.")
+
+
+def _expected_financial_reports(config):
+    """Derive every company-period identity from configuration and release dates."""
+    return {(company, ordinal // 4, ordinal % 4 + 1)
+            for ordinal in range(_quarter(config.start) - 5, _quarter(config.end) + 1)
+            if _release(ordinal) <= config.end
+            for company in range(1, config.companies + 1)}
+
+
 def _finwire(root, paths, config, industries, audit, saved):
     """Validate released fixed-width company, security, and financial versions."""
     layouts = read_yaml(Path(__file__).parent / "definitions" / "finwire.yaml")
@@ -463,6 +496,7 @@ def _finwire(root, paths, config, industries, audit, saved):
                 for name, (width, _) in layout.items():
                     values[name] = line[offset:offset + width].strip()
                     offset += width
+                _finwire_values(kind, values)
                 timestamp = values["PTS"]
                 posted = datetime.strptime(timestamp, "%Y%m%d-%H%M%S")
                 _require(posted.strftime("%Y%m%d-%H%M%S") == timestamp, "Invalid FINWIRE PTS.")
@@ -494,6 +528,10 @@ def _finwire(root, paths, config, industries, audit, saved):
                     _require(report not in reports, "Duplicate financial report.")
                     reports.add(report)
                     _require(posted.date() == _release(year * 4 + quarter - 1), "Financial report has the wrong release date.")
+                    _require(values["QtrStartDate"] == f"{year:04d}{quarter * 3 - 2:02d}01",
+                             "Financial quarter start differs from its year and quarter.")
+                    _require(values["PostingDate"] == posted.strftime("%Y%m%d"),
+                             "Financial posting date differs from PTS.")
                     for name in ("Revenue", "Earnings", "EPS", "DilutedEPS", "Margin", "Inventory", "Assets", "Liabilities", "ShOut", "DilutedShOut"):
                         _require(Decimal(values[name]).is_finite(), "Invalid financial number.")
             result.count = sum(counts.values()) - before
@@ -506,6 +544,7 @@ def _finwire(root, paths, config, industries, audit, saved):
     else:
         try:
             _require(all(counts[kind] for kind in ("CMP", "SEC", "FIN")), "Every FINWIRE record type must be present.")
+            _require(reports == _expected_financial_reports(config), "Financial company-period coverage is incomplete or unexpected.")
         except Exception as error:
             result.error = error
     for versions in securities.values():
@@ -566,11 +605,11 @@ def _check_dividends(trade_events, cash, config, sessions, securities):
     _require(actual == expected, "Missing, extra, mistimed, or incorrect start-of-day dividend.")
 
 
-def _sessions(config):
+def _sessions(config, first=None):
     """Derive NYSE session dates and early closes independently of saved metadata."""
     import exchange_calendars as xcals
 
-    first = _prior_year(config.start)
+    first = _prior_year(config.start) if first is None else first
     calendar = xcals.get_calendar("XNYS", start=first.isoformat(), end=config.end.isoformat())
     early = {stamp.date().isoformat() for stamp in calendar.early_closes}
     return {stamp.date().isoformat(): "13:00:00" if stamp.date().isoformat() in early else "16:00:00"
@@ -797,7 +836,10 @@ def _account_closures(accounts, customers):
     for identifier, account in accounts.items():
         customer = customers[account["owner"]]
         if customer["closed"] is not None:
-            account["closed"] = min(value for value in (account["closed"], customer["closed"]) if value is not None)
+            # Both initial CMS INACT actions and daily Account deliveries carry
+            # explicit closures. A customer row cannot replace that evidence.
+            _require(account["closed"] is not None and account["closed"] <= customer["closed"],
+                     "Customer inactivation requires explicit account closure evidence.")
         hidden_close = account["close_date"]
         _require((hidden_close is None and account["closed"] is None) or
                  (hidden_close is not None and account["closed"] is not None and str(hidden_close) == account["closed"][:10]),
@@ -951,13 +993,17 @@ class _AccountReplay:
         identifier, status, timestamp = row["T_ID"], row["T_ST_ID"], row["T_DTS"]
         previous = self.trades.get(identifier)
         if row["_flag"] == "I":
-            _require(previous is None and status in {"PNDG", "SBMT"}, "Trade insertion reused an ID or has an invalid initial status.")
+            expected = "SBMT" if row["T_TT_ID"] in {"TMB", "TMS"} else "PNDG"
+            _require(previous is None and status == expected, "Trade insertion reused an ID or has an invalid initial status.")
         else:
             _require(previous is not None and (previous["T_ST_ID"], status) in
                      {("PNDG", "SBMT"), ("PNDG", "CMPT"), ("PNDG", "CNCL"), ("SBMT", "CMPT"), ("SBMT", "CNCL")},
                      f"Invalid trade lifecycle transition: trade={identifier}, prior={previous['T_ST_ID'] if previous else None}, "
                      f"next={status}, flag={row['_flag']}, timestamp={timestamp}, source_order={row['_order']}.")
             _require(timestamp >= previous["T_DTS"], "Trade status timestamps must not decrease.")
+            if previous["T_TT_ID"] in {"TMB", "TMS"}:
+                _require(status == "CMPT" and timestamp == previous["T_DTS"],
+                         "Market orders must complete at their creation timestamp.")
             _require(all(row[name] == previous[name] for name in ("T_CA_ID", "T_S_SYMB", "T_QTY", "T_TT_ID", "T_IS_CASH", "T_BID_PRICE", "T_EXEC_NAME")),
                      "Trade update changed immutable attributes.")
         amounts = [row[name] for name in ("T_TRADE_PRICE", "T_CHRG", "T_COMM", "T_TAX")]
@@ -1062,6 +1108,8 @@ def _account_replay(stage, partition, config, securities, sessions, brokers):
             replay.cash_event(event.row)
         else:
             replay.trade_event(event.row)
+    _require(all(row["T_TT_ID"] not in {"TMB", "TMS"} or row["T_ST_ID"] == "CMPT" for row in replay.trades.values()),
+             "Market orders must complete at their creation timestamp.")
     _require(set(holdings) == replay.completed and set(settlements) == replay.completed,
              "Holding changes or settlements include a non-completed trade.")
     return len(accounts), len(replay.trades), len(replay.completed)
@@ -1196,6 +1244,41 @@ def _adopt_file_blocks(stage, index, result):
     stage.peak_rows = max(stage.peak_rows, result.peak_rows)
 
 
+def _reference_start(config):
+    """Find the first required date from the price history and initial FINWIRE posting."""
+    ordinal = _quarter(config.start) - 5
+    return min(_prior_year(config.start), date(ordinal // 4, ordinal % 4 * 3 + 1, 1))
+
+
+def _check_time_reference(row, second):
+    """Check clock labels, components, and business-hour flags against the time ID."""
+    hour, remainder = divmod(second, 3600)
+    minute, seconds = divmod(remainder, 60)
+    full = f"{hour:02d}:{minute:02d}:{seconds:02d}"
+    expected = {"TimeValue": full, "HourID": hour, "HourDesc": f"{hour:02d}",
+                "MinuteID": minute, "MinuteDesc": full[:5], "SecondID": seconds, "SecondDesc": full,
+                "MarketHoursFlag": int(34200 <= second < 57600), "OfficeHoursFlag": int(28800 <= second < 61200)}
+    _require(all((int(row[name]) if isinstance(value, int) else row[name]) == value for name, value in expected.items()),
+             "Time reference columns differ from SK_TimeID.")
+
+
+def _check_date_reference(row, day, sessions):
+    """Check the complete ordered calendar and its calendar, fiscal, and holiday labels."""
+    quarter = (day.month - 1) // 3 + 1
+    iso = day.isocalendar()
+    expected = {"SK_DateID": int(day.strftime("%Y%m%d")), "DateValue": day.isoformat(),
+                "DateDesc": f"{day:%B} {day.day}, {day.year}", "CalendarYearID": day.year,
+                "CalendarYearDesc": str(day.year), "CalendarQtrID": day.year * 10 + quarter,
+                "CalendarQtrDesc": f"{day.year} Q{quarter}", "CalendarMonthID": day.year * 100 + day.month,
+                "CalendarMonthDesc": f"{day:%Y %B}", "CalendarWeekID": iso.year * 100 + iso.week,
+                "CalendarWeekDesc": f"{iso.year}-W{iso.week:02d}", "DayOfWeekNum": day.isoweekday(),
+                "DayOfWeekDesc": day.strftime("%A"), "FiscalYearID": day.year, "FiscalYearDesc": str(day.year),
+                "FiscalQtrID": day.year * 10 + quarter, "FiscalQtrDesc": f"{day.year} Q{quarter}",
+                "HolidayFlag": int(day.weekday() < 5 and day.isoformat() not in sessions)}
+    _require(all((int(row[name]) if isinstance(value, int) else row[name]) == value for name, value in expected.items()),
+             "Date reference columns or coverage differ from the generated calendar.")
+
+
 def _parse_file(root, relative, stage, config, sources, sessions, securities, audit, saved, result):
     """Check one source file and retain ordered boundary keys before later failures."""
     cash_sequence = 0
@@ -1203,6 +1286,8 @@ def _parse_file(root, relative, stage, config, sources, sessions, securities, au
     previous_market = None
     previous_initial_trade = -1
     previous_history = None
+    previous_employee = -1
+    previous_watch = ""
     path = root / relative
     if path.suffix == ".xml":
         result.action_counts = _xml(stage, path, sources, config, audit)
@@ -1218,6 +1303,8 @@ def _parse_file(root, relative, stage, config, sources, sessions, securities, au
         source = sources[name] if initial else source_for_day(sources[name], date.fromisoformat(day), config)
         rows = _stream(path, source) if relative.startswith("stream/") else _rows(path, source, 1 if initial else 2)
         count = 0
+        reference_start = _reference_start(config) if name == "Date" else None
+        reference_sessions = _sessions(config, reference_start) if name == "Date" else None
         seen = set() if name in {"HR", "Date", "Time", "StatusType", "TradeType", "Industry", "TaxRate"} else None
         for number, row in enumerate(rows, 1):
             count = number
@@ -1227,16 +1314,22 @@ def _parse_file(root, relative, stage, config, sources, sessions, securities, au
                 _require(identity not in seen, f"Duplicate {name} identity.")
                 seen.add(identity)
             if name == "HR":
+                employee = int(row["EmployeeID"])
+                _require(employee > previous_employee, "HR employee IDs must be increasing.")
+                previous_employee = employee
                 if row["EmployeeJobCode"] == "314":
                     result.brokers.add(int(row["EmployeeID"]))
             elif name == "Time":
                 _require(int(row["SK_TimeID"]) == number - 1, "Time reference must cover ordered seconds 0..86399.")
+                _check_time_reference(row, number - 1)
             elif name == "Prospect":
                 identity = row["AgencyID"]
                 bucket = int.from_bytes(hashlib.blake2b(identity.encode("ascii"), digest_size=8).digest(), "big") % stage.partitions
                 schema = {"identity": pl.String, "date": pl.String, "_partition": pl.String}
                 stage.add("ProspectIdentity", {"identity": identity, "date": day, "_partition": str(bucket)}, schema)
-            elif name in {"StatusType", "TradeType", "Industry", "TaxRate", "Date"}:
+            elif name == "Date":
+                _check_date_reference(row, reference_start + timedelta(days=number - 1), reference_sessions)
+            elif name in {"StatusType", "TradeType", "Industry", "TaxRate"}:
                 pass
             else:
                 timestamp_field = {"Trade": "T_DTS", "TradeHistory": "TH_DTS", "CashTransaction": "CT_DTS", "WatchHistory": "W_DTS", "DailyMarket": "DM_DATE"}.get(name)
@@ -1281,6 +1374,9 @@ def _parse_file(root, relative, stage, config, sources, sessions, securities, au
                 elif name == "Account":
                     key = int(row["CA_ID"])
                 elif name == "WatchHistory":
+                    if initial:
+                        _require(row["W_DTS"] >= previous_watch, "Initial watch history must be ordered by timestamp.")
+                        previous_watch = row["W_DTS"]
                     key = int(row["W_C_ID"])
                 elif name == "DailyMarket":
                     key = row["DM_DATE"]
@@ -1297,7 +1393,17 @@ def _parse_file(root, relative, stage, config, sources, sessions, securities, au
                     fault_day = row["T_DTS"][:10] if name == "Trade" else day
                     row = audit.restore(name, fault_day, row)
                 _stage_source(stage, source, row, day, key)
-        if name == "Time":
+        if seen is not None:
+            _require(count > 0, f"{name} reference must not be empty.")
+        if name == "StatusType":
+            _require({"ACTV", "INAC", "PNDG", "SBMT", "CMPT", "CNCL"} <= seen,
+                     "StatusType reference is missing a replay status.")
+        elif name == "TradeType":
+            _require({"TMB", "TMS", "TLB", "TLS", "TSL"} <= seen,
+                     "TradeType reference is missing a replay trade type.")
+        elif name == "Date":
+            _require(count == (config.end - reference_start).days + 1, "Date reference must cover the complete generated range.")
+        elif name == "Time":
             _require(count == 86400, "Time reference must contain 86400 seconds.")
     result.count = count
     _check_saved_file(root, saved, result)
@@ -1427,4 +1533,6 @@ def validate(root: Path, config: Config, inventory=None):
             "checks": ["independent file cadence", "formats and LF endings", "saved hashes and counts" if saved is not None else "parsed counts",
                        "customer and account versions", "trade lifecycles and cutover snapshots", "cash and margin replay",
                        "source-visible order reservations", "settlements", "position holding history", "NYSE session and price bounds",
-                       "start-of-day dividend amounts", "watch lifecycles and inactivation", "source error audit and correct-value replay", "dated trade channels"]}
+                       "start-of-day dividend amounts", "watch lifecycles and inactivation", "source error audit and correct-value replay", "dated trade channels",
+                       "explicit account closures", "FINWIRE values and financial coverage", "reference meanings and coverage",
+                       "market order completion", "HR and initial watch order"]}
