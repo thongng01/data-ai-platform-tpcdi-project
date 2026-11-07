@@ -3,7 +3,7 @@
 import json
 import shutil
 from dataclasses import replace
-from datetime import date
+from datetime import date, datetime
 from types import SimpleNamespace
 
 import polars as pl
@@ -14,7 +14,7 @@ import pytest
 
 from data.data_source.generator import validation
 from data.data_source.generator.config import Config
-from data.data_source.generator.formats import load_sources
+from data.data_source.generator.formats import load_sources, source_for_day
 from data.data_source.generator.generation import Generation, expected_file_list
 from data.data_source.generator.validation import ValidationError, _cents, _rows, _stream, _xml_patch, validate
 
@@ -106,22 +106,40 @@ def exported(tmp_path_factory):
     return root, config, inventory
 
 
-def _mutate_row(root, source, field, replacement, predicate=lambda row: True, *, daily=False):
-    """Change the first matching source field while retaining its row structure."""
-    columns = load_sources()[source].columns
+def _mutate_row(root, source, field, replacement, predicate=lambda row: True, *, daily=False, config=None):
+    """Change one field while retaining the source contract for the delivery date."""
+    contract = load_sources()[source]
     paths = sorted((root / "offline" / "daily").glob(f"*/{source}_*.txt")) if daily else [root / "offline" / "initial" / f"{source}.txt"]
     for path in paths:
+        dated = source_for_day(contract, datetime.strptime(path.parent.name, "%Y%m%d").date(), config or Config()) if daily else contract
+        columns = dated.columns
         lines = path.read_text().splitlines()
         for index, line in enumerate(lines):
             values = line.split("|")
             prefix = values[:2] if daily else []
-            row = dict(zip(columns, values[2:] if daily else values))
+            row = dict(zip(columns, values[2:] if daily else values, strict=True))
             if predicate(row):
                 row[field] = replacement(row[field]) if callable(replacement) else replacement
                 lines[index] = "|".join(prefix + [row[name] for name in columns])
                 path.write_text("\n".join(lines) + "\n")
                 return path
     raise AssertionError(f"Fixture has no matching {source} row.")
+
+
+def test_corruption_helper_preserves_dated_trade_channel(tmp_path):
+    """A daily version-two mutation retains its channel and both CDC fields."""
+    config = Config()
+    path = tmp_path / "offline/daily/20190701/Trade_20190701.txt"
+    path.parent.mkdir(parents=True)
+    source = source_for_day(load_sources()["Trade"], date(2019, 7, 1), config)
+    row = {name: "1" for name in source.columns}
+    row["T_CHANNEL"] = "WEB"
+    path.write_text("I|1|" + "|".join(row[name] for name in source.columns) + "\n")
+    _mutate_row(tmp_path, "Trade", "T_CHRG", "2.00", daily=True, config=config)
+    values = path.read_text().strip().split("|")
+    assert values[:2] == ["I", "1"]
+    assert len(values) == len(source.fields) + 2 and values[-1] == "WEB"
+    assert values[source.columns.index("T_CHRG") + 2] == "2.00"
 
 
 def test_exported_replay_and_partition_replay_agree(exported, monkeypatch):
@@ -390,7 +408,7 @@ def test_projected_large_factor_caps_partitions_and_bounds_writer_bytes():
     assert validation._partition_count(0) == 1
     assert validation._partition_count(16 * 1024**2 + 1) == 2
     partitions = validation._partition_count(135_000_000_000)
-    assert partitions == 1024
+    assert partitions == 1021
     for source in (load_sources()["CashTransaction"], load_sources()["Customer"], load_sources()["Trade"].daily_version):
         schema = validation._source_schema(source)
         if source.name == "Customer":
@@ -418,6 +436,36 @@ def test_projected_large_factor_caps_partitions_and_bounds_writer_bytes():
         assert rows * partitions * validation._staged_row_bytes(schema) <= validation._PARQUET_BUFFER_BYTES
         if source.name == "CashTransaction":
             assert rows >= 128
+
+
+def test_account_replay_reads_hidden_partition_once(tmp_path, monkeypatch):
+    """A duplicate-ID check reuses the Hidden frame instead of scanning it twice."""
+    stage = validation._Stage(tmp_path, 1)
+    schema = {"account_id": pl.Int64, "_partition": pl.String}
+    for _ in range(2):
+        stage.add("Hidden", {"account_id": 1, "_partition": "0"}, schema)
+    stage.finish()
+    original = stage.frame
+    reads = []
+    def counted_frame(table, partition):
+        """Count Hidden materializations without changing the staged values."""
+        if table == "Hidden":
+            reads.append(partition)
+        return original(table, partition)
+    monkeypatch.setattr(stage, "frame", counted_frame)
+    with pytest.raises(ValidationError, match="Duplicate hidden account ID"):
+        validation._replay_accounts(stage, 0, set())
+    assert reads == [0]
+
+
+def test_account_stride_spreads_at_partition_ceiling():
+    """Every default account slot reaches every partition instead of a residue subset."""
+    partitions = validation._partition_count(135_000_000_000)
+    for slot in range(1, 4):
+        counts = [0] * partitions
+        for index in range(partitions * 4):
+            counts[(24 * index + slot) % partitions] += 1
+        assert counts == [4] * partitions
 
 
 def test_saved_hash_evidence_detects_unrelated_text_change(exported, tmp_path):
