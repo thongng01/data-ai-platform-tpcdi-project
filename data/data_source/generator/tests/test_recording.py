@@ -170,8 +170,8 @@ def test_audit_does_not_authorize_arbitrary_corruption(recorded_run, tmp_path, c
         validate(root, config)
 
 
-def test_fault_parse_failures_use_lowest_source_file(recorded_run, tmp_path):
-    """Report earlier XML evidence failure before a later FINWIRE parser failure."""
+def test_finwire_fault_failure_precedes_ordinary_file_failures(recorded_run, tmp_path):
+    """Report the failed dependency wave before an ordinary XML evidence failure."""
     original, config = recorded_run
     root = tmp_path / "ordered-fault-errors"
     shutil.copytree(original, root)
@@ -187,7 +187,7 @@ def test_fault_parse_failures_use_lowest_source_file(recorded_run, tmp_path):
     for workers in (1, 2):
         with pytest.raises(ValidationError) as error:
             validate(root, replace(config, workers=workers))
-        assert str(error.value) == "Recorded fault differs from audit: CustomerMgmt.C_TIER."
+        assert str(error.value) == "Recorded fault differs from audit: FINWIRE:CMP.SPrating."
         assert not list(root.glob("validation-*"))
 
 
