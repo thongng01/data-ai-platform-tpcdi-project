@@ -233,6 +233,7 @@ The owner chose to generate factor 100 without validation after the factor 5 eig
 | Command GNU wall seconds | 22,002 (6:06:42) |
 | Activity seconds | 11,176.84 |
 | Prospect seconds | 827.11 |
+| Export seconds | 9,279.05 |
 | Offline bytes | 107,802,971,676 |
 | Offline records | 1,435,879,496 |
 | Stream bytes | 35,057,703,937 |
@@ -240,7 +241,7 @@ The owner chose to generate factor 100 without validation after the factor 5 eig
 | Sampled peak tree RSS | 10.21 GiB |
 | Sampled peak run disk | 355.50 GiB (289.41 GiB temporary; final dataset 133.16 GiB) |
 
-Acceptance passes: exit 0, published status `generated-unvalidated`, independent rehash and recount of all 18,051 source files with expected coverage, no guard failure, and an unchanged source freeze. Offline bytes exceed the 100,000,000,000-byte rubric minimum and the 101,283,651,772-byte projection by 6,519,319,904 bytes. During export, Polars warned that it reached 512 blocking threads; a read-only observation showed continued CPU and disk activity, and the command completed. The runner's own supervisor used at least 10,907 CPU seconds, close to the whole gap between command CPU and phase CPU; its two-second partial-directory walk is the likely main cost and remains a deferred cleanup.
+Acceptance passes: exit 0, published status `generated-unvalidated`, independent rehash and recount of all 18,051 source files with expected coverage, no guard failure, and an unchanged source freeze. Offline bytes exceed the 100,000,000,000-byte rubric minimum and the 101,283,651,772-byte projection by 6,519,319,904 bytes. Export takes 9,279 seconds, above the earlier planning estimate of about 5,790 seconds, which makes it the second-largest phase at this scale. During export, Polars warned that it reached 512 blocking threads; a read-only observation showed continued CPU and disk activity, and the command completed. The runner's own supervisor used at least 10,907 CPU seconds, close to the whole gap between command CPU and phase CPU; its two-second partial-directory walk is the likely main cost and remains a deferred cleanup.
 
 The summary-rate screen across factors 1, 5, and 100 raises four predeclared flags, none of them a correctness failure. Stream bytes per unit rise 3.44% because records per unit rise 0.85% and bytes per record rise 2.57%, consistent with longer cash and account identifiers at the larger scale. The two trade-intensity flags move with the profile-weighted configured trade intensity (+1.33%), consistent with the realized profile mix of a large population settling closer to the configured shares than the smaller factors do. The daily version 1 Trade share rises because its rows per unit grow 2.57% against 1.03% for all Trade rows; summary data alone does not establish the period-mix cause. These are interpretations of saved summaries, not new measurements. The dataset can be validated later with `run --resume` at four workers under the 14 GiB guard.
 
