@@ -13,6 +13,15 @@ Run commands from the repository root on Linux with Python 3.14. Preflight and h
 .venv/bin/python -m data.data_source.publisher check local/runs/small
 ```
 
+`check` accepts a `generated-unvalidated` dataset only with the explicit override:
+
+```bash
+.venv/bin/python -m data.data_source.publisher check \
+  local/runs/factor100 --allow-unvalidated
+```
+
+Use the same flag with `publish` to deliver an unvalidated dataset. The override keeps all publisher preflight checks and does not change the dataset's validation status.
+
 Install network adapters in a separate environment. This keeps publisher dependencies separate from generator dependencies:
 
 ```bash

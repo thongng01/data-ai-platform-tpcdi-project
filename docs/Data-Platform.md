@@ -73,8 +73,8 @@ The generator simulates one retail brokerage day by day. Each account receives a
 | Daily delivery period | 2019-01-01 to 2025-12-31: 2,557 daily deliveries and 1,760 trading days | Chosen calendar; NYSE holiday calendar |
 | Run parameters | `initial_start`, `initial_end`, `daily_start`, `daily_end`: four inclusive UTC dates, with `daily_start` exactly one day after `initial_end` | Run contract; invalid or nonadjacent periods are rejected |
 | Clock | UTC without daylight saving time; NYSE holidays apply to dates; trading uses local NYSE session hours on the UTC clock | Deliberate timing simplification |
-| Reference volume | About 28.5 GB in the initial load and 72.8 GB in daily offline files at factor 100, or 101.3 GB overall; daily offline files rise from about 8 GB in 2019 to 13 GB in 2025 | Linear estimate from measured factor 1 bytes, not measured factor 100 output |
-| Stream volume | About 34 GB of streamed cash transactions at factor 100, separate from offline volume | Linear estimate, not part of the 100 GB offline requirement |
+| Offline volume | 107.8 GB at factor 100 over the reference calendar | Measured offline source files |
+| Stream volume | 35.1 GB of saved cash transaction messages at factor 100 | Measured separately from offline files |
 
 The trading-day counts include the unscheduled NYSE closures on 2018-12-05 and 2025-01-09. Every calendar date has a daily delivery, including weekends and holidays. A zero-record file means no activity; a missing expected file means an incomplete delivery. The initial `Prospect.csv` snapshot represents `initial_end`.
 
@@ -98,7 +98,7 @@ The byte columns summarize rounded factor 1 measurements and linear estimates at
 
 These estimates do not establish runtime. Calibration uses a full-reference-calendar factor 1 run and subtracts measured fixed-family bytes from its offline total. Fixed families are `DailyMarket`, FINWIRE, and the six reference files; HR scales with the firm. The remainder estimates variable bytes per unit. The new anchor is `old_customers_per_unit * 1,000,000,000 / variable_offline_bytes`, rounded with decimal half-up rounding. A second factor 1 run checks that anchor with the market, behavior settings, and seed unchanged.
 
-The factor 1 slope is provisional: projecting it to factor 5 is not a measurement at factor 5. Population sampling and staffing rounding can change scaling. The full-calendar large run must measure at least 100 GB of offline source files for rubric row `r5`; a factor 100 projection does not satisfy that requirement. If factor 100 falls short, a higher factor supplies the required volume. Stream bytes are counted separately.
+Population sampling, staffing rounding, and identifier widths can change byte scaling. The measured factor 100 dataset meets the 100 GB offline requirement in rubric row `r5`. Stream bytes count separately. The measured totals appear below.
 
 Generation size and processed workload are separate. The large dataset is generated once. Each environment processes the largest factor it handles well, and each experiment processes only the dates and volume needed to show its effect. A typical experiment uses the initial load and some daily deliveries. Larger firms use the same partitioned processing principles. Unmeasured capacity projections are not established limits. Local service groups and resource limits are in [Infrastructure](IaC.md#2-development-environment).
 
@@ -202,21 +202,31 @@ These are factor 100 expectations, not measured results. Counts and activity vol
 
 #### Measured Full-Calendar Runs
 
-These factor 1 measurements use the full reference calendar, seed `20261029`, two workers, two Polars threads per worker, 1,250 companies, and 2,000 securities. The saved files pass full validation. The customer anchor is a planning input; the cutover counts below are realized observations.
+These measurements use the full reference calendar, seed `20261029`, two Polars threads per worker, 1,250 companies, and 2,000 securities. The two factor 1 calibration runs use two workers and pass full saved-file validation. The customer anchor is a planning input; the cutover counts are realized observations.
 
-| Measurement | Customers per unit | Cutover customers | Cutover accounts | Offline bytes | Stream bytes | Generation seconds | Validation seconds |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Calibration input | 3,300 | 3,278 | 5,488 | 1,346,693,500 | 307,655,539 | | |
-| Calibrated volume | 3,601 | 3,597 | 6,028 | 1,438,704,592 | 339,074,412 | | |
-| Runtime | 3,601 | 3,597 | 6,028 | 1,438,704,592 | 339,074,412 | 470.48 | 831.70 |
+| Calibration measurement | Customers per unit | Cutover customers | Cutover accounts | Offline bytes | Stream bytes |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Calibration input | 3,300 | 3,278 | 5,488 | 1,346,693,500 | 307,655,539 |
+| Calibrated volume | 3,601 | 3,597 | 6,028 | 1,438,704,592 | 339,074,412 |
 
-The runtime measurement covers the calibrated source bytes, audit records, and ordered typed hidden records. Its command takes 1,304.80 seconds including validation. This single run does not establish larger-factor throughput.
+The runtime measurements use 3,601 customers per unit and groups of 1,024 customers. Command seconds include supervision and the selected validation work.
 
-All runs contain 430,169,772 fixed offline bytes. The first contains 916,523,728 variable offline bytes; the calibrated run contains 1,008,534,820, or 0.853482% above the one-GB variable target. At the default anchor, combined initial and streamed cash transactions are 69.189662% settlements, 16.302305% deposits, 8.572914% dividends, and 5.935119% withdrawals. Four fixed security-selection slots per account allow repeated buys in the same small universe; the dividend-paying share remains 40%.
+| Measure | Factor 1 | Factor 5 | Factor 100 |
+| --- | ---: | ---: | ---: |
+| Workers | 4 | 8 | 8 |
+| Dataset status | `validated` | `validated` | `generated-unvalidated` |
+| Command seconds | 558.29 | 1,985.07 | 22,002 |
+| Validation seconds | 325.02 | 988.61 | Not run |
+| Offline bytes | 1,438,704,592 | 5,568,776,184 | 107,802,971,676 |
+| Stream bytes | 339,074,412 | 1,694,595,301 | 35,057,703,937 |
+
+Factors 1 and 5 pass full saved-file validation. Factor 100 was generated without saved-file validation. It contains 1,435,879,496 offline records and 240,015,825 saved stream messages. The [generator guide](../data/data_source/generator/README.md#full-calendar-measurements) gives phase and resource measurements.
+
+Both calibration runs contain 430,169,772 fixed offline bytes. The first contains 916,523,728 variable offline bytes; the calibrated run contains 1,008,534,820, or 0.853482% above the one-GB variable target. At the default anchor, combined initial and streamed cash transactions are 69.189662% settlements, 16.302305% deposits, 8.572914% dividends, and 5.935119% withdrawals. Four fixed security-selection slots per account allow repeated buys in the same small universe; the dividend-paying share remains 40%.
 
 The calibrated annual account-closure rate is 2.925087%, customer inactivation is 2.027576%, and confirmed look-alikes are 2.021389%. Candidates receive no closure immunity. Of 2,369 actual closed accounts, 1,891 have matched final warning plans (79.82271%). These plans schedule 7 to 56 warning days, with a median of 30; scheduled steps do not prove that sales occurred when an account held no assets. Outflow candidates, unlike warning-plan counts, require an executed sale and a positive withdrawal.
 
-On 512 sampled accounts with chronological splits and 30-day label gaps, the calibrated signal model's test average precision is 0.228498, compared with 0.005527 for the outflow rule. The rule's precision is 0.9052%. This measures the synthetic signal check, not downstream model quality. The [generator guide](../data/data_source/generator/README.md#full-calendar-measurements) gives resource measurements.
+On 512 sampled accounts with chronological splits and 30-day label gaps, the calibrated signal model's test average precision is 0.228498, compared with 0.005527 for the outflow rule. The rule's precision is 0.9052%. This measures the synthetic signal check, not downstream model quality.
 
 ### Generation Stage 2: Attrition Signal
 
@@ -250,7 +260,7 @@ The source recording stage writes TPC-DI formats and data errors. It changes rec
 
 The five data errors use independent stable draws and can occur together in one record. Customer errors apply to initial CMS XML and daily customer rows; rating errors apply to FINWIRE company records. Fee errors apply only to completed trades. The recorder keeps correct business values separate from recorded fields, so settlements and hidden state remain correct.
 
-The local `summary/data_errors.jsonl` audit stores each source identity, field, correct value, and recorded value. It stays outside source delivery and ingestion. Generator parser workers read separate copies of the sparse audit, recompute error selection, verify exact evidence, and restore only verified values for business replay. The coordinator combines consumed keys in source-file order, rejects repeated consumption across files, sums error measurements exactly, and requires complete audit consumption. Missing, duplicate, unused, or mismatched evidence fails validation; enabling an error rate does not authorize arbitrary corruption.
+The local `summary/data_errors.jsonl` audit stores each source identity, field, correct value, and recorded value. It stays outside source delivery and ingestion. Each generator parser receives only the audit slice for its source file, recomputes error selection, verifies exact evidence, and restores only verified values for business replay. The ordered FINWIRE parser receives only company-rating evidence. The coordinator combines consumed keys in source-file order, rejects repeated consumption across files, sums error measurements exactly, and requires complete audit consumption. Missing, duplicate, unused, or mismatched evidence fails validation; enabling an error rate does not authorize arbitrary corruption.
 
 Each audit key combines source, day, identity, and field. Daily Customer identity uses `C_ID`, `C_ST_ID`, and `CDC_FLAG`, which separates a same-day insert from an active update. CustomerMgmt identity uses `C_ID`, `ActionType`, and `ActionTS`, plus the XML Account element's `CA_ID` for `ADDACCT`, `UPDACCT`, and `CLOSEACCT`. Completed Trade identity uses `T_ID`, `T_DTS`, and `T_ST_ID`; company identity uses `CIK` and `PTS`. These unchanged source fields let validation derive each identity from saved records alone. Selection draws still use the entity, date, and action kind or status, so related records can receive an error together while retaining separate audit entries.
 
@@ -292,9 +302,10 @@ Evidence comes from measured runs, not the configured rates alone. The publisher
 - **Bounded memory**: NumPy arrays hold mutable account state and select daily activity over bounded customer groups. Due-day and account indexes select watch and order changes without daily Python scans of all live state. Up to four business workers take groups of up to 1,024 customers by default; the supported worker limit is eight. Polars builds export batches, hidden-state files, and validation queries. The default 8 GiB process-tree budget covers the supervisor, coordinator, worker processes, and their business state. Ordered execution preserves spending and settlement rules.
 - **Repeatability**: IDs and random draws use stable entity keys and named seeds, not chunk size or worker count. The same semantic settings, seeds, and generator version produce the same source bytes.
 - **Ordered exports**: Buffer typed records for all source families, seal group-owned Parquet parts, and use native Polars ordering with disk spill. Format and check bounded contract batches before delivery-file writes. Preserve event order, global cash transaction IDs, and file-local CDC sequences across groups without collecting the entire dataset into one frame.
-- **Validation and publication**: `run` performs full saved-file validation by default and publishes the final directory only after it passes. The explicit `--skip-validation` flag keeps generation-time contract, ordering, coverage, count, and hash checks, then publishes with `status: generated-unvalidated` in the manifest and summary. This command choice does not change dataset identity. `validate` checks saved bytes without regeneration and records `status: validated` after success. The publisher refuses unvalidated datasets unless `--allow-unvalidated` explicitly permits them; its delivery report records that override.
-- **Checkpoints and resume**: Completed reference, market, population, customer-group, prospect, coordinator, export, and validation steps bind to implementation file hashes and the exact semantic and intermediate-layout configuration. `run --resume <partial path>` reuses matching completed work and refuses changed code, semantic settings, `customer_group_size`, or `export_rows`. Group markers commit last. Incomplete groups restart from immutable planned population rows. Export retry removes only final source trees and the local audit before rebuilding them from sealed parts. A completed export needs only validation. Failed runs retain partial evidence; final unvalidated datasets can also resume validation.
-- **Run budgets**: RSS, disk, process-count, and timeout guards apply to each attempt, including resume. The timeout stays a per-run configuration setting and defaults to 7,200 seconds. Users set it above the expected command runtime, including validation; the estimate of more than 10 hours for factor 100 exceeds that default.
+- **Saved-file validation**: FINWIRE parses first because later checks need its security versions. Independent files parse in parallel with cached conversion plans and file-specific audit slices. The coordinator checks global boundaries in source-file order. One streaming market-price join supplies trade low and high prices. Customer replay finishes before account replay starts. Replay targets 16 MiB of source bytes per partition, up to a prime ceiling of 1,021 partitions.
+- **Validation and publication**: `run` validates saved files before publishing the final directory. `--skip-validation` keeps export checks and publishes with `status: generated-unvalidated` in the manifest and summary. This flag does not change dataset identity. `validate` checks saved bytes without regeneration and records `status: validated` after success. The publisher requires `--allow-unvalidated` to deliver an unvalidated dataset and records that override.
+- **Checkpoints and resume**: `run --resume` reuses completed steps only when implementation hashes, semantic settings, `customer_group_size`, and `export_rows` match. Worker count, thread count, resource budgets, and the ignored `merge_fan_in` setting can change. Incomplete groups restart from saved population plans; an incomplete export rebuilds from sealed parts. Resume accepts a retained partial directory or a final `generated-unvalidated` dataset. It requires successful validation and does not accept `--skip-validation`.
+- **Run budgets**: RSS, disk, process-count, and timeout guards apply to each supervised run attempt, including resume. Defaults are 8,192 MiB RSS, 65,536 MiB disk, and 43,200 seconds. The factor 100 measurement uses 14 GiB RSS, 700 GiB disk, and 24 hours. Standalone `validate` does not use runner guards.
 - **Separate reports**: The local generator summary records settings, validation status, per-file bytes and rows, hidden state, data errors, and measured characteristics. Ingestion never reads it. The publisher writes a separate delivery report.
 - **Problem measurement**: Count emitted duplicates directly. If each original has `r` extra copies on average, the duplicate share among emitted rows is `r / (1 + r)`.
 

@@ -224,7 +224,7 @@ Each feature has one definition and one producer. Features have a business time 
 In `CustomerMgmt.xml`, updates are partial and contextual:
 - An **omitted** property retains its existing value.
 - An **explicitly empty** element (for example `<C_M_NAME/>`) sets the value to `NULL`.
-- One action can create or change several accounts of its customer.
+- `NEW` can create several accounts for one customer. `INACT` closes all of the customer's active accounts. Each `ADDACCT`, `UPDACCT`, or `CLOSEACCT` action contains exactly one account.
 - `INACT` and `CLOSEACCT` add a version with `Status = 'INACTIVE'`. Nothing is deleted, and the new version is current (`IsCurrent = 1`).
 
 ### Trade Lifecycle Updates
@@ -521,16 +521,12 @@ Fixed-width, used in the initial load and in daily deliveries on release dates. 
 
 **CMP** (Company, 543 characters)
 
-```text
-19670101-154842CMPkkhSvCsfgbDUvsiZWtPQwjkYPwKrfTUFMGMCWCBXBcOcTkaLSudO        0000000000ACTVDRA   1886072219918 Rogers North                                                                                                                                              35233       Long Beach               NC                  United States of AmericaEllebracht                                     CUpESkLIQ LBcTnhDEOCLVhfDjOopGKRBxRYGboIrPFcDxMSGkskSwAJdAPWSAPTf T
-```
-
 | Field | Type | Restrictions | Description |
 | --- | --- | --- | --- |
 | `PTS` | `CHAR(15)` | Not empty | Posting date & time as YYYYMMDD-HHMMSS |
 | `RecType` | `CHAR(3)` | Not empty | “CMP” |
 | `CompanyName` | `CHAR(60)` | Not empty | Name of the company |
-| `CIK` | `CHAR(10)` | Not empty | Company identification code from SEC |
+| `CIK` | `CHAR(10)` | Not empty; digits only | Company identification code from SEC |
 | `Status` | `CHAR(4)` | Not empty | ‘ACTV’ for Active company, ‘INAC’ for inactive |
 | `IndustryID` | `CHAR(2)` | Not empty | Code for industry segment |
 | `SPrating` | `CHAR(4)` | Not empty | S&P rating |
@@ -545,10 +541,6 @@ Fixed-width, used in the initial load and in daily deliveries on release dates. 
 | `Description` | `CHAR(150)` | Not empty | Description of the company |
 
 **SEC** (Security, 170 characters with a numeric CIK)
-
-```text
-19670427-161251SECAAAAAAAAAAAAAAACOMMONACTVDiIPnSJHqplAHTPKTGIhStBRNgEpVZYuRSRDlerURQYDcFPMaJ                    NASDAQ652346051    1905061019660302        1.850000000005
-```
 
 | Field | Type | Restrictions | Description |
 | --- | --- | --- | --- |
@@ -566,10 +558,6 @@ Fixed-width, used in the initial load and in daily deliveries on release dates. 
 | `CoNameOrCIK` | `CHAR(10)` | Not empty; digits only | Company CIK number |
 
 **FIN** (Financial, 196 characters with a numeric CIK)
-
-```text
-19670401-063705FIN196721967040119670401    9288741181.53    2284183075.45       13.18       12.44        0.25     805819257.50  135871569610.30    4339544932.47    173262702    1836200100000000068
-```
 
 | Field | Type | Restrictions | Description |
 | --- | --- | --- | --- |

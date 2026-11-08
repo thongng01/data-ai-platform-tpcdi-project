@@ -21,7 +21,7 @@ The code is grouped into four platform pillars. The source department has separa
 ├── data/                  # Layer 1: Data platform
 │   ├── data_source/       # Simulated source department
 │   │   ├── generator/     # Business behavior, attrition signal, source recording
-│   │   └── publisher/     # File and event delivery
+│   │   └── publisher/     # File and cash transaction delivery
 │   ├── spark/             # DP1, Silver, and PostgreSQL loads
 │   ├── dbt/               # PostgreSQL Gold models
 │   ├── flink/             # Cash transaction stream processing
@@ -176,11 +176,11 @@ The [data specification](docs/Data-Specification.md) owns Gold relationships and
 The generator simulates a mid-size firm day by day. Four generation stages separate business behavior, hidden attrition signal, source recording, and delivery. The generator runs the first three; the publisher runs delivery.
 
 - **Scale factor**: Factor 100 sets an expected cutover anchor of 360,100 customers and about 601,367 accounts, with about 8% annual net account growth. Realized counts vary. One unit targets 1 GB of variable offline files over the full reference calendar, with fixed bytes additional. Market and reference data remain fixed; dates are separate settings.
-- **Volume**: Generate the large dataset once and measure at least 100 GB of offline source files. The separate factor 100 cash transaction stream is estimated at 33.9 GB from measured calibrated factor 1 bytes; factor 100 is not a measured result. Each experiment processes only the scale factor and dates needed to show its effect.
+- **Volume**: The factor 100 dataset measures 107,802,971,676 offline source bytes and meets the 100 GB requirement. Its 35,057,703,937 bytes of saved cash transaction messages count separately. This dataset was generated without saved-file validation. Each experiment processes only the scale factor and dates needed to show its effect.
 - **Behavior**: Five hidden behavior profiles and hidden wealth levels produce trading and cash-flow patterns. Completed trades reconcile with cash transactions and holdings. About 20% of accounts use margin; no account sells securities it does not hold.
 - **Attrition**: About 3% of accounts close annually. Most closures follow a hidden 1 to 8 week leaving period; look-alike outflows keep a simple rule from solving the task alone.
 - **Source problems**: Data errors stay separate from skew and from the added `T_CHANNEL` schema change, effective 2019-07-01 by default.
-- **Delivery**: The `clean` publisher profile comes first. The `realistic` profile adds retried extract blocks, corrected and late files, and late and duplicate stream messages without regenerating business data.
+- **Delivery**: The `clean` publisher profile delivers saved files and messages without adding delivery problems. The `realistic` profile adds retried extract blocks, corrected and late files, and late and duplicate stream messages without regenerating business data.
 - **Measurement**: The local generator summary records settings, output counts, hidden state, and measured characteristics. A separate publisher report records delivery problems. Ingestion reads neither report.
 
 The [generation design](docs/Data-Platform.md#2-data-generation-and-problem-injection) includes a causal chain, a worked example, parameter tables, measurement bases, expected results, and reference-generator corrections.
@@ -340,7 +340,7 @@ Before the first start, [create the private configuration files](docs/IaC.md#1-h
    (cd infra && docker compose --profile compute up -d spark-master spark-worker)
    ```
 
-5. Generate and validate source data. If `.venv` does not exist, create it with `uv venv --python 3.14 .venv`.
+5. Generate and validate source data in an unused output directory. If `.venv` does not exist, create it with `uv venv --python 3.14 .venv`.
 
    ```bash
    uv pip install --python .venv/bin/python -r data/data_source/generator/requirements.txt
@@ -349,4 +349,4 @@ Before the first start, [create the private configuration files](docs/IaC.md#1-h
    .venv/bin/python -m data.data_source.generator validate local/runs/small
    ```
 
-   The [generator guide](data/data_source/generator/README.md) explains the run settings, output paths, tests, and reference-calendar measurements. The [clean publisher guide](data/data_source/publisher/README.md) explains how to deliver saved files to `upstream` and replay cash transaction messages to Kafka. Only `offline/` files enter `upstream`; saved cash transaction messages remain separate from offline files.
+   `run` includes full saved-file validation. The separate `validate` command checks the saved files again without regeneration. The [generator guide](data/data_source/generator/README.md) explains the run settings, output paths, tests, and reference-calendar measurements. The [clean publisher guide](data/data_source/publisher/README.md) explains how to deliver saved files to `upstream` and replay cash transaction messages to Kafka. Only `offline/` files enter `upstream`; saved cash transaction messages remain separate from offline files.
