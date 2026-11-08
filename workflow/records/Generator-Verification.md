@@ -224,6 +224,26 @@ The owner asked for a validator review before more large runs. A Claude Opus 5.5
 
 **Factor 100 validation memory (estimate).** At 1,021 partitions the mean replay history is about 1.0 GiB per worker. Conditional tree RSS is about 5.4 to 5.9 GiB with four workers and 10.4 to 11.4 GiB with eight, with a stress case of 15.5 GiB at four workers if the factor 5 skew ratio persisted. If the owner later validates the factor 100 dataset, use `run --resume <dataset>` with four workers under the 14 GiB guard; a larger prime ceiling would need a shared customer-lifetime file first.
 
+### Factor 100 Generation Without Validation
+
+The owner chose to generate factor 100 without validation after the factor 5 eight-worker run passed the stricter validator. The run uses branch head `3094f04` (code `73020ab`, 32-file implementation digest `602a7a1d65094d007afb1470496e4f4cf27891aa720024ab9252fdbf4413e3c0`), the full calendar, eight workers, groups of 1,024 customers, two Polars threads, a 14 GiB RSS guard, a 700 GiB disk guard, and a 24-hour timeout, with `run --skip-validation`. Evidence: `local/tmp/generator-next/final/report.md` and `factor100-run/`; dataset `local/runs/generator-next/final/factor100`, status `generated-unvalidated`.
+
+| Measure | Factor 100 |
+| --- | ---: |
+| Command GNU wall seconds | 22,002 (6:06:42) |
+| Activity seconds | 11,176.84 |
+| Prospect seconds | 827.11 |
+| Offline bytes | 107,802,971,676 |
+| Offline records | 1,435,879,496 |
+| Stream bytes | 35,057,703,937 |
+| Stream records | 240,015,825 |
+| Sampled peak tree RSS | 10.21 GiB |
+| Sampled peak run disk | 355.50 GiB (289.41 GiB temporary; final dataset 133.16 GiB) |
+
+Acceptance passes: exit 0, published status `generated-unvalidated`, independent rehash and recount of all 18,051 source files with expected coverage, no guard failure, and an unchanged source freeze. Offline bytes exceed the 100,000,000,000-byte rubric minimum and the 101,283,651,772-byte projection by 6,519,319,904 bytes. During export, Polars warned that it reached 512 blocking threads; a read-only observation showed continued CPU and disk activity, and the command completed. The runner's own supervisor used at least 10,907 CPU seconds, close to the whole gap between command CPU and phase CPU; its two-second partial-directory walk is the likely main cost and remains a deferred cleanup.
+
+The summary-rate screen across factors 1, 5, and 100 raises four predeclared flags, none of them a correctness failure. Stream bytes per unit rise 3.44% because records per unit rise 0.85% and bytes per record rise 2.57%, consistent with longer cash and account identifiers at the larger scale. The two trade-intensity flags move with the profile-weighted configured trade intensity (+1.33%), consistent with the realized profile mix of a large population settling closer to the configured shares than the smaller factors do. The daily version 1 Trade share rises because its rows per unit grow 2.57% against 1.03% for all Trade rows; summary data alone does not establish the period-mix cause. These are interpretations of saved summaries, not new measurements. The dataset can be validated later with `run --resume` at four workers under the 14 GiB guard.
+
 ## Full-Calendar Factor 1 Runs
 
 Both runs use seed `20261029`, two workers, two Polars threads per worker, 1,250 companies, and 2,000 securities. Their configurations differ only in `customers_per_unit`: 3,300 for `factor1-3300-first` and 3,601 for `factor1-3601-calibrated`. The initial-load period is 2014-01-01 through 2018-12-31; daily delivery covers 2019-01-01 through 2025-12-31. Each runner completes generation and full validation before the final dataset rename.
