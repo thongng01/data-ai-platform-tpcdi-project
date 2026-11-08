@@ -1,6 +1,6 @@
 # Generator Verification
 
-This record covers the generator rebuild, clean publisher implementation, and measured factor 1 evidence on 2026-11-05. The [generator guide](../../data/data_source/generator/README.md) defines execution and controls. [Data Platform section 2](../../docs/Data-Platform.md#2-data-generation-and-problem-injection) holds the public workload estimates and measurements.
+This record covers the generator rebuild, clean publisher implementation, and measured factor 1 evidence (2026-11-05), the runtime work and validator review (2026-11-06 and 2026-11-07), and the factor 5 and factor 100 runs (2026-11-07). The [generator guide](../../data/data_source/generator/README.md) defines execution and controls. [Data Platform section 2](../../docs/Data-Platform.md#2-data-generation-and-problem-injection) holds the public workload estimates and measurements.
 
 ## Implementation and Checks
 
