@@ -190,7 +190,7 @@ Command time falls 50.19%. Sampled peak RSS is 2,360.77 MiB for the generator tr
 | Audit rows | 25,077 |
 | Sampled peak RSS with wrapper | about 2,736 MiB |
 
-Offline bytes are 1.75% above the planning projection of 5,472,843,872. Validation is 58% of the factor 5 command. From factor 1 to factor 5, activity grows 4.9 times, export 4.5 times, and validation 3.7 times. A linear extrapolation of these increments to factor 100 gives roughly 13 to 14 hours with validation, about 8 of them in validation; this is an inference, not a measurement, and the timeout would need a per-run value above that runtime (the default is 43,200 seconds after the resume work; it was 7,200 before).
+Offline bytes are 1.75% above the planning projection of 5,472,843,872. Validation is 58% of the factor 5 command. From factor 1 to factor 5, activity grows 4.9 times, export 4.5 times, and validation 3.7 times. A linear extrapolation of these increments to factor 100 gives roughly 13 to 14 hours with validation, about 8 of them in validation; this is an inference, not a measurement, and the timeout would need a per-run value above that runtime (the code default is 43,200 seconds; the measured runs used a saved setting of 7,200).
 
 **Open issue found during the key review.** Error-audit identities are not unique in two reachable cases: a daily `NEW` and a same-day `UPDCUST` for one customer, and several initial CMS account actions for one customer at one timestamp. The estimated chance that a run hits the first case is about 0.8% at factor 5 and 14.6% at factor 100. A collision fails the run rather than corrupting data. Evidence: `reachable-audit-tie.json` and `report.md` under `local/archive/generator-runtime-2026-11/runtime-work/final/`.
 
