@@ -69,6 +69,7 @@ Start with `runner.worker`, which calls the generation phases in order. Then rea
 | Pipeline position | Modules and main types | Responsibility |
 | --- | --- | --- |
 | Run contract and supervision | `__main__.py`, `config.py`, `runner.py`; `Config` | Parse commands, validate settings, supervise resources, and write reports |
+| Retained work | `checkpoints.py`; `Checkpoints` | Bind completed steps and sealed parts to code hashes, semantic settings, and intermediate layout before resume reuses them |
 | Initial references | `reference.py`, `personal_data.py` | Build static reference files and the HR roster from repeatable personal fields |
 | Shared market | `market.py`; `Market` | Build prices, exchange sessions, released FINWIRE values, and dividends |
 | Population plan | `population.py`; `Population` | Plan joining groups, account traits, replacement capacity, and expected risk normalization |
@@ -100,10 +101,10 @@ Configuration holds numbers and distribution choices. Source definitions hold fi
 | Data-error settings | Five independent rates, listed under Source Recording below |
 | `trade_channel_start` | First daily delivery date with `T_CHANNEL`; default `2019-07-01` |
 | Market settings | Companies, securities, prices, volatility, popularity, shock days, and dividend rules, independent of firm size |
-| `customer_group_size`, `workers`, `threads` | Customer group bound, up to eight business worker processes, and Polars thread count; defaults 1,024, 4, and 2 |
-| `export_rows` | Aggregate typed-record buffer and maximum delivered native batch rows |
-| `merge_fan_in` | Accepted for configuration compatibility; native export ignores this setting and reports its value |
-| Resource settings | Aggregate process-tree memory, disk, and elapsed-time budgets; memory defaults to 8,192 MiB |
+| `customer_group_size`, `workers`, `threads` | Customer group bound, worker processes for activity and validation, and Polars thread count; defaults 1,024, 4, and 2; `workers` accepts 1 through 8 |
+| `export_rows` | Aggregate typed-record buffer and maximum delivered native batch rows; default 8,192 |
+| `merge_fan_in` | Accepted from 2 through 64 for configuration compatibility, default 16; native export ignores this setting and reports its value |
+| `memory_limit_mb`, `disk_limit_mb`, `timeout_seconds` | Aggregate process-tree memory, dataset disk, and elapsed-time budgets; defaults 8,192 MiB, 65,536 MiB, and 43,200 seconds |
 
 The expected cutover customer count is `scale_factor * customers_per_unit`. With the default account shares, each customer has 1.67 accounts on average. Factor 1 therefore anchors about 3,601 customers and 6,014 accounts; factor 100 anchors about 360,100 customers and 601,367 accounts. These are planning expectations, not exact realized populations.
 
@@ -123,7 +124,7 @@ The defaults use four workers and 1,024 customers per group. A factor 1 measurem
 | 4 | 512 | 8 | 8.787 | 34.638 | 1,144.43 |
 | 8 | 512 | 8 | 8.126 | 61.743 | 2,012.98 |
 
-Four workers limit CPU and memory cost while retaining most of the measured wall-time benefit. The 1,024-customer group bound uses fewer groups than 512 without a material activity-time difference in this measurement. Eight workers remain available up to the configured limit. These bounded measurements do not establish larger-workload memory limits; the sampled 8 GiB process-tree guard remains active for every run.
+Four workers limit CPU and memory cost while retaining most of the measured wall-time benefit. The 1,024-customer group bound uses fewer groups than 512 without a material activity-time difference in this measurement. Eight workers remain available up to the configured limit. These bounded measurements do not establish larger-workload memory limits. Every run uses the configured process-tree guard; its default is 8 GiB.
 
 Customer-update and watch-count draws use arrays with the same named keys as scalar draws. The simulation visits customers only when an update, watch addition, due cancellation, or lifetime action can occur. Due-day indexes select watch cancellations and newly due orders. Account indexes select orders for leaving and liquidation. Unfilled due orders remain eligible on later trading days because the day's price range can permit execution.
 
@@ -148,9 +149,9 @@ Resume a retained run with its saved configuration, or supply `--config` to chan
 
 Each completed step binds its result to `_checkpoints/context.json` through a SHA-256 context digest. That file records implementation file hashes, semantic configuration, `customer_group_size`, and `export_rows`. Resume refuses a changed code version, semantic configuration, or intermediate layout before it changes files. Worker count, thread count, resource budgets, and the ignored `merge_fan_in` setting can change. Reference records, market arrays, the population plan, each customer group, prospects, the coordinator part, export, and validation have completion receipts. Group receipts retain business counts and commit last, after actual lifetimes, hidden records, and sealed source files. Incomplete groups restart from immutable planned population rows, not partly changed lifetimes.
 
-Resume keeps completed steps and redoes incomplete steps. If export did not complete, it deletes `offline/`, `stream/`, and `summary/data_errors.jsonl` before exporting all sealed parts again. It keeps hidden records and sealed parts. If export completed but validation failed, resume runs only validation. `run --resume <dataset>` also validates a final `generated-unvalidated` dataset without its temporary files. Resume always performs full validation and does not accept `--skip-validation`. Run only one command against a retained directory at a time.
+Resume keeps completed steps and redoes incomplete steps. If export did not complete, it deletes `offline/`, `stream/`, and `summary/data_errors.jsonl` before exporting all sealed parts again. It keeps hidden records and sealed parts. If export completed but validation failed, resume runs only validation. It can also reuse a matching completed validation receipt. `run --resume <dataset>` validates a final `generated-unvalidated` dataset without its temporary files. Resume requires successful full validation and does not accept `--skip-validation`. Run only one command against a retained directory at a time.
 
-`timeout_seconds` defaults to 7,200 seconds and applies separately to each run attempt, including validation. Keep it in the run configuration because workload size and machine speed determine the needed budget. A factor 100 full-calendar run is estimated to need more than 10 hours; set a budget above that estimate before starting it. This estimate is not a measured factor 100 runtime.
+`timeout_seconds` defaults to 43,200 seconds and applies separately to each supervised run attempt, including validation. `run --resume` applies the configured resource guards to validation; standalone `validate` does not.
 
 ## One Simulated Day
 
@@ -206,7 +207,7 @@ Each audit key contains source, day, identity, and field. The identity uses only
 
 | Audited source | Identity fields | Why records stay distinct |
 | --- | --- | --- |
-| Daily Customer | `C_ID`, `C_ST_ID`, `CDC_FLAG` | The insert uses `I`; an active update uses `U`; inactivation uses `INAC`. Each customer has at most one active update per day. |
+| Daily Customer | `C_ID`, `C_ST_ID`, `CDC_FLAG` | Status and flag pairs distinguish insert (`ACTV`, `I`), active update (`ACTV`, `U`), and inactivation (`INAC`, `U`). Each customer has at most one active update per day. |
 | CustomerMgmt | `C_ID`, `ActionType`, `ActionTS`; also `CA_ID` for `ADDACCT`, `UPDACCT`, and `CLOSEACCT` | Each account-specific action contains one Account element. The other actions occur at most once per customer and timestamp. |
 | Completed Trade | `T_ID`, `T_DTS`, `T_ST_ID` | Each unique trade completes once. |
 | FINWIRE company | `CIK`, `PTS` | Each company appears once per posting. |
@@ -259,7 +260,7 @@ Named random keys include entity identity, date, purpose, and local ordinal. The
 
 `output_policy.py` keeps the Cash and Trade exceptions together: cash name expansion and checks, global cash IDs, daily cash JSON, and the dated Trade channel contract. `formats.trade_channel_day` owns the channel start date used by recording and contract selection. `money.py` owns scalar and native integer-cent text formatting; validation keeps its own parsing.
 
-Each bounded contract batch undergoes native formatting and field checks before it splits into delivery files. Cash IDs continue across cutover; CDC sequences restart within each file. The publisher returns the source inventory and separate audit receipt to `Generation`. Writers measure rows, bytes, and SHA-256 hashes as they write. Native spill settings stay inside `output.py`; the runner installs them before it starts workers. Spill budgets and sampled process-tree guards do not constitute a hard RAM limit. Population arrays and business state also consume memory.
+Each bounded contract batch undergoes native formatting and field checks before it splits into delivery files. Cash IDs continue across cutover; CDC sequences restart within each file. `SourcePublisher` returns the source inventory and separate audit receipt to `Generation`. Writers measure rows, bytes, and SHA-256 hashes as they write. Native spill settings stay inside `output.py`; the runner installs them before it starts workers. Spill budgets and sampled process-tree guards do not constitute a hard RAM limit. Population arrays and business state also consume memory.
 
 The semantic dataset identity includes business settings, seed, format version, source definitions, word lists, and calendar fingerprint. The manifest also records implementation hashes and dependency versions.
 
@@ -300,15 +301,31 @@ Phase times cover references, market, population, activity, prospects, final exp
 
 ### Full-Calendar Measurements
 
-These runs cover generation stages 1 to 3 over 2014-01-01 through 2025-12-31, with two workers, two Polars threads per worker, seed `20261029`, 1,250 companies, and 2,000 securities. Each run passes full saved-file validation. Generation seconds sum the measured phases before validation; peak RSS covers the supervisor and all descendants. Disk sampling occurs every two seconds, so temporary storage is a sampled peak.
+These measurements cover generation stages 1 to 3 over the reference calendar, 2014-01-01 through 2025-12-31, with seed `20261029`, two Polars threads per worker, 1,250 companies, and 2,000 securities. The two calibration runs use two workers and pass full saved-file validation. The cutover counts are realized populations, not the configured anchors.
 
-| Measurement | Factor | Customers per unit | Cutover customers | Cutover accounts | Offline bytes | Stream bytes | Generation seconds | Validation seconds | Peak RSS MiB | Peak temporary GiB |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Calibration input | 1 | 3,300 | 3,278 | 5,488 | 1,346,693,500 | 307,655,539 | | | | |
-| Calibrated volume | 1 | 3,601 | 3,597 | 6,028 | 1,438,704,592 | 339,074,412 | | | | |
-| Runtime | 1 | 3,601 | 3,597 | 6,028 | 1,438,704,592 | 339,074,412 | 470.48 | 831.70 | 1,774.40 | 3.463 |
+| Calibration measurement | Customers per unit | Cutover customers | Cutover accounts | Offline bytes | Stream bytes |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Calibration input | 3,300 | 3,278 | 5,488 | 1,346,693,500 | 307,655,539 |
+| Calibrated volume | 3,601 | 3,597 | 6,028 | 1,438,704,592 | 339,074,412 |
 
-The runtime measurement covers all 18,051 source files, 5,574 audit rows, and eight ordered typed hidden files. Its full command takes 1,304.80 seconds, including validation. This single run does not establish larger-factor throughput. The RSS column covers the generator supervisor and descendants; including the separate measurement wrapper raises the sampled peak to 1,909.45 MiB.
+The runtime measurements use 3,601 customers per unit and groups of 1,024 customers. Command time includes supervision and the selected validation work.
+
+| Measure | Factor 1 | Factor 5 | Factor 100 |
+| --- | ---: | ---: | ---: |
+| Workers | 4 | 8 | 8 |
+| Dataset status | `validated` | `validated` | `generated-unvalidated` |
+| Command seconds | 558.29 | 1,985.07 | 22,002 |
+| Activity seconds | 139.43 | 614.23 | 11,176.84 |
+| Export seconds | 66.07 | 293.88 | 9,279.05 |
+| Validation seconds | 325.02 | 988.61 | Not run |
+| Offline bytes | 1,438,704,592 | 5,568,776,184 | 107,802,971,676 |
+| Offline records | 21,078,293 | 77,852,914 | 1,435,879,496 |
+| Stream bytes | 339,074,412 | 1,694,595,301 | 35,057,703,937 |
+| Stream messages | 2,409,943 | 11,900,035 | 240,015,825 |
+
+Each runtime run contains 18,051 source files. Factors 1 and 5 pass full saved-file validation. Factor 100 was generated without saved-file validation.
+
+The factor 5 and factor 100 runs use a 14 GiB RSS guard, a 700 GiB disk guard, and a 24-hour timeout. Factor 5 reaches 4.48 GiB sampled peak process-tree RSS and 18.28 GiB peak run disk. Factor 100 reaches 10.21 GiB RSS and 355.50 GiB run disk, including 289.41 GiB of temporary files. Its final dataset occupies 133.16 GiB. RSS covers the generator supervisor and descendants; disk peaks use two-second samples.
 
 ### Volume Calibration
 
@@ -321,6 +338,6 @@ One unit targets 1,000,000,000 variable offline bytes over the full reference ca
 
 At the default anchor of 3,601 customers per unit, factor 1 measures 1,008,534,820 variable offline bytes, 0.853482% above the target, plus 430,169,772 fixed bytes. The realized cutover population is 3,597 customers and 6,028 accounts, separate from the expected anchor.
 
-The projection at factor `s` is `F + s * V`, using that measured variable slope rather than forcing it to one GB. At factor 100, this estimates 101,283,651,772 offline bytes and 33,907,441,200 stream bytes. It does not measure factor 5 or establish factor 100 throughput. Population sampling and staffing rounding can change scaling. Do not change activity rates, duplicate rows, or change market size to force a byte total.
+The planning projection at factor `s` is `F + s * V`, using that measured variable slope rather than forcing it to one GB. At factor 100, it estimates 101,283,651,772 offline bytes and 33,907,441,200 stream bytes. These estimates are separate from the measured totals above. Population sampling, staffing rounding, and identifier widths can change byte scaling. Do not change activity rates, duplicate rows, or change market size to force a byte total.
 
-The large-dataset evidence requires at least 100,000,000,000 measured offline source bytes. Stream messages, reports, hidden files, and temporary files do not count toward that requirement. A projection does not satisfy it.
+Factor 100's measured 107,802,971,676 offline bytes exceed the 100,000,000,000-byte requirement. Stream messages, reports, hidden files, and temporary files do not count toward it.

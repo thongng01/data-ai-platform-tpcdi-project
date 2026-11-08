@@ -140,10 +140,13 @@ This section records the engineering criteria, decisions, and rejected alternati
 
 ## 6. Verification Commands and Reuse
 
-Run the documentation, diagram, and generator checks from the repository root in WSL:
+Run the documentation, diagram, and generator checks from the repository root in WSL. Choose an unused generator output directory. `run` includes full saved-file validation; `validate` checks the saved bytes again without regeneration.
+
+`mkdir -p` prepares the parent directory. Pytest recreates `local/tmp/pytest-generator`.
 
 ```bash
 .venv/bin/python workflow/tools/check_docs.py
+mkdir -p local/tmp
 .venv/bin/python -m pytest data/data_source/generator/tests -q --basetemp=local/tmp/pytest-generator
 .venv/bin/python -m data.data_source.generator run --config data/data_source/generator/configs/small.yaml --output local/runs/small
 .venv/bin/python -m data.data_source.generator validate local/runs/small
