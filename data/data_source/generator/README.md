@@ -17,8 +17,8 @@ Each new run needs a new output directory. The small configuration covers `2018-
 ```bash
 .venv/bin/python -m data.data_source.generator run \
   --config data/data_source/generator/configs/small.yaml \
-  --output local/runs/small
-.venv/bin/python -m data.data_source.generator validate local/runs/small
+  --output local/data_source_generation/small
+.venv/bin/python -m data.data_source.generator validate local/data_source_generation/small
 .venv/bin/python -m pytest data/data_source/generator/tests -q
 ```
 
@@ -27,8 +27,8 @@ Each new run needs a new output directory. The small configuration covers `2018-
 ```bash
 .venv/bin/python -m data.data_source.generator run \
   --config data/data_source/generator/configs/small.yaml \
-  --output local/runs/small-unvalidated --skip-validation
-.venv/bin/python -m data.data_source.generator validate local/runs/small-unvalidated
+  --output local/data_source_generation/small-unvalidated --skip-validation
+.venv/bin/python -m data.data_source.generator validate local/data_source_generation/small-unvalidated
 ```
 
 `validate` reads the saved dataset without regeneration and records `status: validated` in both reports only after every check passes. The publisher refuses `generated-unvalidated` datasets unless the caller supplies `--allow-unvalidated`; its delivery report records that override.
@@ -38,16 +38,16 @@ To check repeatability, run the same business configuration into another directo
 ```bash
 .venv/bin/python -m data.data_source.generator run \
   --config data/data_source/generator/configs/small.yaml \
-  --output local/runs/small-repeat
+  --output local/data_source_generation/small-repeat
 .venv/bin/python -m data.data_source.generator compare \
-  local/runs/small local/runs/small-repeat
+  local/data_source_generation/small local/data_source_generation/small-repeat
 ```
 
 To check the attrition signal on a small account sample from a validated run:
 
 ```bash
 .venv/bin/python -m data.data_source.generator signal-check \
-  local/runs/small --sample-accounts 512
+  local/data_source_generation/small --sample-accounts 512
 ```
 
 The check builds features from observed account status and cash transactions, not hidden plans. It labels closures in the following 30 days and uses chronological training, validation, and test periods with 30-day label gaps. A short run can return `insufficient_data` because every split needs fully observed labels and both closures and nonclosures. That result does not establish signal quality. The check writes `summary/signal_check.json` and saves observations in `summary/signal_observations.parquet` when observations exist.
@@ -56,7 +56,7 @@ The benchmark command records phase timings and resource measurements. This comm
 
 ```bash
 .venv/bin/python -m data.data_source.generator.benchmark \
-  --output local/runs/factor1-measurement \
+  --output local/data_source_generation/factor1-measurement \
   --configs data/data_source/generator/configs/medium.yaml
 ```
 
@@ -144,7 +144,7 @@ The runner refuses an existing output directory or its `.partial` counterpart fo
 Resume a retained run with its saved configuration, or supply `--config` to change permitted runtime settings:
 
 ```bash
-.venv/bin/python -m data.data_source.generator run --resume local/runs/small.partial
+.venv/bin/python -m data.data_source.generator run --resume local/data_source_generation/small.partial
 ```
 
 Each completed step binds its result to `_checkpoints/context.json` through a SHA-256 context digest. That file records implementation file hashes, semantic configuration, `customer_group_size`, and `export_rows`. Resume refuses a changed code version, semantic configuration, or intermediate layout before it changes files. Worker count, thread count, resource budgets, and the ignored `merge_fan_in` setting can change. Reference records, market arrays, the population plan, each customer group, prospects, the coordinator part, export, and validation have completion receipts. Group receipts retain business counts and commit last, after actual lifetimes, hidden records, and sealed source files. Incomplete groups restart from immutable planned population rows, not partly changed lifetimes.

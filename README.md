@@ -345,8 +345,8 @@ Before the first start, [create the private configuration files](docs/IaC.md#1-h
    ```bash
    uv pip install --python .venv/bin/python -r data/data_source/generator/requirements.txt
    .venv/bin/python -m data.data_source.generator run \
-     --config data/data_source/generator/configs/small.yaml --output local/runs/small
-   .venv/bin/python -m data.data_source.generator validate local/runs/small
+     --config data/data_source/generator/configs/small.yaml --output local/data_source_generation/small
+   .venv/bin/python -m data.data_source.generator validate local/data_source_generation/small
    ```
 
    `run` includes full saved-file validation. The separate `validate` command checks the saved files again without regeneration. The [generator guide](data/data_source/generator/README.md) explains the run settings, output paths, tests, and reference-calendar measurements. The [clean publisher guide](data/data_source/publisher/README.md) explains how to deliver saved files to `upstream` and replay cash transaction messages to Kafka. Only `offline/` files enter `upstream`; saved cash transaction messages remain separate from offline files.

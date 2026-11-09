@@ -17,7 +17,7 @@ Repositories that combine multi-layer engineering, iterative design, and coding 
 | --- | --- | --- | --- |
 | **`docs/`** | Tracked | Engineers, reviewers, and users of the system ([Root README](../README.md)) | **Product documentation and its references**: [Data Specification](../docs/Data-Specification.md), [Data Platform](../docs/Data-Platform.md), [ML Platform](../docs/ML-Platform.md), [Agent Platform](../docs/Agent-Platform.md), [Infrastructure](../docs/IaC.md), and their diagrams, the [Glossary](../docs/Glossary.md), plus the [TPC-DI specification](../docs/TPC-DI/TPC-DI_v1.1.0.pdf) (`docs/TPC-DI/`) and the [coursework brief](../docs/course/coursework_proposal.md), rubric, and sample domain designs (`docs/course/`). |
 | **`workflow/`** | Tracked | Coding agents and developers ([AGENTS.md](../AGENTS.md)) | **Reusable workflow, working state, and tools**: [Status](Status.md), [Documentation Guide](Documentation-Guide.md), [Design Method](Design-Method.md), [Diagram Guide](Diagram-Guide.md), [Diagram Examples](Diagram-Examples.md), working [records](records/Polars-POC.md), and [tools](tools/). |
-| **`local/`** | Ignored (`.gitignore`) | Local machine only | **Throwaway and external local files**: `tmp/`, `archive/`, `tpcdi/`, `generator-feasibility/`, and `sample_run/`. Never appears on GitHub or in `README.md`. |
+| **`local/`** | Ignored (`.gitignore`) | Local machine only | **Throwaway and external local files**: `tmp/`, `archive/`, `tpcdi/`, and `data_source_generation/`. Never appears on GitHub or in `README.md`. |
 
 ### Key Documentation Rules
 - **Separate OLTP workflow state from permanent system definitions**: Working state (open decisions, proposals, known prototype defects, and next steps) changes every session and lives exclusively in [Status](Status.md). Public system documents in `docs/` describe the system in the present tense with zero `(open)` markers or `Status.md` links.
@@ -88,9 +88,8 @@ The zone belongs in the catalog namespace or database schema, not in the table n
 | --- | --- |
 | `local/tmp/` | One-off scripts, logs, diagram export previews, and intermediate outputs. |
 | `local/archive/` | Historical session logs, handoffs, earlier v0 prototype code (`prototype-v0/`), and reference notes. |
-| `local/tpcdi/` | Upstream TPC-DI checkout and SF3 reference dataset. |
-| `local/generator-feasibility/` | Pinned Databricks TPC-DI generator reference checkout. |
-| `local/sample_run/` | Local generated dataset. |
+| `local/tpcdi/` | `NOTES.md`: notes on the AlaaAlmutawa TPC-DI SQL and its defects. Clone the checkout again to inspect the files the notes cite. |
+| `local/data_source_generation/` | Generated datasets (`factor1`, `factor5`, `factor100`). |
 
 ---
 
@@ -148,8 +147,8 @@ Run the documentation, diagram, and generator checks from the repository root in
 .venv/bin/python workflow/tools/check_docs.py
 mkdir -p local/tmp
 .venv/bin/python -m pytest data/data_source/generator/tests -q --basetemp=local/tmp/pytest-generator
-.venv/bin/python -m data.data_source.generator run --config data/data_source/generator/configs/small.yaml --output local/runs/small
-.venv/bin/python -m data.data_source.generator validate local/runs/small
+.venv/bin/python -m data.data_source.generator run --config data/data_source/generator/configs/small.yaml --output local/data_source_generation/small
+.venv/bin/python -m data.data_source.generator validate local/data_source_generation/small
 .venv/bin/python -m unittest discover -s workflow/tools/diagrams -p 'test_*.py' -v
 ```
 

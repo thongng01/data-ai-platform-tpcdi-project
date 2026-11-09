@@ -10,14 +10,14 @@ Run commands from the repository root on Linux with Python 3.14. Preflight and h
 
 ```bash
 .venv/bin/python -m data.data_source.publisher --help
-.venv/bin/python -m data.data_source.publisher check local/runs/small
+.venv/bin/python -m data.data_source.publisher check local/data_source_generation/small
 ```
 
 `check` accepts a `generated-unvalidated` dataset only with the explicit override:
 
 ```bash
 .venv/bin/python -m data.data_source.publisher check \
-  local/runs/factor100 --allow-unvalidated
+  local/data_source_generation/factor100 --allow-unvalidated
 ```
 
 Use the same flag with `publish` to deliver an unvalidated dataset. The override keeps all publisher preflight checks and does not change the dataset's validation status.
@@ -38,7 +38,7 @@ export PUBLISHER_KAFKA_BOOTSTRAP=localhost:9092
 # Set PUBLISHER_KAFKA_CONFIG to a private external JSON file when needed.
 
 local/tmp/publisher-env/bin/python -m data.data_source.publisher publish \
-  local/runs/small --state local/runs/small-publisher --mode bulk
+  local/data_source_generation/small --state local/data_source_generation/small-publisher --mode bulk
 ```
 
 The bucket and topic must already exist. The publisher does not create infrastructure, delete destination objects, or reset Kafka. The platform holds one active dataset. Use a destination prepared for that dataset, because unrelated old objects and messages remain until an operator removes them.
@@ -47,7 +47,7 @@ Replay uses one simulated clock for daily files and cash transactions:
 
 ```bash
 local/tmp/publisher-env/bin/python -m data.data_source.publisher publish \
-  local/runs/small --state local/runs/small-replay \
+  local/data_source_generation/small --state local/data_source_generation/small-replay \
   --mode replay --speed 86400 --daily-release end
 ```
 
