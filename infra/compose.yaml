@@ -104,7 +104,8 @@ services:
       - -s3.config=/etc/seaweedfs/s3.json
       # Clients use path-style URLs: the bucket is in the path, not a DNS name.
       - -s3.domainName=seaweedfs:8333
-      - -s3.autoCreateBucket=true
+      # Turn off autocreate to avoid new bucket creation with typo
+      - -s3.autoCreateBucket=false
     volumes:
       - seaweedfs-data:/data
       - ./seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
