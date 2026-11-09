@@ -1,0 +1,163 @@
+"""Check independent parser fault consumption and exact coordinator measurements."""
+
+from concurrent.futures import ProcessPoolExecutor
+from multiprocessing import get_context
+import json
+import os
+
+import pytest
+
+from data.data_source.generator import validation
+from data.data_source.generator.config import Config
+from data.data_source.generator.customers import customer_values
+from data.data_source.generator.formats import load_sources
+from data.data_source.generator.validation import ValidationError, _require
+from data.data_source.generator.validation_faults import FaultAudit
+
+
+def _fault_fixture(tmp_path):
+    """Save one selected daily customer fault and its exact source-visible identity."""
+    config = Config(initial_start="2019-06-01", initial_end="2019-06-23",
+                    daily_start="2019-06-24", daily_end="2019-07-12", scale_factor=.01,
+                    securities=3, companies=2, customer_tier_error_rate=1,
+                    customer_dob_error_rate=0, threads=1)
+    relative = "offline/daily/20190624/Customer_20190624.txt"
+    path = tmp_path / relative
+    path.parent.mkdir(parents=True)
+    row = customer_values(1)
+    row["C_TIER"] = 9
+    path.write_text("I|1|" + "|".join(str(row[name]) for name in load_sources()["Customer"].columns) + "\n")
+    entry = {"source": "Customer", "day": "2019-06-24", "field": "C_TIER",
+             "identity": {"C_ID": "1", "C_ST_ID": "ACTV", "CDC_FLAG": "I"}, "correct": "3", "recorded": "9"}
+    audit_path = tmp_path / "summary/data_errors.jsonl"
+    audit_path.parent.mkdir()
+    audit_path.write_text(json.dumps(entry) + "\n")
+    audit = FaultAudit.load(tmp_path, config, _require)
+    inputs = {"root": tmp_path, "temporary": tmp_path / "stage", "partitions": 1, "date_partitions": 1,
+              "config": config, "sessions": {}, "securities": {}, "saved": None}
+    return config, relative, entry, audit, inputs
+
+
+def _parse_in_worker(job):
+    """Return the actual parser summary and process ID for separate-worker checks."""
+    return os.getpid(), validation._parse_independent_file(job)
+
+
+def test_duplicate_consumption_across_parser_workers_fails(tmp_path):
+    """Two readers can restore a row locally, but the coordinator must reject reuse."""
+    _, relative, _, audit, inputs = _fault_fixture(tmp_path)
+    original = dict(audit.entries)
+    # One task per process proves that distinct spawned workers each consume the
+    # same evidence. No shared connection or shared mutable used flag hides it.
+    with ProcessPoolExecutor(max_workers=2, max_tasks_per_child=1, mp_context=get_context("spawn"),
+                             initializer=validation._initialize_parser, initargs=(inputs,)) as executor:
+        results = list(executor.map(_parse_in_worker, [(0, relative, audit.entries), (1, relative, audit.entries)]))
+    assert len({pid for pid, _ in results}) == 2
+    first, second = [result for _, result in results]
+    assert first.error is second.error is None
+    assert first.audit_used == second.audit_used and len(first.audit_used) == 1
+    audit.accept(first.audit_used, first.audit_measurements)
+    assert audit.measurements["C_TIER"]["daily"] == {"eligible": 1, "errors": 1}
+    assert audit.measurements["C_DOB"]["daily"] == {"eligible": 1, "errors": 0}
+    audit.finish()
+    with pytest.raises(ValidationError, match="consumed more than once"):
+        audit.accept(second.audit_used, second.audit_measurements)
+    assert audit.entries == original
+    assert audit.measurements["C_TIER"]["daily"] == {"eligible": 1, "errors": 1}
+
+
+def test_unconsumed_entry_fails_after_worker_results(tmp_path):
+    """A valid but unused identity cannot disappear when worker summaries are merged."""
+    config, relative, entry, _, inputs = _fault_fixture(tmp_path)
+    unused = {**entry, "identity": {**entry["identity"], "C_ID": "2"}}
+    with (tmp_path / "summary/data_errors.jsonl").open("a") as stream:
+        stream.write(json.dumps(unused) + "\n")
+    audit = FaultAudit.load(tmp_path, config, _require)
+    validation._initialize_parser(inputs)
+    result = validation._parse_independent_file((0, relative, audit.slices({relative})[relative]))
+    assert result.error is None
+    audit.accept(result.audit_used, result.audit_measurements)
+    with pytest.raises(ValidationError, match="Unused fault audit evidence"):
+        audit.finish()
+
+
+def test_duplicate_consumption_inside_one_file_fails(tmp_path):
+    """Retain one-time consumption within each worker as well as across workers."""
+    _, relative, _, audit, inputs = _fault_fixture(tmp_path)
+    path = tmp_path / relative
+    with path.open("a") as stream:
+        stream.write(path.read_text().replace("I|1|", "I|2|", 1))
+    validation._initialize_parser(inputs)
+    result = validation._parse_independent_file((0, relative, audit.entries))
+    assert isinstance(result.error, ValidationError)
+    assert str(result.error) == "A fault audit entry was consumed more than once."
+
+
+def test_duplicate_saved_evidence_still_fails(tmp_path):
+    """Reject duplicate input evidence before any parser worker can read it."""
+    config, _, entry, _, _ = _fault_fixture(tmp_path)
+    with (tmp_path / "summary/data_errors.jsonl").open("a") as stream:
+        stream.write(json.dumps(entry) + "\n")
+    with pytest.raises(ValidationError, match="Duplicate fault audit identity and field"):
+        FaultAudit.load(tmp_path, config, _require)
+
+
+def test_audit_slices_route_only_expected_source_evidence(tmp_path):
+    """File slices exclude other sources and retain unmatched evidence for final rejection."""
+    config, relative, _, _, _ = _fault_fixture(tmp_path)
+    cases = [
+        ("CustomerMgmt", "2019-06-02", {"C_ID": "1", "ActionType": "UPDACCT", "ActionTS": "2019-06-02T00:00:02", "CA_ID": "11"}, "C_TIER", "offline/initial/CustomerMgmt.xml"),
+        ("Customer", "2019-06-24", {"C_ID": "1", "C_ST_ID": "ACTV", "CDC_FLAG": "I"}, "C_TIER", relative),
+        ("Trade", "2019-06-02", {"T_ID": "1", "T_DTS": "2019-06-02 10:00:00", "T_ST_ID": "CMPT"}, "T_CHRG", "offline/initial/Trade.txt"),
+        ("Trade", "2019-06-24", {"T_ID": "1", "T_DTS": "2019-06-24 10:00:00", "T_ST_ID": "CMPT"}, "T_COMM", "offline/daily/20190624/Trade_20190624.txt"),
+        ("FINWIRE:CMP", "2019-01-31", {"CIK": "1", "PTS": "20190131-000000"}, "SPrating", "offline/initial/FINWIRE2019Q1"),
+        ("Customer", "2020-01-01", {"C_ID": "2"}, "C_TIER", None),
+        ("FINWIRE:CMP", "invalid", {}, "SPrating", None),
+    ]
+    entries = {(FaultAudit._key(source, day, identity), field): ("correct", "recorded")
+               for source, day, identity, field, _ in cases}
+    audit = FaultAudit(config, _require, entries)
+    expected = {relative for *_, relative in cases if relative is not None}
+    slices = audit.slices(expected)
+    assert set(slices) == expected
+    for source, day, identity, field, relative in cases:
+        key = FaultAudit._key(source, day, identity), field
+        if relative is not None:
+            assert slices[relative] == {key: entries[key]}
+    assert len(audit.entries) == len(cases)
+    with pytest.raises(ValidationError, match="Unused fault audit evidence"):
+        audit.finish()
+
+
+def test_release_preserves_report_and_deferred_completeness(tmp_path):
+    """Dropping parse graphs must not turn unused evidence into a successful proof."""
+    _, _, _, audit, _ = _fault_fixture(tmp_path)
+    expected = audit.report()
+    count, report, complete = audit.release()
+    assert count == 1 and report == expected and not complete
+    assert not audit.entries and not audit.used
+
+
+def test_coordinator_rejects_unknown_consumed_evidence(tmp_path):
+    """A worker cannot authorize a key that the coordinator never loaded."""
+    _, _, _, audit, _ = _fault_fixture(tmp_path)
+    with pytest.raises(ValidationError, match="unknown fault audit evidence"):
+        audit.accept({("unknown", "C_TIER")}, audit.reader().measurements)
+
+
+def test_worker_measurements_sum_exactly(tmp_path):
+    """Combine separate row counts without changing any field or delivery bucket."""
+    config, _, _, audit, _ = _fault_fixture(tmp_path)
+    # Disjoint evidence keys can be checked in separate files. Match the combined
+    # integer counts and rate calculation to one reader's direct calculation.
+    first, second, direct = audit.reader(), audit.reader(), audit.reader()
+    rows = [{"C_ID": "1", "C_ST_ID": "ACTV", "_flag": "I", "C_TIER": "9", "C_DOB": "1980-01-01"},
+            {"C_ID": "2", "C_ST_ID": "ACTV", "_flag": "U", "C_DOB": "1970-01-01"}]
+    for reader, row in zip((first, second), rows, strict=True):
+        reader.restore("Customer", "2019-06-24", row)
+        direct.restore("Customer", "2019-06-24", row)
+        audit.accept(reader.used, reader.measurements)
+    assert audit.report() == direct.report()
+    assert audit.measurements["C_DOB"]["daily"] == {"eligible": 2, "errors": 0}
+    assert audit.report()["C_TIER"]["configured_rate"] == config.customer_tier_error_rate
+    audit.finish()

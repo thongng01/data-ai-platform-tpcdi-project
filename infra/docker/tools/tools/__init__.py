@@ -1,5 +1,5 @@
-"""One-shot tooling for the coursework platform.
+"""Provide storage diagnostics, SQL commands, and checks for a running stack.
 
-Scripts here are run against an already-running stack, either by a human or by
-an Airflow task. Nothing in this package starts a service.
+These commands connect to existing services. Some commands write test data or
+delete objects; none starts a service.
 """

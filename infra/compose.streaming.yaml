@@ -1,20 +1,16 @@
-# Streaming: the Kafka broker and the Flink cluster that consumes it.
+# Configure Kafka topic initialization and the optional Flink cluster.
 #
-# Behind the `stream` profile. Start with `docker compose --project-directory infra --profile stream up -d`.
-#
-# Topics are named tpcdi.<table> so the producer that replays a batch and the
-# Flink job that reads it agree on a name without sharing a config file.
-#
-# Kafka runs KRaft: one broker that is also the controller. No ZooKeeper.
+# Run from infra/ with `docker compose --profile stream up -d`. Kafka uses
+# KRaft with one broker that also acts as controller, without ZooKeeper.
+# Topic initialization below creates named topics; it does not rename stored data.
 
 services:
 
   kafka:
     image: ${KAFKA_IMAGE}
-    container_name: edai-kafka
     profiles: ["stream"]
     restart: unless-stopped
-    networks: ["${EDAI_NETWORK}"]
+    networks: [platform]
     ports:
       - "${KAFKA_PORT}:9092"
     environment:
@@ -22,22 +18,22 @@ services:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
-      # Two advertised listeners: one for containers on edai-net, one for the
-      # host. A client that gets the wrong one connects and then fails to fetch
-      # partitions, which looks like a broker fault and is not one.
+      # Containers use kafka:29092; host clients use localhost and KAFKA_PORT.
+      # Kafka returns these addresses after the first connection, so a client
+      # must receive an address it can reach to fetch messages.
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093,PLAINTEXT_HOST://0.0.0.0:9092
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:${KAFKA_PORT}
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      # One broker, so every replication factor is 1. Anything higher and topic
-      # creation blocks forever waiting for a replica.
+      # A single broker can hold only one replica. Replication factor 1 permits
+      # creation but provides no copy on another broker if this broker fails.
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      # The Flink job is the only consumer group that matters, so keeping this
-      # true means a new topic works without a second admin step.
+      # Unlisted topic names can be created by clients with broker defaults.
+      # A misspelled name can therefore create a separate one-partition topic.
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       KAFKA_NUM_PARTITIONS: 1
       KAFKA_LOG_RETENTION_HOURS: 24
@@ -54,27 +50,27 @@ services:
         limits:
           memory: 1536M
 
-  # Creates the topics with the partition count and retention the Flink job
-  # expects. One-shot, and safe to re-run.
+  # Create topics that do not exist. Repeating this command leaves existing
+  # partition counts and retention unchanged; it is not a configuration migration.
   kafka-init:
     image: ${KAFKA_IMAGE}
-    container_name: edai-kafka-init
     profiles: ["stream"]
-    networks: ["${EDAI_NETWORK}"]
+    networks: [platform]
     depends_on:
       kafka:
         condition: service_healthy
     environment:
       KAFKA_BOOTSTRAP: kafka:29092
-      # Partition count is the knob the Flink parallelism follows. Three
-      # partitions is the minimum that lets the late-arrival path and the
-      # main path make progress at the same time.
+      # Kafka source parallelism is bounded by the topic partition count.
+      # Three partitions permit up to three active readers in one group.
       STREAM_TOPIC_PARTITIONS: 3
       STREAM_TOPIC_RETENTION_HOURS: 24
     entrypoint: ["/bin/bash", "-c"]
     command:
       - |
         set -euo pipefail
+        # Double dollar signs defer expansion from Compose to this shell.
+        # Convert hours to milliseconds for Kafka retention.ms.
         for topic in tpcdi.trade tpcdi.cash_transaction; do
           kafka-topics --bootstrap-server "$${KAFKA_BOOTSTRAP}" \
             --create --if-not-exists --topic "$${topic}" \
@@ -90,12 +86,13 @@ services:
     build:
       context: ./docker/flink
       dockerfile: Dockerfile
-    container_name: edai-flink-jobmanager
     profiles: ["stream"]
     restart: unless-stopped
-    networks: ["${EDAI_NETWORK}"]
+    networks: [platform]
     command: jobmanager
     environment:
+      # Process memory includes heap and non-heap allocations. Checkpoint mode
+      # alone does not make sinks exactly-once or select durable checkpoint storage.
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: jobmanager
         jobmanager.bind-host: 0.0.0.0
@@ -104,9 +101,9 @@ services:
         state.backend.type: hashmap
         execution.checkpointing.interval: 30s
         execution.checkpointing.mode: EXACTLY_ONCE
-      # SeaweedFS credentials for the sink. Passed as config rather than baked
-      # into the job so the same jar works against MinIO in the fallback profile.
-      S3_ENDPOINT: http://seaweedfs:${SEAWEEDFS_S3_PORT}
+      # Jobs must read these values to configure their S3 client. Passing an
+      # environment value does not install or configure a Flink filesystem plugin.
+      S3_ENDPOINT: http://seaweedfs:8333
       S3_ACCESS_KEY: ${SEAWEEDFS_ACCESS_KEY}
       S3_SECRET_KEY: ${SEAWEEDFS_SECRET_KEY}
     ports:
@@ -120,10 +117,9 @@ services:
 
   taskmanager:
     image: ${FLINK_IMAGE}
-    container_name: edai-flink-taskmanager
     profiles: ["stream"]
     restart: unless-stopped
-    networks: ["${EDAI_NETWORK}"]
+    networks: [platform]
     command: taskmanager
     environment:
       FLINK_PROPERTIES: |
@@ -131,7 +127,7 @@ services:
         taskmanager.bind-host: 0.0.0.0
         taskmanager.memory.process.size: 1600m
         taskmanager.numberOfTaskSlots: 4
-      S3_ENDPOINT: http://seaweedfs:${SEAWEEDFS_S3_PORT}
+      S3_ENDPOINT: http://seaweedfs:8333
       S3_ACCESS_KEY: ${SEAWEEDFS_ACCESS_KEY}
       S3_SECRET_KEY: ${SEAWEEDFS_SECRET_KEY}
     depends_on:
@@ -145,24 +141,18 @@ services:
   #   docker compose --profile stream run --rm flink-submit <job.py> [args...]
   flink-submit:
     image: ${FLINK_IMAGE}
-    container_name: edai-flink-submit
     profiles: ["stream"]
-    networks: ["${EDAI_NETWORK}"]
+    networks: [platform]
     entrypoint: ["/opt/flink/bin/flink", "run", "--target", "jobmanager"]
     command: ["--help"]
     environment:
-      S3_ENDPOINT: http://seaweedfs:${SEAWEEDFS_S3_PORT}
+      S3_ENDPOINT: http://seaweedfs:8333
       S3_ACCESS_KEY: ${SEAWEEDFS_ACCESS_KEY}
       S3_SECRET_KEY: ${SEAWEEDFS_SECRET_KEY}
     volumes:
       - ../data/flink:/opt/pipelines:ro
     depends_on:
       - jobmanager
-
-networks:
-  edai-net:
-    name: ${EDAI_NETWORK}
-    driver: bridge
 
 volumes:
   kafka-data:

@@ -1,26 +1,21 @@
-# Spark defaults for the coursework lakehouse.
-#
-# This file is the whole of the Spark-to-SeaweedFS wiring. It is mounted into
-# the master, the worker, the Thrift server and the one-shot submit container,
-# so every process reads the same values. Nothing about the object store is set
-# per job.
+# Configure submitted Spark applications, Hive catalog access, and S3A storage.
+# Compose mounts this file into Spark containers. Applications read defaults at
+# submission; daemon limits still come from daemon settings and arguments.
+# Values are literal: this mounted file does not substitute infra/.env variables.
 
 # ---------------------------------------------------------------- the cluster --
-# One master URL for everything: spark-submit, the Thrift server, and the
-# worker. HiveThriftServer2 has no --master flag; it reads spark.master from
-# here, so the address has to be in this file.
+# Applications use the standalone master unless submission overrides it.
+# The worker receives its master address separately in the Compose command.
 spark.master spark://spark-master:7077
 
 # ---------------------------------------------------------------- metastore --
-# Without this, Spark's catalog is an in-memory map and forgets every table the
-# moment a session ends. Trino would then read a metastore that has no record of
-# the tables Spark wrote.
+# Use the shared Hive Metastore for named tables instead of a session-only
+# catalog. Writing files alone does not register a table in that catalog.
 spark.sql.catalogImplementation  hive
 spark.hadoop.hive.metastore.uris thrift://hive-metastore:9083
 
-# Spark 3.5 bundles a Hive 2.3 client. It talks to the 3.1 metastore, but only
-# when the client jars are the built-in ones; `maven` would fetch a different
-# set on every job.
+# Use the Hive client bundled with Spark instead of downloading another set.
+# This selects the client libraries; it does not prove server compatibility.
 spark.sql.hive.metastore.jars builtin
 
 # ------------------------------------------------------------- object store --
@@ -33,35 +28,32 @@ spark.hadoop.fs.s3a.access.key CHANGE_ME_S3_ACCESS_KEY
 spark.hadoop.fs.s3a.secret.key CHANGE_ME_S3_SECRET_KEY
 spark.hadoop.fs.s3a.aws.credentials.provider org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider
 
-# SeaweedFS does not implement the aws-chunked streaming encoding, so the SDK
-# must fall back to plain signed payloads.
+# Request unchunked AWS payloads. Hadoop passes only recognized properties to
+# its SDK, so verify the encoding on the wire when testing a different version.
 spark.hadoop.fs.s3a.aws.chunkedEncoding false
 
-# Retry rather than fail the job when the gateway is briefly busy. Ingest
-# retries are cheap; a failed batch run is not.
+# Bound S3A retries for transient errors. The retry interval is in milliseconds;
+# exhausting retries still fails the operation. Connection and thread limits
+# bound client concurrency, not the whole service workload.
 spark.hadoop.fs.s3a.retry.limit 7
 spark.hadoop.fs.s3a.retry.interval 1000
 spark.hadoop.fs.s3a.connection.maximum 200
 spark.hadoop.fs.s3a.threads.max 64
 
 # ----------------------------------------------------------------- dynamic --
-# Every batch writes a dt=YYYY-MM-DD partition. Static overwrite deletes
-# partitions that match the spec even when they received no rows, which
-# silently deletes a day when a re-run finds nothing to write.
+# For supported partitioned data-source writes, dynamic overwrite replaces only
+# partitions that receive rows. It does not clear a partition with no new rows.
+# Hive dynamic partition settings below apply to Hive writes, not Delta commits.
 spark.sql.sources.partitionOverwriteMode dynamic
 spark.sql.hive.exec.dynamic.partition true
 spark.sql.hive.exec.dynamic.partition.mode nonstrict
 
 # ------------------------------------------------------------------ sizing --
-# One worker, six cores and 5 GB, shared by whatever is running.
-#
-#   DP1 and DP3 jobs   2 x (1 core, 1 GB)
-#   HiveServer2 (DP2)  asks the master for the whole worker, which is why it
-#                      lives in its own compose profile rather than here
-#
-# A job that cannot get an executor does not fail. It waits, and the log shows
-# "Initial job has not accepted any resources" every 15 seconds and never a
-# stack trace. Check http://localhost:8082/json/ before debugging the job.
+# The worker advertises six cores and 5 GiB. Each requested executor has two
+# cores and a 1 GiB heap; additional process memory also counts against limits.
+# Executor instances is not a total-core cap in standalone mode. Set
+# spark.cores.max per application when it must leave cores for other work.
+# Applications can wait for resources without failing; inspect the master UI.
 spark.driver.memory 1g
 spark.driver.maxResultSize 512m
 spark.executor.memory 1g
@@ -70,14 +62,15 @@ spark.executor.instances 1
 spark.memory.fraction 0.5
 spark.memory.storageFraction 0.3
 
-# A job that cannot get resources in two minutes fails loudly instead of
-# hanging forever on a cluster that is too small.
+# Exclude executors or nodes after repeated task failures. The 120-second
+# timeout lets excluded resources become eligible again; it is not a timeout
+# for waiting on cluster resources.
 spark.excludeOnFailure.enabled true
 spark.excludeOnFailure.timeout 120s
 
-# Skew handling: a join key where one value dominates produces a single task
-# holding most of the rows. Adaptive execution splits that task at run time
-# instead of asking us to guess an AQE skew join partition factor.
+# Adaptive execution can split skewed shuffle partitions in supported joins.
+# A partition must exceed both the median-size factor and byte threshold to
+# qualify as skewed. Coalescing combines small partitions toward 128 MiB.
 spark.sql.adaptive.enabled true
 spark.sql.adaptive.coalescePartitions.enabled true
 spark.sql.adaptive.skewJoin.enabled true
@@ -85,17 +78,19 @@ spark.sql.adaptive.skewJoin.skewedPartitionFactor 3
 spark.sql.adaptive.skewJoin.skewedPartitionThresholdInBytes 256m
 spark.sql.adaptive.advisoryPartitionSizeInBytes 128m
 
-# Small files are the storage problem this project has to fix. Parquet v2 with
-# dictionary encoding is a fraction of the v1 size on our text columns.
+# Compress Parquet pages with Zstandard. Compression can reduce bytes, but it
+# does not reduce the number of files; measure both for storage experiments.
 spark.sql.parquet.compression.codec zstd
 spark.sql.parquet.enable.dictionary true
-spark.sql.sources.partitionOverwriteMode dynamic
 
+# Kryo applies to supported serialized objects, not all Spark SQL operations.
+# UTC keeps timestamp interpretation independent of the container time zone.
 spark.serializer org.apache.spark.serializer.KryoSerializer
 spark.sql.session.timeZone UTC
 
-# Event log: the Spark UI reads this, and it is the evidence the rubric asks for
-# when it wants a screenshot of a skewed stage.
+# Save application events for a Spark History Server to read after a run.
+# The prefix must exist before startup; bootstrap seeds it with a marker object.
+# Rolling limits each log segment to 64 MiB, not the total retained log size.
 spark.eventLog.enabled true
 spark.eventLog.dir s3a://lakehouse/spark-logs
 spark.eventLog.rolling true

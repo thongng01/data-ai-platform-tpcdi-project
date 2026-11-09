@@ -2,6 +2,8 @@ Trade:
   filename: Trade.txt
   separator: "|"
   cdc: true
+  daily_version_fields:
+    T_CHANNEL: CHAR(6)
   fields:
     T_ID: TRADE_T
     T_DTS: DATETIME

@@ -5,6 +5,4 @@ psutil==7.2.2
 pytest==9.1.1
 exchange-calendars==4.13.2
 hypothesis==6.170.14
-duckdb==2.0.0
-pyarrow==26.0.1
 lxml==6.1.3

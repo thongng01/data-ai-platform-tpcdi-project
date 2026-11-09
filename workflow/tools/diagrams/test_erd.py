@@ -21,18 +21,23 @@ SOURCE = """erDiagram
 
 
 class ErdTest(unittest.TestCase):
+    """Check ERD source rules, theme mapping, sizing, and optional rendering."""
+
     def setUp(self):
+        """Create a temporary directory and register cleanup for each test."""
         diagram.TEMP.mkdir(parents=True, exist_ok=True)
         self.workspace = tempfile.TemporaryDirectory(dir=diagram.TEMP, prefix="test-")
         self.addCleanup(self.workspace.cleanup)
         self.directory = Path(self.workspace.name)
 
     def test_source_without_styling_is_accepted(self):
+        """Accept tagged tables and source comments without user-supplied styling."""
         erd.check(SOURCE)
-        erd.check("%% Gold layer\n" + SOURCE)
+        erd.check("%% Gold zone\n" + SOURCE)
         self.assertEqual(erd.entity_kinds(SOURCE), {"Customer": "entity", "Account": "event"})
 
     def test_every_table_needs_one_known_kind(self):
+        """Require one known kind for tables in definitions and relationships."""
         cases = {
             "untagged": (SOURCE.replace("Account:::event {", "Account {"), "Untagged: Account"),
             "untagged relationship": (SOURCE + "    Account ||--o{ Trade : places\n", "Untagged: Trade"),
@@ -43,9 +48,12 @@ class ErdTest(unittest.TestCase):
         for name, (text, message) in cases.items():
             with self.subTest(name), self.assertRaisesRegex(ValueError, message):
                 erd.check(text)
+        # A standalone tag can declare a table without a field block. Its later
+        # untagged relationship reference must keep that declared kind.
         erd.check(SOURCE + "    Trade:::event\n    Account ||--o{ Trade : places\n")
 
     def test_styling_and_other_diagrams_are_rejected(self):
+        """Reject source styling, dashed relationships, and non-ERD syntax."""
         cases = {
             "init directive": "%%{init: {'theme': 'dark'}}%%\n" + SOURCE,
             "front matter": "---\nconfig:\n  layout: dagre\n---\n" + SOURCE,
@@ -60,13 +68,17 @@ class ErdTest(unittest.TestCase):
                 erd.check(text)
 
     def test_size_class_includes_margin(self):
+        """Keep exact margin boundaries in each size and promote one-pixel overflow."""
         sizes, margin = diagram.SIZES, diagram.CANVAS["margin"]
+        # A 32-pixel margin on each side makes 896 x 656 exactly fill small.
+        # Crossing either fixed canvas boundary must choose the next size.
         self.assertEqual(erd.size_class((896, 656), sizes, margin), "small")
         self.assertEqual(erd.size_class((897, 656), sizes, margin), "medium")
         self.assertEqual(erd.size_class((1376, 1016), sizes, margin), "medium")
         self.assertEqual(erd.size_class((1376, 1017), sizes, margin), "large")
 
     def test_config_uses_theme_values(self):
+        """Read layout, fonts, and each kind's colors from the shared theme."""
         config = erd.config(diagram.THEME)
         variables = config["themeVariables"]
         data = diagram.THEME["roles"]["data"]
@@ -83,6 +95,7 @@ class ErdTest(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("node") and erd.MMDC.exists(), "Node.js and npm ci are needed to render.")
     def test_small_erd_renders_on_small_canvas(self):
+        """Export a small ERD to the fixed PNG canvas and reject an SVG destination."""
         source = self.directory / "small.mmd"
         source.write_text(SOURCE, encoding="utf-8")
         _, profile = diagram.export(source, self.directory / "small.png")

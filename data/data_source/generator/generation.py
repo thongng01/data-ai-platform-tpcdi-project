@@ -1,34 +1,25 @@
-"""Source routing and bounded recording for generation stage 1."""
+"""Route typed business values through source recording and bounded native export."""
 
 import calendar
 import json
-import re
 from datetime import date, timedelta
+from functools import lru_cache
 from pathlib import Path
 
-import polars as pl
-
 from .config import Config
-from .formats import load_sources, record_fields
-from .sorting import SortedOutput
+from .formats import load_sources
+from .output import PartWriter, SourcePublisher
+from .recording import AUDIT_PATH, SourceRecorder
 
 
 INITIAL_SOURCES = ("Trade", "TradeHistory", "CashTransaction", "HoldingHistory", "WatchHistory",
                    "DailyMarket", "HR", "Prospect", "StatusType", "TradeType", "Industry", "TaxRate", "Date", "Time")
 DAILY_SOURCES = ("Customer", "Account", "Trade", "HoldingHistory", "WatchHistory", "DailyMarket")
-CASH_KIND_RANK = {"Deposit": 0, "Trade settlement": 1, "Dividend": 2, "Withdrawal": 3}
-FORMAT_VERSION = "brokerage-m1-1"
-
-
-def padded(expression):
-    return expression.cast(pl.String).str.pad_start(15, "0")
-
-
-def order_key(*expressions):
-    return pl.concat_str(expressions, separator="/").alias("_key")
+FORMAT_VERSION = "brokerage-m3-1"
 
 
 def business_date(config, day):
+    """Normalize a source date without changing the configured UTC calendar."""
     if type(day) is int:
         return config.start + timedelta(days=day)
     if isinstance(day, str):
@@ -39,15 +30,13 @@ def business_date(config, day):
 
 
 def source_path(config, name, day):
+    """Choose the initial, daily, or cash-stream path from the business date."""
     day = business_date(config, day)
     if name == "CashTransaction" and day > config.cutover:
         return f"stream/cash_transactions/{day:%Y%m%d}.jsonl"
     if name == "CustomerMgmt":
         return "offline/initial/CustomerMgmt.xml"
-    if name.startswith("FINWIRE"):
-        filename = name
-    else:
-        filename = load_sources()[name].filename
+    filename = name if name.startswith("FINWIRE") else load_sources()[name].filename
     if day <= config.cutover:
         return f"offline/initial/{filename}"
     if name.startswith("FINWIRE"):
@@ -57,6 +46,7 @@ def source_path(config, name, day):
 
 
 def finwire_release_dates(config):
+    """Yield quarterly release dates, including the required support history."""
     first_quarter = config.start.year * 4 + (config.start.month - 1) // 3 - 5
     quarter = first_quarter
     while True:
@@ -73,7 +63,7 @@ def finwire_release_dates(config):
 
 
 def expected_file_list(config):
-    """Derive delivery coverage without inspecting generated records or runs."""
+    """Derive delivery coverage without inspecting generated records or source parts."""
     paths = {source_path(config, name, config.cutover) for name in INITIAL_SOURCES}
     paths.add("offline/initial/CustomerMgmt.xml")
     day = config.daily_start_date
@@ -92,116 +82,54 @@ def expected_file_list(config):
     return sorted(paths)
 
 
-def cash_kind(name):
-    if name in ("Deposit", "Withdrawal"):
-        return name
-    if re.fullmatch(r"Trade settlement [1-9][0-9]{0,14}", name):
-        return "Trade settlement"
-    if re.fullmatch(r"Dividend [A-Za-z0-9._-]{1,15}", name):
-        return "Dividend"
-    raise ValueError(f"Invalid CT_NAME: {name}")
-
-
-def cents_text(cents):
-    if type(cents) is not int:
-        raise ValueError("Cash amounts must use integer cents.")
-    sign = "-" if cents < 0 else ""
-    return f"{sign}{abs(cents) // 100}.{abs(cents) % 100:02d}"
-
-
 class Generation:
-    def __init__(self, config: Config, root: Path):
-        self.config = config
-        self.root = Path(root)
+    """Hide source recording, ordering, and exact writers behind typed handoffs."""
+
+    def __init__(self, config: Config, root: Path, *, group_id: int | None = None,
+                 part_name: str | None = None, reuse=False):
+        """Open a private producer part, or reopen its completed seal for export."""
+        self.config, self.root = config, Path(root)
         self.sources = load_sources()
-        self.output = SortedOutput(self.root, config.merge_fan_in, config.export_rows)
-        self._cash_sequence = 0
+        # Cache only this live part's recent routes. A global method cache would
+        # retain finished groups and their recording state throughout a large run.
+        self._path = lru_cache(maxsize=2048)(self._source_path)
+        self.recorder = SourceRecorder(self)
+        self.output = PartWriter(config, self.root, self.sources, self._path,
+                                 self.recorder.apply, self._record_fault, group_id,
+                                 part_name=part_name, reuse=reuse)
 
-    def path(self, source, day):
-        return source_path(self.config, source, day)
+    def _source_path(self, family, day):
+        """Resolve raw family variants internally without exposing arbitrary paths."""
+        if family == "__audit":
+            return AUDIT_PATH
+        if family == "FINWIRE":
+            family = f"FINWIRE{day.year}Q{(day.month - 1) // 3 + 1}"
+        return source_path(self.config, family, day)
 
-    def emit(self, name: str, day, rows):
-        if name == "CashTransaction":
-            raise ValueError("Use Generation.cash so CT_ID is assigned during the global merge.")
-        day = business_date(self.config, day)
-        source = self.sources[name]
-        if isinstance(rows, pl.DataFrame):
-            rows = rows.iter_rows(named=True)
-        recorded = (record_fields(source, day, row) for row in rows)
-        self.output.add(self.path(name, day), recorded, source, source.cdc and day > self.config.cutover)
+    def record(self, family: str, day: int, values: tuple, *, order: tuple = (),
+               flag: str = "I", profile: int | None = None) -> None:
+        """Queue one correct typed tuple with only the extra facts ordering needs."""
+        self.output.record(family, day, values, order=order, flag=flag, profile=profile)
 
-    def text(self, relative: str, rows):
-        relative = str(relative)
-        if not relative.startswith(("offline/", "stream/")) or ".." in Path(relative).parts:
-            raise ValueError("Text output paths must stay inside offline or stream.")
-        self.output.add(relative, ({"_key": key, "_payload": payload} for key, payload in rows))
+    def record_batch(self, family: str, day: int, columns, *, order=None, flag="I") -> None:
+        """Consume bounded typed source columns without producing row dictionaries."""
+        self.output.record_batch(family, day, columns, order=order, flag=flag)
 
-    def cash(self, day, timestamp_str, account, ordinal, amount_cents, name):
-        day = business_date(self.config, day)
-        if not self.config.start <= day <= self.config.end or timestamp_str[:10] != day.isoformat():
-            raise ValueError("A cash timestamp must match a date within the run.")
-        account, ordinal = int(account), int(ordinal)
-        if not 0 < account < 10**11 or not 0 <= ordinal < 10**15:
-            raise ValueError("Cash identity exceeds its sort-key bounds.")
-        kind = cash_kind(name)
-        amount = cents_text(amount_cents)
-        values = ["1", str(account), timestamp_str, amount, name]
-        self.sources["CashTransaction"].check(values)
-        key = f"{timestamp_str}/{account:011d}/{ordinal:015d}/{CASH_KIND_RANK[kind]}"
-        self.output.add(self.path("CashTransaction", day), [{"_key": key, "_payload": "|".join(values[1:])}])
+    def _record_fault(self, entry):
+        """Spool sparse exact error evidence separately from all ingestion records."""
+        payload = json.dumps(entry, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        key = json.dumps([entry["source"], entry["day"], entry["identity"], entry["field"]],
+                         sort_keys=True, separators=(",", ":"))
+        day = (date.fromisoformat(entry["day"]) - self.config.start).days
+        self.record("__audit", day, (payload,), order=(key,))
 
-    def flush(self):
-        self.output.flush()
-
-    def close(self):
-        self.output.close()
-
-    def adopt(self, group_root):
-        self.output.adopt(group_root)
-
-    def _cash_record(self, stream):
-        def transform(key, payload):
-            self._cash_sequence += 1
-            account, timestamp, amount, name = payload.split("|", 3)
-            self.sources["CashTransaction"].check([str(self._cash_sequence), account, timestamp, amount, name])
-            cash_kind(name)
-            if stream:
-                return json.dumps({"ct_id": self._cash_sequence, "ct_ca_id": int(account),
-                                   "ct_dts": timestamp.replace(" ", "T") + "Z", "ct_amt": amount,
-                                   "ct_name": name, "schema_version": 1}, separators=(",", ":"), ensure_ascii=True)
-            return f"{self._cash_sequence}|{payload}"
-        return transform
-
-    @staticmethod
-    def _check_finwire(payload):
-        lengths = {"CMP": (543,), "SEC": (170, 220), "FIN": (196, 246)}
-        if payload[15:18] not in lengths or len(payload) not in lengths[payload[15:18]]:
-            raise ValueError("Invalid FINWIRE record type or width.")
-        if not re.fullmatch(r"[0-9]{8}-[0-9]{6}", payload[:15]):
-            raise ValueError("Invalid FINWIRE timestamp.")
-
-    def finish(self):
-        self.flush()
-        expected = expected_file_list(self.config)
-        expected_set = set(expected)
-        for (relative,) in self.output.catalog.execute("SELECT DISTINCT relative FROM runs"):
-            if relative not in expected_set:
-                raise ValueError(f"Unexpected source output: {relative}")
-        cash_initial = "offline/initial/CashTransaction.txt"
-        cash_paths = [cash_initial] + [p for p in expected if p.startswith("stream/")]
-        inventory = []
-        for relative in cash_paths:
-            inventory.append(self.output.write(relative, transform=self._cash_record(relative.startswith("stream/"))))
-        cash_path_set = set(cash_paths)
-        for relative in expected:
-            if relative in cash_path_set:
-                continue
-            filename = Path(relative).name
-            xml = filename == "CustomerMgmt.xml"
-            name = Path(filename).stem.split("_", 1)[0]
-            source = self.sources.get(name)
-            check = self._check_finwire if filename.startswith("FINWIRE") else source.check_payload if source else None
-            cdc = bool(source and source.cdc and relative.startswith("offline/daily/"))
-            inventory.append(self.output.write(relative, cdc=cdc, xml=xml, check=check))
-        self.output.close()
-        return sorted(inventory, key=lambda item: item["path"])
+    def finish(self, *, completion=None):
+        """Seal a producer or publish all expected sources from completed parts."""
+        receipt = self.output.seal(completion=completion) if not self.output.closed else None
+        if self.output.group_id is not None or self.output.part.name != "coordinator":
+            return receipt
+        publisher = SourcePublisher(self.config, self.root, self.sources,
+                                    self.output.part, self.output.metrics)
+        result = publisher.publish(expected_file_list(self.config), AUDIT_PATH)
+        self.recording_summary = result.audit
+        return result.inventory

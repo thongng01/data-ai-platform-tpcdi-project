@@ -7,14 +7,18 @@ BANNED = re.compile(r"\b(honestly|genuinely|truly|frankly|quietly|silently|delve
 
 
 def slug(h):
+    """Build a local heading anchor by removing punctuation and replacing spaces."""
     s = h.strip().lower()
     s = re.sub(r"[^\w\- ]", "", s)
     return s.replace(" ", "-")
 
 
 def anchors(path):
+    """Read Markdown headings outside backtick fences and number duplicate anchors."""
     seen, out, in_code = {}, set(), False
     for line in path.read_text(encoding="utf-8-sig").splitlines():
+        # A heading-like line in a fenced example is not a document heading.
+        # This checker recognizes column-zero backtick fences, not all Markdown.
         if line.startswith("```"):
             in_code = not in_code
         if in_code:
@@ -22,6 +26,7 @@ def anchors(path):
         m = re.match(r"^(#+)\s+(.*)", line)
         if m:
             base = slug(m.group(2))
+            # Repeated headings receive -1, -2, and later suffixes in order.
             n = seen.get(base, 0)
             out.add(base if n == 0 else f"{base}-{n}")
             seen[base] = n + 1
@@ -54,6 +59,8 @@ for f in files:
         m = BANNED.search(line)
         if m:
             issues.append(f"banned '{m.group(0)}' {i}")
+    # Check local inline links and image targets relative to the containing file.
+    # Web links are excluded because this check does not make network requests.
     for m in re.finditer(r"\]\(([^)\s]+)\)", text):
         target = m.group(1)
         if target.startswith(("http://", "https://", "mailto:")):
@@ -63,9 +70,11 @@ for f in files:
         if not dest.exists():
             issues.append(f"missing {target}")
             continue
+        # Only Markdown fragments have heading anchors that this checker knows.
         if frag and dest.suffix == ".md" and frag not in anchors(dest):
             issues.append(f"bad anchor {target}")
     print(f, "OK" if not issues else issues)
     bad += len(issues)
 print("issues", bad)
+# A nonzero exit lets a shell or build job stop when documentation has defects.
 raise SystemExit(1 if bad else 0)

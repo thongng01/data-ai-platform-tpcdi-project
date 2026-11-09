@@ -5,11 +5,12 @@
 /workflow/tools/diagrams/drawio/
 /workflow/tools/diagrams/node_modules/
 
-# Python environments. Machine-specific, regenerated from pyproject.toml.
+# Python environments and caches. Recreate environments from component requirements.
 .venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.hypothesis/
 *.egg-info/
 .ruff_cache/
 

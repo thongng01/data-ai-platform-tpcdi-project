@@ -2,7 +2,8 @@
 
 import json
 import shutil
-from datetime import date
+from dataclasses import replace
+from datetime import date, datetime
 from types import SimpleNamespace
 
 import polars as pl
@@ -13,24 +14,27 @@ import pytest
 
 from data.data_source.generator import validation
 from data.data_source.generator.config import Config
-from data.data_source.generator.formats import load_sources
+from data.data_source.generator.formats import load_sources, source_for_day
 from data.data_source.generator.generation import Generation, expected_file_list
 from data.data_source.generator.validation import ValidationError, _cents, _rows, _stream, _xml_patch, validate
 
 
 @pytest.mark.parametrize("value,expected", [("0.00", 0), ("-12.34", -1234), ("999.99", 99999), ("", None)])
 def test_exact_cent_parser(value, expected):
+    """Parse decimal amounts without changing their exact cent values."""
     assert _cents(value) == expected
 
 
 @pytest.mark.parametrize("value", ["0.001", "NaN", "Infinity", "not money"])
 def test_cent_parser_rejects_non_cent_values(value):
+    """Reject fractional cents and nonfinite money values."""
     with pytest.raises(ValidationError):
         _cents(value)
 
 
 @pytest.mark.parametrize("payload", ["I|2|1|1|0|1\n", "U|1|1|1|0|1\n", "I|1|1|1|0|1\r\n", "I|1|1|1|0|1"])
 def test_daily_parser_rejects_sequences_operations_and_line_endings(tmp_path, payload):
+    """Enforce consecutive CDC sequences, accepted flags, and LF record endings."""
     path = tmp_path / "HoldingHistory.txt"
     path.write_bytes(payload.encode())
     with pytest.raises(ValidationError):
@@ -38,6 +42,7 @@ def test_daily_parser_rejects_sequences_operations_and_line_endings(tmp_path, pa
 
 
 def test_xml_patch_keeps_absent_and_empty_distinct():
+    """Keep omitted CMS fields separate from explicit empty field updates."""
     customer = ET.fromstring('<Customer C_ID="1"><Name><C_M_NAME /></Name><ContactInfo><C_ALT_EMAIL /></ContactInfo></Customer>')
     patch = _xml_patch(customer, load_sources()["Customer"])
     assert patch == {"C_ID": "1", "C_M_NAME": "", "C_EMAIL_2": ""}
@@ -48,6 +53,7 @@ def test_xml_patch_keeps_absent_and_empty_distinct():
 @pytest.mark.parametrize("changes", [{"ct_id": True}, {"ct_amt": 1.0}, {"ct_amt": "1.001"},
                                     {"ct_dts": "2019-01-01 08:00:00"}, {"schema_version": True}, {"extra": 1}])
 def test_stream_contract_rejects_wrong_types_and_fields(tmp_path, changes):
+    """Reject stream records that violate strict JSON types or field coverage."""
     payload = {"ct_id": 1, "ct_ca_id": 1, "ct_dts": "2019-01-01T08:00:00Z", "ct_amt": "1.00",
                "ct_name": "Deposit", "schema_version": 1, **changes}
     path = tmp_path / "20190101.jsonl"
@@ -57,6 +63,7 @@ def test_stream_contract_rejects_wrong_types_and_fields(tmp_path, changes):
 
 
 def test_independent_cadence_and_calendar_boundaries():
+    """Derive source coverage and NYSE dates independently of exporter state."""
     config = Config(initial_start="2018-12-20", initial_end="2018-12-31", daily_start="2019-01-01", daily_end="2019-02-03",
                     scale_factor=.01, securities=8, companies=4)
     expected = validation._expected_files(config)
@@ -75,6 +82,7 @@ def test_independent_cadence_and_calendar_boundaries():
 
 @pytest.fixture(scope="module")
 def exported(tmp_path_factory):
+    """Create a small exported fixture without manifest hash evidence."""
     from data.data_source.generator.activity import generate_activity
     from data.data_source.generator.customers import generate_prospects
     from data.data_source.generator.market import Market
@@ -98,15 +106,18 @@ def exported(tmp_path_factory):
     return root, config, inventory
 
 
-def _mutate_row(root, source, field, replacement, predicate=lambda row: True, *, daily=False):
-    columns = load_sources()[source].columns
+def _mutate_row(root, source, field, replacement, predicate=lambda row: True, *, daily=False, config=None):
+    """Change one field while retaining the source contract for the delivery date."""
+    contract = load_sources()[source]
     paths = sorted((root / "offline" / "daily").glob(f"*/{source}_*.txt")) if daily else [root / "offline" / "initial" / f"{source}.txt"]
     for path in paths:
+        dated = source_for_day(contract, datetime.strptime(path.parent.name, "%Y%m%d").date(), config or Config()) if daily else contract
+        columns = dated.columns
         lines = path.read_text().splitlines()
         for index, line in enumerate(lines):
             values = line.split("|")
             prefix = values[:2] if daily else []
-            row = dict(zip(columns, values[2:] if daily else values))
+            row = dict(zip(columns, values[2:] if daily else values, strict=True))
             if predicate(row):
                 row[field] = replacement(row[field]) if callable(replacement) else replacement
                 lines[index] = "|".join(prefix + [row[name] for name in columns])
@@ -115,7 +126,24 @@ def _mutate_row(root, source, field, replacement, predicate=lambda row: True, *,
     raise AssertionError(f"Fixture has no matching {source} row.")
 
 
+def test_corruption_helper_preserves_dated_trade_channel(tmp_path):
+    """A daily version-two mutation retains its channel and both CDC fields."""
+    config = Config()
+    path = tmp_path / "offline/daily/20190701/Trade_20190701.txt"
+    path.parent.mkdir(parents=True)
+    source = source_for_day(load_sources()["Trade"], date(2019, 7, 1), config)
+    row = {name: "1" for name in source.columns}
+    row["T_CHANNEL"] = "WEB"
+    path.write_text("I|1|" + "|".join(row[name] for name in source.columns) + "\n")
+    _mutate_row(tmp_path, "Trade", "T_CHRG", "2.00", daily=True, config=config)
+    values = path.read_text().strip().split("|")
+    assert values[:2] == ["I", "1"]
+    assert len(values) == len(source.fields) + 2 and values[-1] == "WEB"
+    assert values[source.columns.index("T_CHRG") + 2] == "2.00"
+
+
 def test_exported_replay_and_partition_replay_agree(exported, monkeypatch):
+    """Require equivalent business totals with one partition and multiple partitions."""
     root, config, inventory = exported
     result = validate(root, config, inventory)
     assert result["status"] == "passed"
@@ -124,10 +152,18 @@ def test_exported_replay_and_partition_replay_agree(exported, monkeypatch):
     assert result["customer_actions"].get("CLOSEACCT", 0) + result["customer_actions"].get("INACT", 0) > 0
     assert not list(root.glob("validation-*"))
     monkeypatch.setattr(validation, "_VALIDATION_PARTITION_BYTES", max(1, result["bytes"] // 3))
-    partitioned = validate(root, config, inventory)
+    partitioned = validate(root, replace(config, workers=2), inventory)
     assert partitioned["partitions"] >= 3
     for name in ("customers", "accounts", "trades", "completed_trades", "cash_transactions", "rows", "bytes"):
         assert partitioned[name] == result[name]
+    monkeypatch.setattr(validation, "_VALIDATION_MAX_PARTITIONS", 2)
+    capped = validate(root, replace(config, workers=2), inventory)
+    assert capped["partitions"] == 2
+    # Partition count and the largest single-stage buffer peak measure runtime
+    # resources. Independent file stages can change them without changing results.
+    resources = {"partitions", "maximum_parse_buffer_rows"}
+    assert {key: value for key, value in capped.items() if key not in resources} == {
+        key: value for key, value in result.items() if key not in resources}
 
 
 @pytest.mark.parametrize("case,match", [
@@ -141,6 +177,7 @@ def test_exported_replay_and_partition_replay_agree(exported, monkeypatch):
     ("prospect_identity", "Duplicate Prospect"), ("customer_tax", "tax rate"), ("xml_structure", "XML root child"),
 ])
 def test_corrupted_source_fails_without_hash_evidence(exported, tmp_path, case, match):
+    """Reject each business or structural corruption through independent replay checks."""
     original, config, _ = exported
     root = tmp_path / "corrupt"
     shutil.copytree(original, root, ignore=shutil.ignore_patterns("_work"))
@@ -231,8 +268,116 @@ def test_corrupted_source_fails_without_hash_evidence(exported, tmp_path, case, 
     assert not list(root.glob("validation-*"))
 
 
+@pytest.mark.parametrize("include_market", [True, False])
+def test_trade_price_join_keeps_dates_nulls_and_account_partition(tmp_path, include_market):
+    """Join only price fields by date and symbol, including absent market rows."""
+    stage = validation._Stage(tmp_path / "prices", 8, date_partitions=3)
+    market_schema = {"DM_DATE": validation.pl.String, "DM_S_SYMB": validation.pl.String,
+                     "DM_LOW": validation.pl.Int64, "DM_HIGH": validation.pl.Int64,
+                     "_partition": validation.pl.String, "_day": validation.pl.String, "_order": validation.pl.Int64}
+    trade_schema = {"T_ID": validation.pl.Int64, "T_DTS": validation.pl.String, "T_S_SYMB": validation.pl.String,
+                    "_partition": validation.pl.String, "_day": validation.pl.String, "_order": validation.pl.Int64}
+    if include_market:
+        for day, low, high in (("2019-01-02", 100, 150), ("2019-01-03", 200, 250)):
+            stage.add("DailyMarket", {"DM_DATE": day, "DM_S_SYMB": "ABC", "DM_LOW": low, "DM_HIGH": high,
+                                      "_partition": day, "_day": day, "_order": 99}, market_schema)
+    for trade_id, day in enumerate(("2019-01-02", "2019-01-03", "2019-01-04"), 1):
+        stage.add("Trade", {"T_ID": trade_id, "T_DTS": day + " 09:00:00", "T_S_SYMB": "ABC",
+                            "_partition": "7", "_day": "initial", "_order": trade_id}, trade_schema)
+    stage.finish()
+    frame = stage.frame("Trade", 7).sort("T_ID")
+    prices = frame.select("_market_low", "_market_high").rows()
+    assert prices == ([(100, 150), (200, 250), (None, None)] if include_market else [(None, None)] * 3)
+    assert frame["_day"].to_list() == ["initial"] * 3
+    assert frame["_order"].to_list() == [1, 2, 3]
+    assert not any(column.endswith("_right") for column in frame.columns)
+
+
+@pytest.mark.parametrize("case,match", [("cash_sequence", "CT_ID"), ("cash_order", "timestamp and ID"), ("market", "Market keys")])
+def test_file_boundaries_fail_before_later_parse_errors(case, match):
+    """Keep the first global-key failure ahead of a later failure in the same file."""
+    result = validation._ParsedFile("source")
+    result.error = ValidationError("Later row failed.")
+    if case == "cash_sequence":
+        result.first_cash = 3, ("2019-01-02 08:00:00", 3)
+    elif case == "cash_order":
+        result.first_cash = 2, ("2019-01-01 08:00:00", 2)
+    else:
+        result.first_market = "2019-01-01", "S0000000001"
+    with pytest.raises(ValidationError, match=match):
+        validation._check_file_boundary(result, 1, ("2019-01-02 08:00:00", 1), ("2019-01-02", "S0000000001"))
+
+
+def test_file_boundaries_keep_empty_files_and_advance_valid_ranges():
+    """Advance exact cash and market boundaries while empty files change no state."""
+    state = 1, ("2019-01-01 08:00:00", 1), ("2019-01-01", "S0000000001")
+    assert validation._check_file_boundary(validation._ParsedFile("empty"), *state) == state
+    result = validation._ParsedFile("next")
+    result.first_cash = 2, ("2019-01-02 08:00:00", 2)
+    result.last_cash = 4, ("2019-01-02 10:00:00", 4)
+    result.first_market = "2019-01-02", "S0000000001"
+    result.last_market = "2019-01-02", "S0000000002"
+    assert validation._check_file_boundary(result, *state) == (4, result.last_cash[1], result.last_market)
+
+
+def test_parallel_cash_cutover_keeps_first_error(exported, tmp_path):
+    """Reject a cross-file CT_ID gap before a later malformed stream amount."""
+    original, config, _ = exported
+    root = tmp_path / "cash-boundary"
+    shutil.copytree(original, root, ignore=shutil.ignore_patterns("_work"))
+    path = next(path for path in sorted((root / "stream" / "cash_transactions").glob("*.jsonl"))
+                if len(path.read_text().splitlines()) >= 2)
+    payloads = [json.loads(line) for line in path.read_text().splitlines()]
+    for payload in payloads:
+        payload["ct_id"] += 1
+    payloads[-1]["ct_amt"] = "invalid"
+    path.write_text("".join(json.dumps(payload) + "\n" for payload in payloads))
+    for workers in (1, 2):
+        with pytest.raises(ValidationError) as error:
+            validate(root, replace(config, workers=workers))
+        assert str(error.value) == "CT_ID must be one global sequence 1..N across cutover."
+        assert not list(root.glob("validation-*"))
+
+
+def _failing_partition(stage, partition):
+    """Make the later partition fail first in time, but not in result order."""
+    import time
+
+    if partition == 0:
+        time.sleep(.05)
+    raise ValidationError(f"Failed partition {partition}.")
+
+
+def test_parallel_replay_raises_lowest_failing_partition(tmp_path):
+    """Keep serial failure selection even when another partition fails sooner."""
+    from concurrent.futures import ProcessPoolExecutor
+    from multiprocessing import get_context
+
+    stage = validation._Stage(tmp_path, 3)
+    with ProcessPoolExecutor(max_workers=2, mp_context=get_context("spawn")) as executor:
+        with pytest.raises(ValidationError, match=r"Failed partition 0\."):
+            validation._replay_wave(executor, _failing_partition, stage)
+
+
+def test_replay_corruption_has_same_message_with_multiple_workers(exported, tmp_path, monkeypatch):
+    """Reject a changed holding through the same account check in both modes."""
+    original, config, _ = exported
+    root = tmp_path / "parallel-corrupt"
+    shutil.copytree(original, root, ignore=shutil.ignore_patterns("_work"))
+    _mutate_row(root, "HoldingHistory", "HH_H_T_ID", lambda value: str(int(value) + 1))
+    monkeypatch.setattr(validation, "_VALIDATION_PARTITION_BYTES", 128 * 1024)
+    messages = []
+    for workers in (1, 2):
+        with pytest.raises(ValidationError, match="Holding origin") as error:
+            validate(root, replace(config, workers=workers))
+        messages.append(str(error.value))
+        assert not list(root.glob("validation-*"))
+    assert messages[0] == messages[1]
+
+
 @pytest.mark.parametrize("source_name,partitions", [("CashTransaction", 128), ("DailyMarket", 1024)])
 def test_partition_sink_bounds_aggregate_row_group_buffers(tmp_path, monkeypatch, source_name, partitions):
+    """Keep aggregate Parquet buffers bounded when many partitions exist."""
     from data.data_source.generator.validation import _Stage, _stage_source
     from data.data_source.generator.formats import load_sources
     import polars as pl
@@ -246,6 +391,7 @@ def test_partition_sink_bounds_aggregate_row_group_buffers(tmp_path, monkeypatch
     original = pl.LazyFrame.sink_parquet
     calls = []
     def bounded_sink(frame, path, **kwargs):
+        """Record each partitioned sink and enforce its aggregate row-group bound."""
         if isinstance(path, pl.PartitionBy):
             group_rows = kwargs.get("row_group_size")
             assert group_rows is not None
@@ -257,17 +403,88 @@ def test_partition_sink_bounds_aggregate_row_group_buffers(tmp_path, monkeypatch
     assert calls
 
 
+def test_projected_large_factor_caps_partitions_and_bounds_writer_bytes():
+    """Keep projected factor 100 within a fixed partition and writer-buffer allowance."""
+    assert validation._partition_count(0) == 1
+    assert validation._partition_count(16 * 1024**2 + 1) == 2
+    partitions = validation._partition_count(135_000_000_000)
+    assert partitions == 1021
+    for source in (load_sources()["CashTransaction"], load_sources()["Customer"], load_sources()["Trade"].daily_version):
+        schema = validation._source_schema(source)
+        if source.name == "Customer":
+            schema.update(_present=pl.List(pl.String), _timestamp=pl.String, _kind=pl.String)
+        # Use maximum-width text and a full presence list to check the byte
+        # estimate against actual Arrow data, not only its own arithmetic.
+        values = {}
+        fields = {field.name: field for field in source.fields}
+        for name, datatype in schema.items():
+            if datatype == pl.String:
+                field = fields.get(name)
+                if field:
+                    width = int(field.type[5:-1]) if field.type.startswith("CHAR(") else 10 if field.type == "DATE" else 19
+                else:
+                    width = {"_flag": 1, "_day": 10, "_partition": 10, "_timestamp": 19, "_kind": 9}.get(name, 6)
+                values[name] = "X" * width
+            elif isinstance(datatype, pl.List):
+                values[name] = list(schema)
+            else:
+                values[name] = 1
+        frame = pl.DataFrame([values], schema=schema)
+        assert frame.estimated_size() <= validation._staged_row_bytes(schema)
+        rows = validation._Stage._row_group_rows(partitions, schema)
+        assert rows * partitions <= validation.PARQUET_BUFFER_ROWS
+        assert rows * partitions * validation._staged_row_bytes(schema) <= validation._PARQUET_BUFFER_BYTES
+        if source.name == "CashTransaction":
+            assert rows >= 128
+
+
+def test_account_replay_reads_hidden_partition_once(tmp_path, monkeypatch):
+    """A duplicate-ID check reuses the Hidden frame instead of scanning it twice."""
+    stage = validation._Stage(tmp_path, 1)
+    schema = {"account_id": pl.Int64, "_partition": pl.String}
+    for _ in range(2):
+        stage.add("Hidden", {"account_id": 1, "_partition": "0"}, schema)
+    stage.finish()
+    original = stage.frame
+    reads = []
+    def counted_frame(table, partition):
+        """Count Hidden materializations without changing the staged values."""
+        if table == "Hidden":
+            reads.append(partition)
+        return original(table, partition)
+    monkeypatch.setattr(stage, "frame", counted_frame)
+    with pytest.raises(ValidationError, match="Duplicate hidden account ID"):
+        validation._replay_accounts(stage, 0, set())
+    assert reads == [0]
+
+
+def test_account_stride_spreads_at_partition_ceiling():
+    """Every default account slot reaches every partition instead of a residue subset."""
+    partitions = validation._partition_count(135_000_000_000)
+    for slot in range(1, 4):
+        counts = [0] * partitions
+        for index in range(partitions * 4):
+            counts[(24 * index + slot) % partitions] += 1
+        assert counts == [4] * partitions
+
+
 def test_saved_hash_evidence_detects_unrelated_text_change(exported, tmp_path):
+    """Detect a valid-format text mutation using the saved source hash."""
     original, config, inventory = exported
     root = tmp_path / "hash"
     shutil.copytree(original, root, ignore=shutil.ignore_patterns("_work"))
     path = root / "offline" / "initial" / "Prospect.csv"
-    path.write_text(path.read_text().replace("Alex", "Alec", 1))
+    lines = path.read_text().splitlines()
+    fields = lines[0].split(",")
+    fields[1] = "Different" if fields[1] != "Different" else "Changed"
+    lines[0] = ",".join(fields)
+    path.write_text("\n".join(lines) + "\n")
     with pytest.raises(ValidationError, match="SHA-256"):
-        validate(root, config, inventory)
+        validate(root, replace(config, workers=2), inventory)
 
 
 def test_duplicate_json_keys_fail(tmp_path):
+    """Reject duplicate stream JSON keys instead of silently overwriting them."""
     path = tmp_path / "20190101.jsonl"
     path.write_text('{"ct_id":1,"ct_id":1,"ct_ca_id":1,"ct_dts":"2019-01-01T08:00:00Z",'
                     '"ct_amt":"1.00","ct_name":"Deposit","schema_version":1}\n')
@@ -276,6 +493,7 @@ def test_duplicate_json_keys_fail(tmp_path):
 
 
 def _causal_replay(tmp_path, *, pending_first, submission_conflict=False, negative_first=False):
+    """Build same-second source scenarios that require causal cash and trade ordering."""
     config = Config(initial_start="2018-11-15", initial_end="2018-12-31", daily_start="2019-01-01", daily_end="2019-01-01",
                     scale_factor=.01, companies=1, securities=1, commission_basis_points=0, charge_cents=0 if submission_conflict else 100)
     customer_directory = tmp_path / "customers"
@@ -289,6 +507,7 @@ def _causal_replay(tmp_path, *, pending_first, submission_conflict=False, negati
     tables = {"Hidden": [account], "AccountXML": [version], "Trade": [], "TradeHistory": [], "HoldingHistory": [], "CashTransaction": []}
 
     def snapshot(identifier, kind, timestamp):
+        """Add a completed initial Trade snapshot with exact replay money fields."""
         tables["Trade"].append({"T_ID": identifier, "T_CA_ID": 1, "T_S_SYMB": "S0000000001", "T_ST_ID": "CMPT",
                                 "T_DTS": timestamp, "T_TT_ID": kind, "T_IS_CASH": 1, "T_QTY": 1, "T_BID_PRICE": 1000,
                                 "T_EXEC_NAME": "Alex Broker", "T_TRADE_PRICE": 1000, "T_CHRG": 100, "T_COMM": 0, "T_TAX": 0,
@@ -296,14 +515,17 @@ def _causal_replay(tmp_path, *, pending_first, submission_conflict=False, negati
                                 "_market_low": 1000, "_market_high": 1000})
 
     def history(identifier, status, timestamp):
+        """Add one source-visible status transition to the initial trade history."""
         tables["TradeHistory"].append({"TH_T_ID": identifier, "TH_DTS": timestamp, "TH_ST_ID": status,
                                        "_day": "initial", "_order": len(tables["TradeHistory"]) + 1})
 
     def cash(amount, name, timestamp):
+        """Append a cash transaction with its exact source sequence and amount."""
         tables["CashTransaction"].append({"CT_ID": len(tables["CashTransaction"]) + 1, "CT_CA_ID": 1,
                                           "CT_DTS": timestamp, "CT_AMT": amount, "CT_NAME": name, "_day": "initial"})
 
     def holding(identifier, origin, before, after):
+        """Append the saved origin and before/after quantities for a completed trade."""
         tables["HoldingHistory"].append({"HH_T_ID": identifier, "HH_H_T_ID": origin, "HH_BEFORE_QTY": before,
                                          "HH_AFTER_QTY": after, "_day": "initial"})
 
@@ -368,14 +590,17 @@ def _causal_replay(tmp_path, *, pending_first, submission_conflict=False, negati
 
 @pytest.mark.parametrize("pending_first", [False, True])
 def test_same_second_settlement_order_preserves_cash_and_position_origin(tmp_path, pending_first):
+    """Use source cash order to preserve spending and holding origins in timestamp ties."""
     _causal_replay(tmp_path, pending_first=pending_first)
 
 
 def test_same_second_new_pending_order_reserves_before_higher_trade_id(tmp_path):
+    """Reject a market buy that would spend funds already reserved by a pending order."""
     with pytest.raises(ValidationError, match="Open buy orders reserve unavailable funds"):
         _causal_replay(tmp_path, pending_first=False, submission_conflict=True)
 
 
 def test_same_second_later_deposit_cannot_fund_earlier_cash_transaction(tmp_path):
+    """Reject a withdrawal that would need a later same-second deposit."""
     with pytest.raises(ValidationError, match="Cash balance"):
         _causal_replay(tmp_path, pending_first=False, negative_first=True)

@@ -1,1 +1,2 @@
+# Read, validate, and place exported PNGs; renderer CLIs are installed separately.
 Pillow>=12,<13

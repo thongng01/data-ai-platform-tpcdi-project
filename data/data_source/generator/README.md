@@ -1,264 +1,343 @@
 # Brokerage Source Generator
 
-The generator implements generation stage 1: business behavior and source encoding for a retail brokerage. It simulates customers, accounts, trades, cash transactions, holdings, and watches one day at a time. A separate publisher delivers the saved offline files to `upstream` and the cash transaction stream to Kafka without running the simulation again.
+The generator runs generation stages 1 to 3 for a retail brokerage: business behavior, hidden attrition signal, and source recording. It produces connected customers, accounts, trades, cash transactions, holdings, watches, market records, and references. The [publisher](../publisher/README.md) runs generation stage 4. Its `clean` profile delivers the saved files and cash transaction messages without adding delivery problems or repeating the business simulation.
 
-[Data Platform section 2](../../../docs/Data-Platform.md#2-data-generation-and-problem-injection) owns the business rules. [Data Specification](../../../docs/Data-Specification.md#3-physical-source-files-and-ingestion-rules) owns the source contract. Generation stages 2 and 3 attach at the planning and recording interfaces described below.
+[Data Platform section 2](../../../docs/Data-Platform.md#2-data-generation-and-problem-injection) owns the business model. [Data Specification](../../../docs/Data-Specification.md#3-physical-source-files-and-ingestion-rules) owns the source contracts. This guide explains how to run the generator and follow its implementation.
 
 ## Commands
 
-Run commands from the repository root with Python 3.14. If `.venv` does not exist, create it with `uv venv --python 3.14 .venv`. Install the pinned dependencies into this checkout's environment:
+Run commands from the repository root with Python 3.14. If `.venv` does not exist, create it with `uv venv --python 3.14 .venv`. Install the pinned dependencies:
 
 ```bash
 uv pip install --python .venv/bin/python -r data/data_source/generator/requirements.txt
 ```
 
-Each run requires a new output directory. The small configuration covers `2018-12-20` through `2019-02-03`, with a fractional scale factor and a small market:
+Each new run needs a new output directory. The small configuration covers `2018-12-20` through `2019-02-03`, with a fractional scale factor and a small market:
 
 ```bash
 .venv/bin/python -m data.data_source.generator run \
   --config data/data_source/generator/configs/small.yaml \
-  --output local/runs/small
-.venv/bin/python -m data.data_source.generator validate local/runs/small
+  --output local/data_source_generation/small
+.venv/bin/python -m data.data_source.generator validate local/data_source_generation/small
 .venv/bin/python -m pytest data/data_source/generator/tests -q
 ```
 
-A second run with the same business settings supports byte comparison. The comparison checks actual file coverage and hashes, not only the saved metadata:
+`run` performs full saved-file validation by default. For a repeat run of unchanged code, `--skip-validation` omits only that full validator. Export still checks source contracts, ordering, duplicate keys, and expected file coverage, and records counts, byte sizes, and hashes. The runner publishes the final directory with `status: generated-unvalidated` in both `manifest.json` and `summary.json`. Independent error measurements and Trade schema counts stay null until validation succeeds. The flag is a command choice, not a configuration setting, so it does not change dataset identity.
 
 ```bash
 .venv/bin/python -m data.data_source.generator run \
   --config data/data_source/generator/configs/small.yaml \
-  --output local/runs/small-repeat
-.venv/bin/python -m data.data_source.generator compare \
-  local/runs/small local/runs/small-repeat
+  --output local/data_source_generation/small-unvalidated --skip-validation
+.venv/bin/python -m data.data_source.generator validate local/data_source_generation/small-unvalidated
 ```
 
-The benchmark command runs its configurations sequentially and saves a combined summary. `medium.yaml` uses factor 1 over the reference calendar; `large.yaml` uses factor 5. Check free disk before these runs:
+`validate` reads the saved dataset without regeneration and records `status: validated` in both reports only after every check passes. The publisher refuses `generated-unvalidated` datasets unless the caller supplies `--allow-unvalidated`; its delivery report records that override.
+
+To check repeatability, run the same business configuration into another directory and compare the saved bytes:
 
 ```bash
-df -h local
+.venv/bin/python -m data.data_source.generator run \
+  --config data/data_source/generator/configs/small.yaml \
+  --output local/data_source_generation/small-repeat
+.venv/bin/python -m data.data_source.generator compare \
+  local/data_source_generation/small local/data_source_generation/small-repeat
+```
+
+To check the attrition signal on a small account sample from a validated run:
+
+```bash
+.venv/bin/python -m data.data_source.generator signal-check \
+  local/data_source_generation/small --sample-accounts 512
+```
+
+The check builds features from observed account status and cash transactions, not hidden plans. It labels closures in the following 30 days and uses chronological training, validation, and test periods with 30-day label gaps. A short run can return `insufficient_data` because every split needs fully observed labels and both closures and nonclosures. That result does not establish signal quality. The check writes `summary/signal_check.json` and saves observations in `summary/signal_observations.parquet` when observations exist.
+
+The benchmark command records phase timings and resource measurements. This command runs factor 1 over the full reference calendar:
+
+```bash
 .venv/bin/python -m data.data_source.generator.benchmark \
-  --output local/runs/calibration-before \
-  --configs data/data_source/generator/configs/medium.yaml \
-            data/data_source/generator/configs/large.yaml
+  --output local/data_source_generation/factor1-measurement \
+  --configs data/data_source/generator/configs/medium.yaml
 ```
 
-`medium-wide.yaml` changes execution settings for a factor 1 repeatability run. `long-history.yaml` also uses the reference calendar. The benchmark output directory and each run directory must be absent before the command starts.
+Choose an unused benchmark directory and check free disk before a measurement run. The benchmark runs only the configuration paths supplied to `--configs`. It also compares bytes when two configurations have the same semantic dataset identity.
 
-## Output Layout
+## How to Read the Code
 
-Only files under `offline/` become objects in `upstream`. Removing that prefix gives the object key. The publisher does not upload generator metadata or hidden state.
+Start with `runner.worker`, which calls the generation phases in order. Then read `BusinessSimulation.run` in `activity.py`. It names the steps of one simulated day. Follow a method into the business planner or recorder when you need its rule; function docstrings and nearby comments explain the detailed calculations.
 
-```text
-<dataset>/
-  offline/initial/                    # Original source names
-  offline/daily/YYYYMMDD/             # Dated source names
-  stream/cash_transactions/YYYYMMDD.jsonl
-  summary.json
-  summary/hidden/accounts-NNNNNNNNNNN.parquet
-  config.json
-  manifest.json
-  validation.json
-  supervision.json
-  worker.log
-  _work/                             # Temporary; removed after a successful run
-```
+| Pipeline position | Modules and main types | Responsibility |
+| --- | --- | --- |
+| Run contract and supervision | `__main__.py`, `config.py`, `runner.py`; `Config` | Parse commands, validate settings, supervise resources, and write reports |
+| Retained work | `checkpoints.py`; `Checkpoints` | Bind completed steps and sealed parts to code hashes, semantic settings, and intermediate layout before resume reuses them |
+| Initial references | `reference.py`, `personal_data.py` | Build static reference files and the HR roster from repeatable personal fields |
+| Shared market | `market.py`; `Market` | Build prices, exchange sessions, released FINWIRE values, and dividends |
+| Population plan | `population.py`; `Population` | Plan joining groups, account traits, replacement capacity, and expected risk normalization |
+| Daily business execution | `business.py`, `activity.py`; `BusinessDay`, `Intent`, `BusinessSimulation`, `Ledger`, `HoldingBook` | Select account-wide proposals in arrays and execute ordered money and holding changes |
+| Attrition signal | `attrition.py`; `AttritionPlanner`, `ReturnHistory` | Select exits from observed history, add leaving and partial-outflow intents, and classify observed outcomes |
+| Source recording | `customers.py`, `recording.py`; `SourceRecorder` | Encode CMS actions, customer and account fields, prospect snapshots, data errors, and trade channels |
+| Typed source parts | `generation.py`, `output.py`; `Generation`, `PartWriter` | Route typed records through recording, buffer bounded rows, and seal each producer part |
+| Source publication | `output.py`, `output_policy.py`, `output_formats.py`, `money.py`, `formats.py`, `definitions/`; `SourcePublisher`, `SourcePolicy`, `CashPolicy`, `TradePolicy` | Discover sealed parts, order and check native batches, select family contracts, assign sequences, and write source bytes |
+| Saved-file validation | `validation.py`, `validation_faults.py`; `FaultAudit` | Parse saved bytes, verify exact data-error evidence, and replay business invariants |
+| Sampled signal check | `signal_check.py`; `check_signal` | Build source-observed features and compare a logistic model with the outflow rule using chronological splits |
 
-| Delivery | Expected offline files |
+`Stage1IntentPlanner` supplies ordinary business behavior. `AttritionPlanner` extends that interface without changing settlement rules. `SourceRecorder` receives correct business fields and records a separate copy, so a recorded fee error cannot change the ledger.
+
+## Configuration and State
+
+Configuration holds numbers and distribution choices. Source definitions hold field order, types, widths, separators, null rules, and dated format additions. The loader rejects duplicate or unknown keys, invalid dates, nonfinite numbers, invalid distributions, and values that exceed source widths.
+
+| Settings | Meaning |
 | --- | --- |
-| Initial load | `CustomerMgmt.xml`, `Trade.txt`, `TradeHistory.txt`, `CashTransaction.txt`, `HoldingHistory.txt`, `WatchHistory.txt`, `DailyMarket.txt`, `HR.csv`, `Prospect.csv`, six reference files, and released FINWIRE posting-quarter files |
-| Every daily delivery | `Customer_YYYYMMDD.txt`, `Account_YYYYMMDD.txt`, `Trade_YYYYMMDD.txt`, `HoldingHistory_YYYYMMDD.txt`, `WatchHistory_YYYYMMDD.txt`, `DailyMarket_YYYYMMDD.txt` |
-| First day of each month | The daily set plus `Prospect_YYYYMMDD.csv` |
-| FINWIRE release date | The applicable daily set plus `FINWIREyyyyQq`, named by the posting quarter of `PTS` |
+| `initial_start`, `initial_end`, `daily_start`, `daily_end` | Inclusive UTC dates; `daily_start` must be the day after `initial_end` |
+| `scale_factor`, `customers_per_unit`, `seed` | Firm size at the expected cutover anchor and the stable random seed; `customers_per_unit` defaults to 3,601 |
+| Population, profile, wealth, and activity settings | Joining, closure, inactivation, update, trade, cash-flow, margin, and watch distributions |
+| `positions_per_account` | Repeatable security-selection slots per account; default 4; zero lets buys select from the full market |
+| `account_generations` | Reserved account generations for each joining account slot; default 8; checked capacity prevents ID reuse |
+| `attrition_enabled` | Select the attrition planner; disabling it selects ordinary stage 1 lifetime planning |
+| Attrition settings | Warning share 80%, warning length 1 to 8 weeks, and 1 to 4 liquidation steps |
+| `annual_lookalike` | Intended confirmed look-alike rate, default 0.02 per account-year; measured outcomes determine the realized rate |
+| `lookalike_opportunity_multiplier` | Proposal-rate calibration factor, default 2.12; multiplies `annual_lookalike` to set the raw opportunity rate |
+| Data-error settings | Five independent rates, listed under Source Recording below |
+| `trade_channel_start` | First daily delivery date with `T_CHANNEL`; default `2019-07-01` |
+| Market settings | Companies, securities, prices, volatility, popularity, shock days, and dividend rules, independent of firm size |
+| `customer_group_size`, `workers`, `threads` | Customer group bound, worker processes for activity and validation, and Polars thread count; defaults 1,024, 4, and 2; `workers` accepts 1 through 8 |
+| `export_rows` | Aggregate typed-record buffer and maximum delivered native batch rows; default 8,192 |
+| `merge_fan_in` | Accepted from 2 through 64 for configuration compatibility, default 16; native export ignores this setting and reports its value |
+| `memory_limit_mb`, `disk_limit_mb`, `timeout_seconds` | Aggregate process-tree memory, dataset disk, and elapsed-time budgets; defaults 8,192 MiB, 65,536 MiB, and 43,200 seconds |
 
-For example, Q1 2019 reports released April 30 go to `offline/daily/20190430/FINWIRE2019Q2`. The initial prospect snapshot represents `initial_end`. HR and reference files load once. Every expected file exists, including a zero-record file when nothing happens. The output contains no benchmark audit files or `BatchDate.txt`.
-
-Each daily delivery date also has a saved stream file, empty when it has no cash transactions. Daily offline files never contain `CashTransaction.txt`. Saved stream records use compact UTF-8 JSON Lines with the following fixed field order and a final LF after each record:
-
-| Field | Value |
-| --- | --- |
-| `ct_id` | Integer `CT_ID` from the global sequence shared with the initial file |
-| `ct_ca_id` | Integer natural account ID; its decimal text is the publisher's Kafka key |
-| `ct_dts` | UTC timestamp as `YYYY-MM-DDTHH:MM:SSZ` |
-| `ct_amt` | Signed decimal text with exactly two decimal places |
-| `ct_name` | `Deposit`, `Withdrawal`, `Trade settlement <trade_id>`, or `Dividend <symbol>` |
-| `schema_version` | Integer `1` |
-
-Stream files and records follow `(ct_dts, ct_id)` order. Business time stays separate from publisher delivery time. Initial cash transactions have `CT_ID` first and no CDC fields. Daily OLTP files have `CDC_FLAG` and `CDC_DSN` before their business fields; saved stream records have neither.
-
-## Configuration
-
-Configuration holds numbers and distribution choices. Code holds business rules. Source definitions hold field order, types, separators, widths, null rules, and CDC support. Unknown keys and executable expressions are not configuration interfaces.
-
-| Settings | Meaning and defaults |
-| --- | --- |
-| `initial_start`, `initial_end`, `daily_start`, `daily_end` | Inclusive dates; `2014-01-01`, `2018-12-31`, `2019-01-01`, `2025-12-31` |
-| `scale_factor`, `customers_per_unit`, `seed` | Firm size, 3,300 cutover customers per unit before calibration, and nonnegative 63-bit seed |
-| `account_shares`, `profile_shares`, `tier_shares`, `tax_shares` | Account-count, behavior-profile, tier, and account-tax-status distributions |
-| Annual population rates | Net growth 8%, account closures 3%, customer inactivation 2%, customer and account updates 5% each |
-| `annual_trade_rates`, `order_shares` | Profile rates 4, 24, 12, 150, 750; market buy, limit buy, limit sell, market sell shares 20%, 30%, 30%, 20% |
-| Activity and cash flow | Per-account activity variation; profile deposit and withdrawal rates; funding and trade-size fractions of wealth; weekend multiplier 0.4; tax-season multiplier |
-| Wealth and margin | Wealth bounds, margin share 20%, and wealth-based borrowing-limit bounds |
-| Fees | Charge 100 cents, commission 10 basis points, and zero transaction tax |
-| Watches and prospects | Watch rate 0.1 per customer-day; watch lifetimes; account-closure cancellation share; prospects about twice active accounts; customer overlap about 30% |
-| Market | 1,250 companies, 2,000 securities, price bounds, volatility, about four shock days per year, shock trading multiplier 3, security popularity |
-| Dividends | Paying-security share 40%; annual yield bounds 1% to 4%; quarterly payments |
-| `customer_group_size`, `workers`, `threads` | Execution settings: 2,048 customers, one worker, two Polars threads |
-| `export_rows`, `merge_fan_in` | Aggregate export row buffer 8,192; at most 16 merge inputs |
-| Resource budgets | Aggregate process-tree RSS 2,048 MiB, disk 65,536 MiB, timeout 43,200 seconds |
+The expected cutover customer count is `scale_factor * customers_per_unit`. With the default account shares, each customer has 1.67 accounts on average. Factor 1 therefore anchors about 3,601 customers and 6,014 accounts; factor 100 anchors about 360,100 customers and 601,367 accounts. These are planning expectations, not exact realized populations.
 
 Profile arrays use this order: dormant, long-term investor, retiree, active trader, and day trader. Account-count shares refer to one, two, and three accounts. Tier shares refer to tiers 1, 2, and 3. Tax-status shares refer to codes 0, 1, and 2.
 
-The loader rejects duplicate keys, unknown keys, booleans in numeric fields, nonfinite values, invalid probabilities, invalid distribution sums, and source-width overflow. It requires `initial_start <= initial_end`, `daily_start <= daily_end`, and `daily_start == initial_end + 1 day`. Both periods contain at least one date. Calendar dates outside the supported range fail before generation.
+With a positive `positions_per_account` value N, each account draws N fixed security selections from stable keys. Slots can select the same security, so the account's buy universe contains up to N distinct securities. Later buys use that same universe, including after a full sale; this setting does not simply cap simultaneous positions while allowing new securities over time.
 
-Population counts use explicit decimal rounding. A fractional factor must still produce at least one customer, account, prospect, and broker. The population plan anchors the firm at cutover, derives the earlier and later customer counts from net growth, and replaces eligible closed accounts. Customer inactivation contributes to account closures; it is not an additional 3% closure rate. Tier assignment ranks total joining wealth within monthly joining groups, with a separate group for customers present at `initial_start`; equal wealth sorts by customer ID.
+NumPy arrays hold mutable customer and account state. The simulation selects daily activity over account arrays, while Polars builds export batches, hidden-state Parquet files, and validation queries. Shared memory-mapped market arrays and a bounded day cache avoid scalar reads from disk for each event. Each customer and all related accounts stay in one group, so one worker owns every change to an account.
 
-Scale factor changes the firm, not market or reference size. A shorter calendar keeps the requested cutover firm size and produces less activity. Changing group size, worker count, threads, export row bound, or merge fan-in does not change source bytes.
+With `workers: 1`, the coordinator simulates groups directly. With more workers and more than one group, a process pool simulates up to `workers` groups at once. The coordinator waits for results and does not simulate a group. Each free process takes the next group without waiting for other processes. A worker error cancels pending groups; running groups finish and retain their sealed parts before the error returns. The runner retains partial output and does not publish it.
 
-## Simulation and State
+The defaults use four workers and 1,024 customers per group. A factor 1 measurement over `2018-10-01` through `2019-07-31`, with two Polars threads and an 8 GiB memory budget, gives these single-run activity results. RSS includes the generator coordinator, pool workers, and resource tracker, but not the measurement wrapper.
 
-The coordinator creates shared market history and a compact population plan before customer-group execution. NumPy structured arrays store the plan, and read-only memory-mapped arrays supply shared market values. Workers keep numeric balance, reservation, and holding buffers, with indexes for live orders, holdings, and watches. Python row functions encode source records. Polars builds hidden-state Parquet files and runs typed validation queries.
+| Workers | Customers per group | Groups | Activity wall seconds | Activity CPU seconds | Peak activity RSS MiB |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 4 | 1,024 | 4 | 8.744 | 35.410 | 1,167.29 |
+| 4 | 512 | 8 | 8.787 | 34.638 | 1,144.43 |
+| 8 | 512 | 8 | 8.126 | 61.743 | 2,012.98 |
 
-| State | Retained content |
+Four workers limit CPU and memory cost while retaining most of the measured wall-time benefit. The 1,024-customer group bound uses fewer groups than 512 without a material activity-time difference in this measurement. Eight workers remain available up to the configured limit. These bounded measurements do not establish larger-workload memory limits. Every run uses the configured process-tree guard; its default is 8 GiB.
+
+Customer-update and watch-count draws use arrays with the same named keys as scalar draws. The simulation visits customers only when an update, watch addition, due cancellation, or lifetime action can occur. Due-day indexes select watch cancellations and newly due orders. Account indexes select orders for leaving and liquidation. Unfilled due orders remain eligible on later trading days because the day's price range can permit execution.
+
+| Retained state | Contents and lifetime |
 | --- | --- |
-| Customer and account plan | IDs, dates, hidden traits, joining tiers, borrowing limits, and base-rate closure dates |
-| Ledger | Signed integer-cent balances and reserved funds per account |
-| Holding | One account and security pair: first-buy origin, quantity, cost, and reserved shares; a full sale releases the entry |
-| Open trade | Identity, account, security, type, quantity, bid, due date, reservation, status, and transition ordinal |
-| Watch | Customer, security, and due removal date |
-| Prospect | Persistent identity and customer match; snapshots rendered in bounded blocks |
+| Population | Stable IDs, joining dates, hidden traits, joining tiers, borrowing limits, and replacement slots |
+| Ledger | Integer-cent balances and reserved funds per account |
+| Holding | One account and security pair with first-buy origin, quantity, cost, and reserved shares; a full sale releases the entry |
+| Open trade | Identity, account, security, type, quantity, bid, due date, reservation, and status |
+| Return history | Per-account equity indexes in a 96-day circular buffer for the three-calendar-month lookback |
+| Watches and prospects | Live watch periods and persistent prospect identities; snapshot text uses bounded blocks |
 
-The first buy creates a holding and supplies its `HH_H_T_ID` origin. Later buys and sells change that holding's quantity. A full sale ends it; a later buy creates a new origin. Every completed trade produces exactly one `HoldingHistory` row. A sell does not split into several trades to consume separate buy lots.
+A cash account cannot spend below zero. A margin account cannot exceed its borrowing limit. Reservations prevent two proposals from using the same money or shares. Each completed trade produces one cash transaction and one holding change. A full sale ends the holding; a later buy starts a new origin. No short selling occurs.
 
-A planning allowance of 32 live holdings and two open trades per account gives `A * (1,024 + 32 * 64 + 2 * 128) + C * (1,024 + 8 * 32) + P * 64` bytes for `A` accounts, `C` customers, and `P` prospects. With 6,144 accounts, 2,048 customers, and a 2,048-prospect block, this is about 22.13 MiB. These allowances are estimates, not measured buffer sizes or behavior caps. Runtime indexes, text, shared pages, and export buffers also consume memory. The summary reports numeric state-buffer bytes and observed state peaks. The supervisor measures aggregate RSS.
+The runner refuses an existing output directory or its `.partial` counterpart for a new run. It writes under `.partial`, samples aggregate process-tree RSS every 0.1 seconds and disk use every two seconds, and stops the process group if a budget fails. Sampling is not a kernel memory limit. A failed run retains logs, checkpoints, and partial evidence. A successful run passes full validation before the runner removes temporary files and renames the directory, unless `--skip-validation` explicitly selects the unvalidated state.
 
-Each customer and all related accounts stay in one group. One worker executes groups directly. With two workers, the coordinator and one spawned child execute separate groups. The spawn resource tracker counts toward memory use but does not simulate a group. More groups increase total work without requiring one resident history for the whole firm.
+Resume a retained run with its saved configuration, or supply `--config` to change permitted runtime settings:
 
-A worker performs these steps for each day:
+```bash
+.venv/bin/python -m data.data_source.generator run --resume local/data_source_generation/small.partial
+```
 
-1. Read released FINWIRE values, NYSE session status, price bounds, dividends, and market shock status. Apply released company and security values before dependent activity.
-2. Apply customer and account openings and updates. New accounts start with zero balance and no holdings. Pay dividends at 06:00 UTC from start-of-day holdings; buys later that day do not qualify.
-3. Create deposit, withdrawal, trade, and watch intents from stable named random values. Opening funding occurs at 08:00 before the first buy. Ordinary cash flow occurs between 08:00 and 22:00 UTC.
-4. Execute trade and cash-flow intents in timestamp, account, ordinal, and kind order. Reserve funds for buys and shares for sells. Reduce or reject proposals that exceed available funds or unreserved holdings.
-5. Complete a trade as one business operation: release its reservation, apply settlement, update the holding, and record the completed trade and holding change. Execution stays within the daily low and high and respects the limit. Buys subtract value and fees; sells add proceeds minus fees. Both account types settle.
-6. On a closure date, cancel open orders, sell all holdings, deposit enough to repay borrowing, withdraw the remaining balance, then record closure. These actions occur within the closure day's hours, without an extended leaving period. Customer inactivation also cancels all watches; individual account closure cancels a configured share.
-7. Finish watch placements and removals and customer changes. At cutover, export the latest state of each unfinished trade. Carry only live state and bounded export buffers into the next day.
+Each completed step binds its result to `_checkpoints/context.json` through a SHA-256 context digest. That file records implementation file hashes, semantic configuration, `customer_group_size`, and `export_rows`. Resume refuses a changed code version, semantic configuration, or intermediate layout before it changes files. Worker count, thread count, resource budgets, and the ignored `merge_fan_in` setting can change. Reference records, market arrays, the population plan, each customer group, prospects, the coordinator part, export, and validation have completion receipts. Group receipts retain business counts and commit last, after actual lifetimes, hidden records, and sealed source files. Incomplete groups restart from immutable planned population rows, not partly changed lifetimes.
 
-A cash account cannot spend below zero. A margin account cannot exceed its borrowing limit. Reservations prevent a second proposal from spending the same funds or shares. No short selling occurs. Trades other than `CMPT` have NULL execution price, charge, commission, and tax.
+Resume keeps completed steps and redoes incomplete steps. If export did not complete, it deletes `offline/`, `stream/`, and `summary/data_errors.jsonl` before exporting all sealed parts again. It keeps hidden records and sealed parts. If export completed but validation failed, resume runs only validation. It can also reuse a matching completed validation receipt. `run --resume <dataset>` validates a final `generated-unvalidated` dataset without its temporary files. Resume requires successful full validation and does not accept `--skip-validation`. Run only one command against a retained directory at a time.
 
-Generation stage 2 has planned attachment points in population closure selection and `Stage1IntentPlanner`. The planner receives the simulation context before closure selection, ordinary deposits, withdrawals, trade submission, and account-related watch cancellations. Opening funding and required closure repayments still follow business constraints. Worker factories accept a replacement planner and recorder, so each group applies the same policy before business execution. Generation stage 3 has a planned attachment point in `SourceRecorder`. Its transform receives immutable correct business fields and returns recorded fields without changing the ledger. It covers trades, initial trade history, holding changes, watches, and daily customer and account rows. Initial customer XML and FINWIRE use their encoding functions directly. The identity transform and the 14-business-field trade format apply to all run dates, including dates after `2019-07-01`. These interfaces do not add data errors, attrition signals, or `T_CHANNEL`.
+`timeout_seconds` defaults to 43,200 seconds and applies separately to each supervised run attempt, including validation. `run --resume` applies the configured resource guards to validation; standalone `validate` does not.
 
-## Calendar, Identity, and Export
+## One Simulated Day
 
-NYSE session dates come from pinned `exchange-calendars`, calendar `XNYS`. The simulation puts exchange wall-clock hours on a fixed UTC clock without daylight saving time: 09:30 opening, 16:00 normal close, and 13:00 early close. Every daily delivery date exists even when the market is closed.
+`BusinessSimulation.run` repeats the following steps. Array selection handles independent account decisions. Ordered execution remains explicit because one receipt can fund a later payment, but not an earlier one.
 
-| Inclusive dates | Calendar dates | NYSE trading days |
-| --- | ---: | ---: |
-| `2014-01-01` to `2018-12-31` | 1,826 | 1,258 |
-| `2019-01-01` to `2025-12-31` | 2,557 | 1,760 |
+1. Resolve the date, released market values, session hours, and due closures in `_begin_day`. The attrition planner uses only completed earlier days when it selects new exit plans.
+2. Record customer and account openings in `_open_accounts`. New accounts start with zero balance and no holdings. Schedule opening funding at 08:00 UTC. Pay dividends at 06:00 UTC from start-of-day holdings in `_pay_dividends`.
+3. Select ordinary trade, deposit, withdrawal, and update proposals in `_plan_activity`. Schedule due orders in `_plan_due_orders`, then add the attrition planner's cancellations, staged sales, and withdrawals.
+4. Apply intents in timestamp, account, ordinal, and kind order in `_execute_intents`. Reserve money for buys and shares for sells. Reduce or reject proposals that exceed available funds or unreserved holdings.
+5. Complete each trade as one business operation: release its reservation, settle cash, change the holding, and record the trade and holding change. Execution respects the daily low and high and the order's limit. Noncompleted trades keep execution amounts empty.
+6. Finish due account closures in `close_accounts`: cancel orders, sell remaining holdings, deposit enough to repay borrowing, withdraw the remaining cash, then close. Update customer fields and watches in `_update_customers`; customer inactivation cancels all watches.
+7. Save unfinished trades at cutover and record state peaks in `_finish_day`. The planner values end-of-day holdings, updates past-return history, and activates eligible replacement slots for a later day.
 
-Calendar tests include the unscheduled closures on `2018-12-05` and `2025-01-09`. Initial market prices include one prior calendar year. FINWIRE starts five quarters before the quarter containing `initial_start`: initial company and security postings precede released reports, and each report releases on the last day of the following month. Quarterly SEC postings carry effective dividend values. The metadata records the dependency version, session counts, and calendar fingerprint.
+### Attrition Signal
 
-| Identity or output | Assignment and ordering |
+`AttritionPlanner` applies the profile, tenure, tier, and loss multipliers from the system model to daily exit risk. `ReturnHistory` removes external deposits and withdrawals before it measures investment performance over the preceding three calendar months. Missing lookback history and a lack of prior positive capital do not by themselves add the loss multiplier.
+
+With valid history at the lookback start, an investment loss that wipes out positive capital retains a 100% loss marker even when equity becomes zero or negative. An external withdrawal alone does not create that marker.
+
+For a customer-wide exit, the planner takes the mean risk of the customer's active accounts. This prevents account count alone from multiplying customer risk. A deterministic curve of expected account traits normalizes risk across customer groups; it does not use future realized outcomes. The population plan anchors expected cutover size. Actual customer and account counts and annual exit rates come from the realized simulation, not an exact marginal-rate guarantee.
+
+An exit plan stops ordinary deposits and buys, cancels open orders, schedules staged sales, and withdraws sale proceeds within the day. A customer exit gives the customer's active accounts one shared leaving period. Hidden plans stay under `summary/hidden/`; source records contain only their resulting business events.
+
+The planner also proposes partial sales and withdrawals without using future closure labels. A proposal becomes an `outflow_candidate` only after a sale executes and a positive withdrawal follows. The candidate does not suppress later account-closure or customer-inactivation risk. An unexecuted proposal does not count as an observed outflow.
+
+After the business simulation finishes, the planner classifies each candidate from the account's actual lifetime:
+
+| Hidden classification | Condition |
 | --- | --- |
-| Customer and account IDs | Stable population ordinals and account slots; IDs are not reused |
-| `T_ID` | Account ID times 1,000,000 plus lifetime trade ordinal, with checked bounds below `10^15` |
-| Initial trades and trade history | Trade ID; history also sorts by status timestamp and transition ordinal |
-| Initial customer XML | Action timestamp, customer ID, and action ordinal; omitted and empty elements stay distinct |
-| `CT_ID` | Global `1..N` sequence in timestamp, account ID, local ordinal, and kind-rank order, continuing across cutover |
-| Daily `CDC_DSN` | `1..N` within each file after full business-order sorting |
-| FINWIRE | `PTS`, then `CMP`, `SEC`, `FIN` dependency order, then natural ID |
-| Prospects and references | Stable natural ID; market rows sort by date and security |
+| `confirmed_lookalike` | The account remains open through the next 30 fully observed calendar days |
+| `closing` | The account closes on or before the end of the candidate's 30-day horizon |
+| `censored` | The run ends before the full horizon is observed, without an observed closure in that horizon |
 
-Named random values include stable entity identities, dates, purposes, and local ordinals. No worker shares a mutable random-number stream. The semantic dataset identity includes business configuration, seed, format version, source definitions, and calendar fingerprint. Metadata also records code hashes and dependency versions. Runtime settings and output location do not enter semantic identity.
+This classification changes only the hidden report. It does not change business behavior or feed the signal-check features. The signal check derives closure labels from observed account status instead.
 
-The exporter holds at most `export_rows` buffered records across outputs. Sorted runs and a SQLite catalog keep delivery-path metadata on disk. Multilevel merges open at most `merge_fan_in` inputs, rather than one file per date. Duplicate complete keys fail export. Final writers check source widths and encoding, assign sequences, and compute record counts, bytes, and SHA-256. The initial trade extract freezes each trade at its latest state through cutover; later outcomes appear only in daily CDC rows.
+The configured raw opportunity rate is `annual_lookalike * lookalike_opportunity_multiplier`, or `0.02 * 2.12 = 0.0424` per account-year with the defaults. The intended confirmed rate remains 0.02. The multiplier controls proposal intensity; it does not guarantee conversion into executed or confirmed outcomes. The summary reports proposal, executed-candidate, and confirmed rates separately. The confirmed rate uses account-day exposure whose next 30 calendar days lie within the run.
 
-The runner refuses an existing output directory or its `.partial` counterpart. It writes under `.partial`, supervises aggregate process-tree RSS and worker count every 0.1 seconds, and samples disk use every two seconds. Resource sampling is not a kernel memory limit. A budget violation stops the process group. Failed runs retain logs, configuration, and partial evidence; they do not resume automatically. After file validation and metadata writes succeed, the supervisor removes `_work/` and renames the directory.
+### Source Recording
 
-## Validation and Tests
+`SourceRecorder` applies data errors after the business calculation. It covers initial CMS XML, daily customer rows, FINWIRE company records, and completed trades. Each eligible field has a separate stable draw; one source record can contain more than one selected error.
 
-Validation reads saved source files and stream payloads, derives its own expected-file list, and compares saved counts and hashes. It stages narrow typed records into bounded Parquet blocks, partitions account and customer replay, and joins market prices by date. Parquet writers share a 262,144-row buffer allowance across concurrent partitions, with at most 8,192 rows per row group. A streaming query alone does not bound these writer buffers. Every partition is checked. The 16 MiB source-byte partition target is an average, not a hard replay-memory bound; one large account history can exceed it. Hidden account Parquet files supply account type, wealth, borrowing limit, and lifetime attributes; the validator reconstructs balances and holdings from source records rather than accepting hidden balances as proof.
+| Setting | Default | Recorded error |
+| --- | ---: | --- |
+| `customer_tier_error_rate` | 0.002 | Customer tier outside 1 to 3 |
+| `customer_dob_error_rate` | 0.001 | Customer birth date after the record date |
+| `company_rating_error_rate` | 0.01 | Company credit rating outside the accepted rating codes |
+| `trade_charge_error_rate` | 0.001 | Completed-trade charge above price times quantity |
+| `trade_commission_error_rate` | 0.001 | Completed-trade commission above price times quantity |
 
-| Check | Evidence |
-| --- | --- |
-| File contracts | Exact coverage, cadence, widths, separators, ASCII-compatible source text, LF endings, XML structure, JSON field order, and saved hashes |
-| Identities and lifetimes | Unique identities, valid references, customer and account versions, fixed account type, and no activity after closure |
-| Trades | Legal transitions, equal-time transition order, cutover snapshots, NYSE session hours, limit constraints, and execution price bounds |
-| Cash transactions | Global identity sequence, one correct settlement per completed trade, chronological cent replay, spending reservations, and margin limits |
-| Holdings | Correct account and security origin, matching before and after quantities, exactly one change per completed trade, and no short selling |
-| Dividends and watches | Start-of-day dividend obligations and amounts, effective released dividend values, watch lifetimes, and inactivation cancellation |
+The recorder writes the source identity, field, correct value, and recorded value to `summary/data_errors.jsonl`. This local audit is separate from source delivery. The generator validator recomputes error selection, requires an exact match to the recorded value and supported mutation, and restores only the verified correct value for business replay. Missing, duplicate, extra, or mismatched evidence fails validation. An arbitrary fee mismatch does not become acceptable because data errors are enabled.
 
-Tests cover strict configuration, calendar exceptions, decimal rounding, monthly joining tiers, population counts, XML null semantics, spending reservations, holding conservation, cash transaction sequences, bounded export, corruption detection, and retained failure evidence. Hypothesis checks holding changes, ledger spending, and stable random values. Complete-run tests compare bytes across group sizes 1, 7, and 2,048, worker counts 1 and 2, thread counts, merge fan-in, and export row bounds. Dates on both sides of `2019-07-01` confirm that M1 keeps one trade contract.
+Each audit key contains source, day, identity, and field. The identity uses only unchanged fields in the delivered record:
 
-## Measurements and Volume Calibration
-
-The generator summary separates settings from measured results. `manifest.json` holds file counts, bytes, hashes, implementation hashes, versions, phase times, and semantic identity. `summary.json` groups rows and bytes by source family, date, and initial, daily, or stream delivery. It also records trade counts by date, cash transaction types, profile counts, rejected proposals, state peaks, and account and security trade shares. `supervision.json` records sampled aggregate RSS, worker count, total disk, and combined temporary disk peaks for `_work/` and validation Parquet files.
-
-Phase timings include the work below. Buffer flushes and intermediate merges occur inside the phase that emits the records. The `export` phase measures the final merges and file writes, not all export work.
-
-| Phase | Work | Execution |
+| Audited source | Identity fields | Why records stay distinct |
 | --- | --- | --- |
-| `reference` | HR, Date, Time, and lookup files | Coordinator |
-| `market` | Shared prices, dividends, and FINWIRE | Coordinator; independent of firm size |
-| `population` | Customer and account lifetime plans | Coordinator |
-| `activity` | Business execution, source encoding, buffer flushes, and worker-run adoption | Customer groups; one or two workers |
-| `prospects` | Prospect snapshots and source encoding | Coordinator |
-| `export` | Final merges, CT_ID and CDC_DSN assignment, width checks, and hashes | Coordinator |
-| `validation` | Saved-file parsing, typed staging, price joins, and state replay | Coordinator, with Polars query threads |
+| Daily Customer | `C_ID`, `C_ST_ID`, `CDC_FLAG` | Status and flag pairs distinguish insert (`ACTV`, `I`), active update (`ACTV`, `U`), and inactivation (`INAC`, `U`). Each customer has at most one active update per day. |
+| CustomerMgmt | `C_ID`, `ActionType`, `ActionTS`; also `CA_ID` for `ADDACCT`, `UPDACCT`, and `CLOSEACCT` | Each account-specific action contains one Account element. The other actions occur at most once per customer and timestamp. |
+| Completed Trade | `T_ID`, `T_DTS`, `T_ST_ID` | Each unique trade completes once. |
+| FINWIRE company | `CIK`, `PTS` | Each company appears once per posting. |
 
-### Reference-Calendar Measurements
+Error selection uses the entity ID, source, field, day, and action kind or status. It does not use the added audit discriminators. Same-day active customer versions can share a draw, as can same-kind account actions for one customer. These records receive the selected error together, but each has separate evidence.
 
-One uncalibrated factor 1 run over the reference calendar has been measured, with two workers. It passed full validation and produced the same bytes as a one-worker run. Factor 5 and the calibrated runs have not been measured.
+The initial trade extract always has 14 business fields. Daily deliveries on or after `trade_channel_start` add `T_CHANNEL` as the 15th business field, after the original fields. Both daily versions also carry the two CDC fields. Channel selection uses stable trade identity and account profile; traders favor direct channels and retirees favor brokers. A later update to an older trade uses its delivery date's contract.
 
-| Calibration | Factor | Customers per unit | Offline bytes | Stream bytes | Generation seconds | Validation seconds | Peak RSS MiB | Peak temporary GiB |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Before | 1 | 3,300 | 1,302,815,601 | 561,699,602 | 1,284.40 | 948.49 | 1,279.64 | 2.562 |
+## Output, Ordering, and Identity
 
-Fixed market and reference families make up 430,169,772 of the offline bytes, so the firm contributes about 0.87 GB per unit before calibration. The run has 19,948,464 offline rows and 4,095,861 stream rows. Cash transactions over the whole calendar split into 2,693,939 dividends, 2,110,974 settlements, 521,178 deposits, and 176,860 withdrawals. In 2018 a normal session has 641.8 trades and a market-shock session 1,850.5; the top 1% and 10% of accounts make 24.0% and 64.0% of trades, and the top 1% of securities receive 23.3%.
+Only `offline/` files become objects in `upstream`, with that prefix removed from their object keys. The publisher sends saved `stream/` messages to Kafka. It does not upload generator reports, hidden state, or the data-error audit.
 
-### Runtime Profile
+```text
+<dataset>/
+  offline/initial/                    # Original source filenames
+  offline/daily/YYYYMMDD/             # Dated daily source filenames
+  stream/cash_transactions/YYYYMMDD.jsonl
+  summary.json
+  summary/hidden/                     # Account traits, lifetimes, and attrition plans
+  summary/data_errors.jsonl           # Exact data-error evidence
+  config.json
+  manifest.json
+  validation.json                    # Present after full validation succeeds
+  _checkpoints/                      # Run context and completed-step receipts
+  supervision.json
+  worker.log
+  _work/                             # Typed source parts, native spill, and state
+```
 
-A `cProfile` run of one 128-customer group over the reference calendar takes 79.83 seconds under profiling and records about 114.8 million calls. The cumulative times below overlap because a caller's time includes its callees. They are not unprofiled throughput estimates.
+Every expected file exists, including a zero-record file for no activity. Prospects arrive at cutover and on the first day of each later month. HR and the six reference families load once. FINWIRE uses posting-quarter filenames; Q1 reports released April 30 belong to `FINWIREyyyyQ2`. Market history includes the calendar year before `initial_start`.
 
-| Function work | Cumulative seconds |
-| --- | ---: |
-| Recording source rows | 26.96 |
-| Checking source records | 18.77 |
-| Scalar memory-map indexing | 8.73 |
-| Flushing sorted buffers | 3.57 |
-| Committing the sorted-run catalog | 1.49 |
-| Creating 8,540 sorted-run files | 0.64 |
+NYSE sessions come from pinned `exchange-calendars`, calendar `XNYS`. The fixed UTC clock uses 09:30 opening, 16:00 normal close, and 13:00 early close, without daylight saving time. The reference calendar has 1,258 trading days in 2014 through 2018 and 1,760 in 2019 through 2025. Every UTC calendar date has a daily delivery, including weekends and holidays.
 
-Python business execution, row encoding, field checks, and scalar indexing consume more time than file creation in this group. Large run counts also cause catalog operations, file metadata operations, and merge work. Final export and full-file validation have separate phase measurements above. The run catalog and bounded merge fan-in limit resident paths and open merge inputs; they do not remove the work needed to read and write records.
+| Output | Identity and order |
+| --- | --- |
+| Customers and accounts | Stable customer ordinals and account slots; IDs are not reused |
+| Trades | Account ID times 1,000,000 plus lifetime trade ordinal; checked bounds below `10^15` |
+| Initial trades and history | Trade ID, with history timestamp and transition order |
+| Initial CMS actions | Action timestamp, customer ID, action ordinal, action kind, and account ID as the final tie-breaker; omitted and empty fields stay distinct |
+| Cash transactions | Global `CT_ID` sequence in timestamp, account, local ordinal, and kind order, continuing across cutover |
+| Daily CDC rows | `CDC_DSN` from 1 through N within each file after business-order sorting |
+| FINWIRE | Posting timestamp, then company, security, and financial dependency order, then natural ID |
+| Prospects and references | Stable natural ID; daily market rows sort by date and security |
 
-### Calibration Rule
+Named random keys include entity identity, date, purpose, and local ordinal. The [personal word lists](definitions/README.md) also use stable keys, so matching prospects share customer names and addresses. No worker shares a mutable random stream. Group size, worker count, threads, export buffer size, merge fan-in, and output path do not change the source bytes for the same semantic settings.
 
-One GB per unit is the firm's variable offline contribution; fixed market and reference bytes come on top. Use full-reference-calendar factor 1 and factor 5 runs with equal market settings, behavior settings, and seed. For measured offline byte totals `B1` and `B5`, variable bytes per unit are `(B5 - B1) / 4`, and fixed bytes are `B1 - variable_bytes`. Measure fixed source families directly as a cross-check.
+`Generation` accepts typed tuples and named columns for all 18 source families. Money stays in integer cents, timestamps stay in epoch seconds, dates stay in epoch days, and security symbols use numeric IDs until export. `SourceRecorder` applies batch data errors and channel selection to a separate recorded frame. XML and FINWIRE keep their format-specific encoders.
 
-Set the next `customers_per_unit` to `old_customers_per_unit * 1,000,000,000 / variable_bytes`, use decimal half-up rounding, and rerun factor 1. Project factor 5 from the fitted fixed and variable contributions. If the calibrated factor 1 offline bytes differ from their projected total by more than 10%, rerun factor 5. Population sampling and staffing rounding can make this fit approximate. A short calendar does not calibrate the 12-year target. Do not change activity rates, duplicate rows, or change fixed market size to force a byte total. The factor 100 requirement counts at least 100,000,000,000 offline bytes; saved stream bytes, metadata, and temporary files do not count.
+`PartWriter` bounds the aggregate row buffer by `export_rows` and writes typed Parquet fragments. It receives explicit routing, batch-recording, and fault-recording functions. Each customer group owns an isolated directory and publishes its completion marker only after it consolidates and seals its parts. `SourcePublisher` reads sealed paths and completion markers without a live recorder or business state. It checks the scheduled groups and lets Polars order each family's records with disk spill. Duplicate complete sort keys fail export, including duplicates across native batch boundaries.
 
-## Accepted Business Choices
+`output_policy.py` keeps the Cash and Trade exceptions together: cash name expansion and checks, global cash IDs, daily cash JSON, and the dated Trade channel contract. `formats.trade_channel_day` owns the channel start date used by recording and contract selection. `money.py` owns scalar and native integer-cent text formatting; validation keeps its own parsing.
 
-These choices define how the generator handles the source contracts and unspecified business policies.
+Each bounded contract batch undergoes native formatting and field checks before it splits into delivery files. Cash IDs continue across cutover; CDC sequences restart within each file. `SourcePublisher` returns the source inventory and separate audit receipt to `Generation`. Writers measure rows, bytes, and SHA-256 hashes as they write. Native spill settings stay inside `output.py`; the runner installs them before it starts workers. Spill budgets and sampled process-tree guards do not constitute a hard RAM limit. Population arrays and business state also consume memory.
 
-| Choice | Rule | Reason |
-| --- | --- | --- |
-| Volume basis | Variable firm bytes target one GB per unit; fixed data adds a measured intercept | Market size does not depend on firm size |
-| Prior prices | Initial `DailyMarket.txt` includes one prior calendar year | The first simulation date needs 52-week prices |
-| Holdings | One holding per account and security; first buy supplies the origin; full sale ends it | One completed trade maps to one holding change without split sells |
-| Closure order | Cancel orders, sell holdings, repay borrowing by deposit, withdraw, then close | No holding or debt disappears without a source record |
-| Early close | Trading ends at 13:00 UTC on NYSE early-close dates | Session hours follow exchange dates under the fixed-clock rule |
-| Tier, tax, and margin | Rank joining groups by wealth; configurable borrowing limits; zero transaction tax with nonzero charge and commission | Explicit policies keep execution repeatable and settlement checks precise |
-| Watch cancellation | Customer inactivation cancels all watches; account closure cancels a configured share | Watches belong to customers, not individual accounts |
+The semantic dataset identity includes business settings, seed, format version, source definitions, word lists, and calendar fingerprint. The manifest also records implementation hashes and dependency versions.
 
-## Known Limits
+## Validation and Measurements
 
-This version implements generation stage 1 only. These limits are known and not yet addressed:
+Validation reads the saved files and stream messages, derives its own expected-file list, and checks coverage, cadence, field widths, encoding, hashes, and identities. It stages typed records into bounded Parquet blocks, partitions replay by account and customer, and joins market prices by date.
 
-- **Personal text is placeholder text.** Customer, prospect, and account names use templates such as `Family<id>` and the single first name `Alex`. Realistic names and addresses need word lists picked by the repeatable random function.
-- **Dividends dominate cash transactions.** Dividends are about 49% of all cash transactions, against about 85% settlements in the design. Accounts hold many paying positions, and each pays quarterly. This makes the saved stream about three times the designed size and inflates inflows.
-- **Volume is uncalibrated.** `customers_per_unit` is still 3,300, which gives about 0.87 GB per unit instead of 1 GB.
-- **Runtime.** Python per-event loops dominate. A factor 100 run would take about 60 hours with two workers; array processing and more workers are the planned remedies.
-- **Readability.** `BusinessSimulation.run` and the validator's account replay are long functions with positional tuples and unnamed codes.
-- **Unused pins.** `duckdb` and `pyarrow` are pinned and listed in run metadata but not imported.
-- **Later stages.** The attrition signal (stage 2), data errors and the `T_CHANNEL` format change (stage 3), and the publisher (stage 4) are not built. The initial customer XML and FINWIRE do not yet pass through `SourceRecorder`.
+The `workers` setting also controls validation parsing and replay processes. FINWIRE runs first in one ordered parser because its company and report checks span files and its security versions supply later checks. XML, Customer, Trade, and the other independent files then parse into separate staged blocks. One worker runs inline; multiple workers use spawned processes. A FINWIRE failure stops validation before ordinary files parse, so a missing security version cannot hide its cause. The coordinator accepts all other file results in source-file order. It checks the first and last cash and market keys before any later row failure, so global sequences and order remain exact.
+
+Each parser receives only the fault evidence for its file, routed by source family, date, and source identity. FINWIRE receives only company-rating evidence. The parser recomputes selection, verifies the mutation, and restores correct fields. It returns consumed audit keys and integer measurement counts, not source rows. The coordinator rejects unknown keys and keys consumed in two files, sums every field and delivery count exactly, and requires complete audit consumption. A parser also rejects repeated consumption inside its own file. Evidence that maps to no expected file remains unused and fails validation. The coordinator releases the audit catalog and consumed keys before the price join and replay. It reports unused evidence after replay, so an earlier business failure keeps priority.
+
+Trade pricing uses one streaming left join on market date and symbol. The join builds its hash state from only the market date, symbol, low price, and high price. This state grows with securities and sessions, not with customer scale. Missing market rows leave null prices for the coverage and replay checks. Market metadata cannot replace a trade's account partition, delivery day, or source order.
+
+All customer partitions finish before account replay starts because accounts read the saved customer lifetimes. One worker runs inline. Multiple workers use spawned processes and report the error from the lowest failing partition, in the same order as serial replay. Every partition undergoes checks for legal trade transitions, settlement, cash and margin limits, holding conservation, dividends, watches, and lifetimes.
+
+Customer inactivation requires explicit closure evidence for every account that remains open. Initial CMS `INACT` actions carry those accounts as XML elements; daily deliveries carry Account `INAC` rows. Validation keeps the separate hidden-closure comparison. Market orders start submitted and complete at their creation timestamp; limit orders start pending and can remain open at cutover or at the end. Validation checks physical HR employee-ID order and initial WatchHistory timestamp order before replay can sort records. Account closures fall on NYSE session dates, and completed sells add money after fees.
+
+FINWIRE validation checks required values, date syntax, numeric fields, and agreement between financial dates, reporting periods, and posting timestamps. It requires exactly one financial report for each configured company and released period. Lookup files are nonempty and include every status and trade-type ID that replay uses. Date covers the promised range with consistent calendar, fiscal, and holiday columns. Time covers all 86,400 seconds with labels, components, and business-hour flags that agree with its IDs. Every HR manager exists in the employee roster, and Prospect enum values follow the source contract. Company and security postings cover every configured identity at the initial posting and each financial release.
+
+Hidden account files supply traits and lifetime attributes. They do not supply balances as proof: the validator reconstructs balances and holdings from source records after it verifies any audited data errors. It reads every `accounts-*.parquet` file regardless of the group count. The signal check reads source-visible lifetimes and cash transactions, not hidden plans.
+
+Replay uses a 16 MiB average source-byte target with a ceiling of 1,021 partitions. This prime ceiling avoids concentration from account IDs that advance by 24 and limits small files and directories as source volume grows. Each parse stage buffers at most 8,192 rows. `maximum_parse_buffer_rows` reports the largest single-stage peak, not the sum across parsing processes. Partition writers share a 262,144-row allowance and a 64 MiB estimated Arrow-data allowance, based on source field widths and staging metadata. These writer allowances exclude the market join state, encoder memory, and engine overhead. The source-byte target is an average, not a hard memory bound for one unusually large account history. Above the partition ceiling, average replay memory grows with source volume; worker count and the sampled RSS guard still need a measured resource budget.
+
+Tests cover deterministic personal fields, XML omission and empty text, ledger and holding conservation, profile planning, attrition behavior, dated trade schemas, exact data-error evidence, corruption detection, resource failures, and repeatability across execution settings.
+
+| Report | Contents |
+| --- | --- |
+| `manifest.json` | Semantic identity, configuration, dependency and code versions, file counts, byte totals, hashes, and phase times |
+| `summary.json` | Counts and bytes by family, date, and delivery; business activity, cash transaction types, profile counts, rejected proposals, skew, and state peaks |
+| `validation.json` | Saved-file validation results, written after a successful full check |
+| `_checkpoints/` | Code and configuration context, completed-step receipts, and retained phase timings |
+| `summary/signal_check.json` | Sample size, chronological split counts, model and rule metrics, or the reason for insufficient data |
+| `supervision.json` | Sampled aggregate RSS, process count, disk use, temporary disk peaks, and sampling intervals |
+
+Phase times cover references, market, population, activity, prospects, final export, and validation. Buffer flushes and group sealing count toward the phase that emits their records. Final export measures native ordering, formatting, checks, and writes, not all export work. Reports include phase user and system CPU seconds, native batch bounds, fragment counts, sealed bytes, and spool, seal, and sort-write times. Export subphase totals can include work from multiple processes; they are not separate elapsed phases to add to generation time.
+
+`customer_groups` reports execution grouping. `peak_active_watches`, `peak_live_holdings`, and `peak_open_trades` report the largest per-group peaks, not whole-dataset peaks. These values and `numeric_state_buffer_bytes` can change with group size even when source bytes and business records remain identical. Hidden file names and counts also follow group boundaries; compare their typed records in stable account and event order when group sizes differ.
+
+### Full-Calendar Measurements
+
+These measurements cover generation stages 1 to 3 over the reference calendar, 2014-01-01 through 2025-12-31, with seed `20261029`, two Polars threads per worker, 1,250 companies, and 2,000 securities. The two calibration runs use two workers and pass full saved-file validation. The cutover counts are realized populations, not the configured anchors.
+
+| Calibration measurement | Customers per unit | Cutover customers | Cutover accounts | Offline bytes | Stream bytes |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Calibration input | 3,300 | 3,278 | 5,488 | 1,346,693,500 | 307,655,539 |
+| Calibrated volume | 3,601 | 3,597 | 6,028 | 1,438,704,592 | 339,074,412 |
+
+The runtime measurements use 3,601 customers per unit and groups of 1,024 customers. Command time includes supervision and the selected validation work.
+
+| Measure | Factor 1 | Factor 5 | Factor 100 |
+| --- | ---: | ---: | ---: |
+| Workers | 4 | 8 | 8 |
+| Dataset status | `validated` | `validated` | `generated-unvalidated` |
+| Command seconds | 558.29 | 1,985.07 | 22,002 |
+| Activity seconds | 139.43 | 614.23 | 11,176.84 |
+| Export seconds | 66.07 | 293.88 | 9,279.05 |
+| Validation seconds | 325.02 | 988.61 | Not run |
+| Offline bytes | 1,438,704,592 | 5,568,776,184 | 107,802,971,676 |
+| Offline records | 21,078,293 | 77,852,914 | 1,435,879,496 |
+| Stream bytes | 339,074,412 | 1,694,595,301 | 35,057,703,937 |
+| Stream messages | 2,409,943 | 11,900,035 | 240,015,825 |
+
+Each runtime run contains 18,051 source files. Factors 1 and 5 pass full saved-file validation. Factor 100 was generated without saved-file validation.
+
+The factor 5 and factor 100 runs use a 14 GiB RSS guard, a 700 GiB disk guard, and a 24-hour timeout. Factor 5 reaches 4.48 GiB sampled peak process-tree RSS and 18.28 GiB peak run disk. Factor 100 reaches 10.21 GiB RSS and 355.50 GiB run disk, including 289.41 GiB of temporary files. Its final dataset occupies 133.16 GiB. RSS covers the generator supervisor and descendants; disk peaks use two-second samples.
+
+### Volume Calibration
+
+One unit targets 1,000,000,000 variable offline bytes over the full reference calendar. Fixed market and reference bytes come on top. A shorter calendar cannot calibrate this 12-year target.
+
+1. Run factor 1 with the chosen business settings and seed. Measure offline bytes `B1` from the file inventory.
+2. Sum fixed-family bytes `F` for `DailyMarket`, FINWIRE, `Date`, `Time`, `Industry`, `StatusType`, `TaxRate`, and `TradeType`. HR is variable because employee count scales with the firm.
+3. Estimate variable bytes per unit as `V = B1 - F`. Set `customers_per_unit` to `old_customers_per_unit * 1,000,000,000 / V`, with decimal half-up rounding.
+4. Repeat factor 1 with the calibrated customer count and unchanged market, behavior, and seed. Measure its variable bytes and report the difference from the one-GB target.
+
+At the default anchor of 3,601 customers per unit, factor 1 measures 1,008,534,820 variable offline bytes, 0.853482% above the target, plus 430,169,772 fixed bytes. The realized cutover population is 3,597 customers and 6,028 accounts, separate from the expected anchor.
+
+The planning projection at factor `s` is `F + s * V`, using that measured variable slope rather than forcing it to one GB. At factor 100, it estimates 101,283,651,772 offline bytes and 33,907,441,200 stream bytes. These estimates are separate from the measured totals above. Population sampling, staffing rounding, and identifier widths can change byte scaling. Do not change activity rates, duplicate rows, or change market size to force a byte total.
+
+Factor 100's measured 107,802,971,676 offline bytes exceed the 100,000,000,000-byte requirement. Stream messages, reports, hidden files, and temporary files do not count toward it.
