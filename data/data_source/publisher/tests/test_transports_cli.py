@@ -37,6 +37,16 @@ def test_settings_repr_and_destination_identity_exclude_credentials(settings):
     assert private.destination_id == settings.destination_id
 
 
+def test_offline_only_settings_need_no_kafka_and_have_separate_identity(settings):
+    """Offline-only settings accept a missing Kafka address and never share full-delivery state."""
+    offline = Settings(settings.s3_endpoint, None, offline_only=True).validate()
+    ignored = Settings(settings.s3_endpoint, settings.kafka_bootstrap, offline_only=True)
+    assert offline.destination_id == ignored.destination_id
+    assert offline.destination_id != settings.destination_id
+    with pytest.raises(PublisherError):
+        Settings(settings.s3_endpoint, None).validate()
+
+
 class FakeProducer:
     """Capture the actual confluent producer API calls without a running broker."""
 
@@ -239,6 +249,25 @@ def test_cli_environment_settings_are_external(saved_dataset, tmp_path, capsys, 
     output = capsys.readouterr()
     assert "private-password" not in output.out + output.err + (state / "report.json").read_text()
     assert "http://store:8333" not in output.out
+
+
+def test_cli_offline_only_publishes_without_kafka_settings(saved_dataset, tmp_path, capsys, monkeypatch):
+    """The offline-only flag needs only an S3 endpoint and reports that the stream was skipped."""
+    from .conftest import MemoryS3
+
+    def kafka_transport(*arguments):
+        """Fail the test if the command builds a Kafka client."""
+        raise AssertionError("offline-only command opened Kafka")
+
+    monkeypatch.delenv("PUBLISHER_KAFKA_BOOTSTRAP", raising=False)
+    monkeypatch.setattr(cli, "S3Transport", lambda *arguments: MemoryS3())
+    monkeypatch.setattr(cli, "KafkaTransport", kafka_transport)
+    state = tmp_path / "state"
+    assert cli.main(["publish", str(saved_dataset), "--state", str(state),
+                     "--s3-endpoint", "http://store:8333", "--offline-only"]) == 0
+    report = json.loads((state / "report.json").read_text())
+    assert report["offline_only"] is True
+    assert report["outcomes"]["acknowledged_messages"] == 0
 
 
 def test_cli_argument_errors_do_not_echo_unknown_private_values(capsys):

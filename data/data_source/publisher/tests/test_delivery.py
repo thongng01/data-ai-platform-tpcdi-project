@@ -60,6 +60,30 @@ def test_clean_delivery_preserves_keys_payloads_and_generated_files(saved_datase
     assert all((saved_dataset / path).read_bytes() == content for path, content in before.items())
 
 
+def test_offline_only_delivers_every_object_without_opening_kafka(saved_dataset, tmp_path):
+    """Offline-only delivery uploads all files, sends no messages, and records the mode."""
+    from data.data_source.publisher.transports import Settings
+
+    def kafka_factory():
+        """Fail the test if the publisher tries to open Kafka."""
+        raise AssertionError("offline-only delivery opened Kafka")
+
+    settings = Settings("http://object-store:8333", None, offline_only=True)
+    dataset = Dataset(saved_dataset)
+    s3 = MemoryS3()
+    with Journal(tmp_path / "state", dataset, settings.destination_id) as journal:
+        result = publish(dataset, journal, lambda: s3, kafka_factory, offline_only=True)
+    expected = {path.removeprefix("offline/") for path in dataset.files if path.startswith("offline/")}
+    assert {key for key, _ in s3.deliveries} == expected
+    assert s3.closed
+    assert result["status"] == "complete"
+    assert result["offline_only"] is True
+    assert result["latest_clock_segment"]["offline_only"] == 1
+    assert result["outcomes"]["acknowledged_objects"] == len(expected)
+    assert result["outcomes"]["acknowledged_messages"] == 0
+    assert result["outcomes"]["completed_stream_files"] == 0
+
+
 def test_unvalidated_delivery_requires_override_and_records_it(saved_dataset, tmp_path, settings):
     """Keep all preflight checks and retain explicit unvalidated delivery evidence."""
     path = saved_dataset / "manifest.json"

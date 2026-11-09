@@ -87,12 +87,18 @@ def _deliver_daily_objects(dataset, journal, s3, day, clock, daily_release, retr
             deliver_object(dataset, journal, s3, item, retry_uncertain)
 
 
-def publish(dataset, journal, s3_factory, kafka_factory, clock=None, daily_release="end", retry_uncertain=False):
-    """Preflight all sources, then publish initial files and each date in order."""
+def publish(dataset, journal, s3_factory, kafka_factory, clock=None, daily_release="end", retry_uncertain=False,
+            offline_only=False):
+    """Preflight all sources, then publish initial files and each date in order.
+
+    With ``offline_only``, only offline files go to S3. The Kafka client never
+    opens and saved cash transaction messages stay unsent, so a platform that
+    has no streaming services yet can still receive every source file.
+    """
     clock = clock or ReplayClock()
     if daily_release not in ("start", "end"):
         raise PublisherError("Daily release must be start or end.")
-    segment = journal.start_segment(clock, daily_release)
+    segment = journal.start_segment(clock, daily_release, offline_only)
     status = "failed"
     error_code = None
     try:
@@ -107,16 +113,18 @@ def publish(dataset, journal, s3_factory, kafka_factory, clock=None, daily_relea
             # has passed preflight. Opening Kafka must not strand an S3 client.
             s3 = s3_factory()
             resources.callback(_close_transport, s3)
-            kafka = kafka_factory()
-            resources.callback(_close_transport, kafka)
+            kafka = None if offline_only else kafka_factory()
+            if kafka is not None:
+                resources.callback(_close_transport, kafka)
             for item in dataset.initial_files():
                 deliver_object(dataset, journal, s3, item, retry_uncertain)
             day = dataset.daily_start
             while day <= dataset.daily_end:
                 if daily_release == "start":
                     _deliver_daily_objects(dataset, journal, s3, day, clock, daily_release, retry_uncertain)
-                stream = dataset.files[f"stream/cash_transactions/{day:%Y%m%d}.jsonl"]
-                deliver_stream(dataset, journal, kafka, stream, day, clock, retry_uncertain)
+                if not offline_only:
+                    stream = dataset.files[f"stream/cash_transactions/{day:%Y%m%d}.jsonl"]
+                    deliver_stream(dataset, journal, kafka, stream, day, clock, retry_uncertain)
                 if daily_release == "end":
                     _deliver_daily_objects(dataset, journal, s3, day, clock, daily_release, retry_uncertain)
                 day += timedelta(days=1)

@@ -61,7 +61,8 @@ class Journal:
             # Add policy evidence without changing an existing delivery identity.
             # Older journals remain usable, and earlier override use stays visible.
             columns = {row[1] for row in self.connection.execute("PRAGMA table_info(segments)")}
-            for name, definition in (("generator_status", "TEXT"), ("allow_unvalidated", "INTEGER NOT NULL DEFAULT 0")):
+            for name, definition in (("generator_status", "TEXT"), ("allow_unvalidated", "INTEGER NOT NULL DEFAULT 0"),
+                                     ("offline_only", "INTEGER NOT NULL DEFAULT 0")):
                 if name not in columns:
                     self.connection.execute(f"ALTER TABLE segments ADD COLUMN {name} {definition}")
             identity = {"schema": "1", "dataset_id": dataset.dataset_id,
@@ -160,13 +161,14 @@ class Journal:
         with self.connection:
             self.connection.execute("UPDATE deliveries SET status='uncertain', updated=? WHERE path=?", (time.time(), item.path))
 
-    def start_segment(self, clock, daily_release):
-        """Record the new replay segment without changing saved event timestamps."""
+    def start_segment(self, clock, daily_release, offline_only=False):
+        """Record the new replay segment and whether it skips the cash transaction stream."""
         with self.connection:
             cursor = self.connection.execute(
-                "INSERT INTO segments(mode, speed, daily_release, started, status, generator_status, allow_unvalidated) "
-                "VALUES (?, ?, ?, ?, 'running', ?, ?)",
-                (clock.mode, clock.speed, daily_release, time.time(), self.generator_status, self.allow_unvalidated),
+                "INSERT INTO segments(mode, speed, daily_release, started, status, generator_status, allow_unvalidated, "
+                "offline_only) VALUES (?, ?, ?, ?, 'running', ?, ?, ?)",
+                (clock.mode, clock.speed, daily_release, time.time(), self.generator_status, self.allow_unvalidated,
+                 int(offline_only)),
             )
         return cursor.lastrowid
 
@@ -203,8 +205,12 @@ class Journal:
         overrides = self.connection.execute(
             "SELECT COUNT(*) FROM segments WHERE generator_status='generated-unvalidated' AND allow_unvalidated=1"
         ).fetchone()[0]
+        # The destination identity separates offline-only and full deliveries, so
+        # the latest segment states the mode for the whole journal.
+        offline_only = bool(latest["offline_only"]) if latest else False
         result = {"status": status, "profile": "clean", **self.identity,
                   "generator_status": self.generator_status, "allow_unvalidated": self.allow_unvalidated,
+                  "offline_only": offline_only,
                   "unvalidated_delivery_segments": overrides,
                   "clock_segments": segments, "latest_clock_segment": dict(latest) if latest else None,
                   "outcomes": dict(totals), "unresolved": unresolved,

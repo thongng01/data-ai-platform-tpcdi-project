@@ -20,9 +20,12 @@ class Settings:
     """Keep destination settings in memory and credentials out of reports and repr."""
 
     s3_endpoint: str
-    kafka_bootstrap: str
+    kafka_bootstrap: str | None
     kafka_config: dict = field(default_factory=dict, repr=False)
     region: str = "us-east-1"
+    # Offline-only delivery sends files to S3 and never opens Kafka, so it
+    # needs no Kafka address and ignores one that is supplied.
+    offline_only: bool = False
 
     def validate(self):
         """Reject credentials embedded in destination addresses before opening clients."""
@@ -32,7 +35,8 @@ class Settings:
                     parsed.username is not None or parsed.password is not None or parsed.query or parsed.fragment):
                 raise ValueError
             parsed.port
-            for address in self.kafka_bootstrap.split(","):
+            addresses = [] if self.offline_only else self.kafka_bootstrap.split(",")
+            for address in addresses:
                 target = urlsplit("//" + address.strip())
                 if (not target.hostname or target.port is None or target.username is not None or
                         target.password is not None or target.path or target.query or target.fragment):
@@ -49,6 +53,11 @@ class Settings:
         self.validate()
         target = {"s3_endpoint": self.s3_endpoint.rstrip("/"), "bucket": BUCKET,
                   "kafka_bootstrap": self.kafka_bootstrap, "topic": TOPIC}
+        # An offline-only destination is a different delivery target from a full
+        # one. A separate identity stops one state directory from mixing them, while
+        # full-delivery identities stay unchanged for existing journals.
+        if self.offline_only:
+            target = {"s3_endpoint": self.s3_endpoint.rstrip("/"), "bucket": BUCKET, "offline_only": True}
         return hashlib.sha256(json.dumps(target, sort_keys=True).encode()).hexdigest()
 
 

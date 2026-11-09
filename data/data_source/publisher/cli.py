@@ -41,6 +41,9 @@ def parser():
                       help="Release a daily extract at the start or end of its represented UTC date.")
     send.add_argument("--retry-uncertain", action="store_true",
                       help="Allow same-identity resends that can duplicate remote effects.")
+    send.add_argument("--offline-only", action="store_true",
+                      help="Deliver only offline files to S3; skip cash transaction messages and Kafka. "
+                           "Use separate state from a full publication.")
     send.add_argument("--s3-endpoint", default=os.environ.get("PUBLISHER_S3_ENDPOINT"),
                       help="S3-compatible endpoint, or PUBLISHER_S3_ENDPOINT; never include credentials.")
     send.add_argument("--kafka-bootstrap", default=os.environ.get("PUBLISHER_KAFKA_BOOTSTRAP"),
@@ -61,10 +64,12 @@ def main(argv=None):
             clock = ReplayClock(arguments.mode, arguments.speed)
             config = read_json(Path(arguments.kafka_config), limit=64 * 1024) if arguments.kafka_config else {}
             settings = Settings(arguments.s3_endpoint, arguments.kafka_bootstrap, config,
-                                os.environ.get("AWS_DEFAULT_REGION", os.environ.get("AWS_REGION", "us-east-1"))).validate()
+                                os.environ.get("AWS_DEFAULT_REGION", os.environ.get("AWS_REGION", "us-east-1")),
+                                arguments.offline_only).validate()
             with Journal(arguments.state, dataset, settings.destination_id) as journal:
                 report = publish(dataset, journal, lambda: S3Transport(settings, dataset.dataset_id),
-                                 lambda: KafkaTransport(settings), clock, arguments.daily_release, arguments.retry_uncertain)
+                                 lambda: KafkaTransport(settings), clock, arguments.daily_release, arguments.retry_uncertain,
+                                 arguments.offline_only)
         print(json.dumps(report, indent=2, sort_keys=True))
         return 0
     except PublisherError as error:

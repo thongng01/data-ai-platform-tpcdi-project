@@ -43,6 +43,13 @@ local/tmp/publisher-env/bin/python -m data.data_source.publisher publish \
 
 The bucket and topic must already exist. The publisher does not create infrastructure, delete destination objects, or reset Kafka. The platform holds one active dataset. Use a destination prepared for that dataset, because unrelated old objects and messages remain until an operator removes them.
 
+To deliver only the offline files, add `--offline-only`. The command then needs only the S3 endpoint: it never opens Kafka, and the saved cash transaction messages stay unsent. The report records `offline_only: true`. This mode has its own destination identity, so a later full publication needs a separate `--state` directory and uploads the objects again under the same keys.
+
+```bash
+local/tmp/publisher-env/bin/python -m data.data_source.publisher publish \
+  local/data_source_generation/factor1 --state local/data_source_generation/factor1-offline --offline-only
+```
+
 Replay uses one simulated clock for daily files and cash transactions:
 
 ```bash
