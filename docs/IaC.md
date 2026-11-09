@@ -62,7 +62,9 @@ The project identity is `brokerage`. Use that identity for resources that need a
 
 Services must wait until their dependencies are ready. Governance also needs Kafka; selecting only the `governance` profile does not start Kafka. Image builds use multiple stages where this keeps build tools out of runtime images. Image size comparisons supply the course evidence.
 
-Terraform provisions cloud resources, and Ansible configures services by role. Continuous integration and continuous delivery (CI/CD) tests, builds, and deploys the retrieval-augmented generation (RAG) pipeline, Model Context Protocol (MCP) servers and data agent, coordinator agent, and streaming feature jobs. System prompts remain versioned outside agent code. These requirements do not select a host or cluster for Layers 2 and 3.
+Terraform provisions cloud resources, and Ansible configures services by role. Continuous integration and continuous delivery (CI/CD) tests, builds, and deploys the retrieval-augmented generation (RAG) pipeline, Model Context Protocol (MCP) servers and data agent, coordinator agent, and streaming feature jobs. System prompts remain versioned outside agent code.
+
+Compose is the single-machine development deployment for Layer 1. The full system, all three layers, runs on Kubernetes: kind (Kubernetes in Docker) on the development machine, and Google Kubernetes Engine (GKE) on Google Cloud, which Terraform provisions. Kubeflow Pipelines, KServe, and the Layer 3 services run only on Kubernetes. The cloud-ready rules in [section 7.5](#75-cloud-ready-local-deployment) keep the move from Compose a change of configuration and deployment files, not application code.
 
 ## 4. Services
 
@@ -70,7 +72,7 @@ Terraform provisions cloud resources, and Ansible configures services by role. C
 
 One PostgreSQL instance separates the `warehouse`, `metastore`, `airflow`, and `datahub` databases. The warehouse contains `load`, `gold`, and `ops` schemas. Spark copies the Silver rows that Gold needs into `load`, and dbt-postgres builds Gold. `ops` holds load status and stream progress. Gold exists once, in PostgreSQL.
 
-SeaweedFS provides the S3 API. The publisher has an identity that writes `upstream`; the platform identity can only read `upstream` and writes its own storage. This enforces the source department boundary: the publisher cannot change platform copies.
+SeaweedFS provides the S3 API. The publisher has an identity that writes `upstream`; the platform identity can only read `upstream` and writes its own storage. This enforces the source department boundary: the publisher cannot change platform copies. A separate admin identity creates the buckets; no service uses it. SeaweedFS does not create a bucket on first write, so a mistyped bucket name fails instead of creating a new bucket.
 
 | Bucket | Contents | Writer |
 |---|---|---|
@@ -85,7 +87,7 @@ Hive Metastore resolves table names, schemas, and locations for Spark and Trino.
 
 ### 4.2 Compute
 
-Start with Spark 3.5 and Delta 3.3, plus Flink 2.2 and the Delta 4.4 Flink connector. The first build gate is an end-to-end compatibility test: Flink writes a Delta table on SeaweedFS, then Spark and Trino read it. Spark 4 with Delta 4 is the fallback if the starting combination fails. These versions are a starting choice that the test must confirm, not a claim of compatibility already proved.
+Start with Spark 3.5 and Delta 3.3, plus Flink 2.2 and the Delta 4.4 Flink connector. Batch work uses one Delta writer, Spark, and Trino reads the first Spark-written table before more tables follow. Before the first Flink job, an end-to-end compatibility test makes Flink write a Delta table on SeaweedFS, then Spark and Trino read it. Spark 4 with Delta 4 is the fallback if the starting combination fails. These versions are a starting choice that the test must confirm, not a claim of compatibility already proved.
 
 The Spark image includes Delta, the PostgreSQL JDBC driver, S3 access dependencies, and DataHub's Spark agent. The standalone master schedules work on the worker. The master UI shows applications and resource allocation; stage and task evidence comes from each application's UI.
 
@@ -176,9 +178,9 @@ Files group services by role. Profiles control which optional services start. Sp
 
 Delta tables use explicit lakehouse locations. Staging retains pulled file versions, Bronze retains raw deliveries, Delta keeps table history, and Gold dimensions keep type 2 slowly changing dimension (SCD2) history. These serve different questions: the original file explains what arrived, table history shows a past lakehouse state, and SCD2 records business versions. Reruns reuse recorded staging inputs rather than pulling another copy.
 
-### 7.3 Delta Compatibility Before Pipeline Work
+### 7.3 Delta Compatibility Before Flink Writes
 
-Spark, Flink, and Trino share Delta tables on SeaweedFS. A successful write by one engine does not prove that another engine can read the table or its enabled features. The compatibility test comes first because a connector mismatch would otherwise affect every pipeline built on that format. Plain Parquet and the earlier Hive SerDe DDL are not the target table contract.
+Spark, Flink, and Trino share Delta tables on SeaweedFS. A successful write by one engine does not prove that another engine can read the table or its enabled features. Batch work has one writer, Spark, whose pairing with Delta 3.3 is documented, so a Trino read of the first Spark-written table is its check. The Flink connector is experimental and enables newer table features by default, so the shared-table test runs before the first Flink job writes; a mismatch found there changes the versions before any stream table exists. Plain Parquet and the earlier Hive SerDe DDL are not the target table contract.
 
 ### 7.4 One PostgreSQL Instance, Four Databases
 

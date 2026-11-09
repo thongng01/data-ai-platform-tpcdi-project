@@ -505,7 +505,7 @@ A late March 5 cash transaction still reaches Silver. Correcting the March 5 cas
 
 Use a clean replay before a seeded realistic replay. Measure publisher delays and duplicates, then compare Flink outputs with an independent batch calculation of unique cash transactions, window sums, and balances. Compare final state for equality, not the maximum emitted balance, because negative amounts can reduce balances. Event-time disorder must not replace newer state with an older snapshot.
 
-Tests must check checkpoint recovery across Bronze, Silver, Kafka transactions, and PostgreSQL upserts. The connector set starts with Spark 3.5 and Delta 3.3, Flink 2.2 with the Delta 4.4 connector, Kafka connector 5.0, and JDBC connector 4.1. Before pipeline work, a compatibility test makes Flink write Delta on SeaweedFS and makes Spark and Trino read it. Spark 4 with Delta 4 is the fallback if that test rejects the starting set.
+Tests must check checkpoint recovery across Bronze, Silver, Kafka transactions, and PostgreSQL upserts. The connector set starts with Spark 3.5 and Delta 3.3, Flink 2.2 with the Delta 4.4 connector, Kafka connector 5.0, and JDBC connector 4.1. Before the first Flink job, a compatibility test makes Flink write Delta on SeaweedFS and makes Spark and Trino read it. Spark 4 with Delta 4 is the fallback if that test rejects the starting set.
 
 ---
 

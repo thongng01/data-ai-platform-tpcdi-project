@@ -288,7 +288,7 @@ The agent platform provides controlled access to project data, documents, and pr
 
 ### Local Deployment
 
-Docker packages services and jobs. Compose groups services so Layer 1 can run within the Windows Subsystem for Linux (WSL) memory cap. The starting Spark 3.5 and Delta 3.3 combination, Flink 2.2 with the Delta 4.4 connector, and Trino must pass a shared-table test on SeaweedFS before pipeline implementation. Spark 4 with Delta 4 is the fallback.
+Docker packages services and jobs. Compose groups services so Layer 1 can run within the Windows Subsystem for Linux (WSL) memory cap. Batch work starts with Spark 3.5 and Delta 3.3, and Trino reads the same tables. Before the first Flink job, a shared-table test on SeaweedFS shows that Flink 2.2 with the Delta 4.4 connector writes a table that Spark and Trino read. Spark 4 with Delta 4 is the fallback.
 
 - **Core services**: PostgreSQL, SeaweedFS, Hive Metastore, Trino.
 - **Batch compute**: Spark, with dbt-postgres operating in PostgreSQL rather than through Spark Thrift.
@@ -300,7 +300,8 @@ Resource names use project identity `brokerage` and scoped role names. Compose g
 
 ### Deployment and Service Operation
 
-- **Infrastructure as code**: Terraform provisions infrastructure; Ansible configures services.
+- **Deployment targets**: Docker Compose runs Layer 1 on one machine for development. The full system, all three layers, runs on Kubernetes: kind on the development machine and Google Kubernetes Engine (GKE) on Google Cloud.
+- **Infrastructure as code**: Terraform provisions GKE and other cloud resources; Ansible configures services.
 - **CI/CD**: Continuous integration and continuous delivery (CI/CD) tests, builds, and deploys pipelines, jobs, tools, and agents.
 - **Security**: Gateway access, HTTPS, rate limits, centralized secrets, separate service users, and parameterized SQL protect service boundaries.
 - **Observability**: Metrics, logs, traces, and tool UIs support service operation; DataHub and GX report data health.
