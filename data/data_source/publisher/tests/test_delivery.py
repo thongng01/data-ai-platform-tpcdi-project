@@ -84,6 +84,53 @@ def test_offline_only_delivers_every_object_without_opening_kafka(saved_dataset,
     assert result["outcomes"]["completed_stream_files"] == 0
 
 
+def test_through_date_delivers_a_prefix_and_a_later_run_continues(saved_dataset, tmp_path, settings):
+    """A through date stops after that day; a later run skips acknowledged files and finishes."""
+    from datetime import date
+
+    dataset = Dataset(saved_dataset)
+    state = tmp_path / "state"
+    first_s3, first_kafka = MemoryS3(), MemoryKafka()
+    first = run_saved(saved_dataset, state, settings, first_s3, first_kafka, through=date(2019, 1, 1))
+    first_keys = {key for key, _ in first_s3.deliveries}
+    assert first["status"] == "partial"
+    assert first["through_date"] == "2019-01-01"
+    assert any(key.startswith("initial/") for key in first_keys)
+    assert any(key.startswith("daily/20190101/") for key in first_keys)
+    assert not any(key.startswith("daily/20190102/") for key in first_keys)
+
+    second_s3, second_kafka = MemoryS3(), MemoryKafka()
+    second = run_saved(saved_dataset, state, settings, second_s3, second_kafka)
+    second_keys = {key for key, _ in second_s3.deliveries}
+    expected = {path.removeprefix("offline/") for path in dataset.files if path.startswith("offline/")}
+    assert second["status"] == "complete"
+    assert second["through_date"] is None
+    assert first_keys.isdisjoint(second_keys)
+    assert first_keys | second_keys == expected
+
+
+def test_through_date_before_daily_start_delivers_only_initial_files(saved_dataset, tmp_path, settings):
+    """The initial load's last date sends the initial files and no daily file or message."""
+    from datetime import date
+
+    s3, kafka = MemoryS3(), MemoryKafka()
+    result = run_saved(saved_dataset, tmp_path / "state", settings, s3, kafka, through=date(2018, 12, 31))
+    assert result["status"] == "partial"
+    assert s3.deliveries and all(key.startswith("initial/") for key, _ in s3.deliveries)
+    assert kafka.deliveries == []
+
+
+@pytest.mark.parametrize("through", ["2018-12-30", "2019-01-03"])
+def test_through_date_outside_the_dataset_is_rejected(saved_dataset, tmp_path, settings, through):
+    """A through date outside the delivered calendar fails before any upload."""
+    from datetime import date
+
+    s3, kafka = MemoryS3(), MemoryKafka()
+    with pytest.raises(PublisherError):
+        run_saved(saved_dataset, tmp_path / "state", settings, s3, kafka, through=date.fromisoformat(through))
+    assert s3.deliveries == []
+
+
 def test_unvalidated_delivery_requires_override_and_records_it(saved_dataset, tmp_path, settings):
     """Keep all preflight checks and retain explicit unvalidated delivery evidence."""
     path = saved_dataset / "manifest.json"

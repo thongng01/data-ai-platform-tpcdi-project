@@ -62,7 +62,7 @@ class Journal:
             # Older journals remain usable, and earlier override use stays visible.
             columns = {row[1] for row in self.connection.execute("PRAGMA table_info(segments)")}
             for name, definition in (("generator_status", "TEXT"), ("allow_unvalidated", "INTEGER NOT NULL DEFAULT 0"),
-                                     ("offline_only", "INTEGER NOT NULL DEFAULT 0")):
+                                     ("offline_only", "INTEGER NOT NULL DEFAULT 0"), ("through_date", "TEXT")):
                 if name not in columns:
                     self.connection.execute(f"ALTER TABLE segments ADD COLUMN {name} {definition}")
             identity = {"schema": "1", "dataset_id": dataset.dataset_id,
@@ -161,14 +161,14 @@ class Journal:
         with self.connection:
             self.connection.execute("UPDATE deliveries SET status='uncertain', updated=? WHERE path=?", (time.time(), item.path))
 
-    def start_segment(self, clock, daily_release, offline_only=False):
-        """Record the new replay segment and whether it skips the cash transaction stream."""
+    def start_segment(self, clock, daily_release, offline_only=False, through=None):
+        """Record the new replay segment, whether it skips the stream, and its last daily date."""
         with self.connection:
             cursor = self.connection.execute(
                 "INSERT INTO segments(mode, speed, daily_release, started, status, generator_status, allow_unvalidated, "
-                "offline_only) VALUES (?, ?, ?, ?, 'running', ?, ?, ?)",
+                "offline_only, through_date) VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?)",
                 (clock.mode, clock.speed, daily_release, time.time(), self.generator_status, self.allow_unvalidated,
-                 int(offline_only)),
+                 int(offline_only), through.isoformat() if through else None),
             )
         return cursor.lastrowid
 
@@ -211,6 +211,8 @@ class Journal:
         result = {"status": status, "profile": "clean", **self.identity,
                   "generator_status": self.generator_status, "allow_unvalidated": self.allow_unvalidated,
                   "offline_only": offline_only,
+                  # The last daily date the latest run was asked to deliver; null means the whole dataset.
+                  "through_date": latest["through_date"] if latest else None,
                   "unvalidated_delivery_segments": overrides,
                   "clock_segments": segments, "latest_clock_segment": dict(latest) if latest else None,
                   "outcomes": dict(totals), "unresolved": unresolved,

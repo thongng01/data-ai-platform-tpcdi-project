@@ -1,6 +1,7 @@
 """Expose source preflight and clean publication without displaying private settings."""
 
 import argparse
+from datetime import date
 import json
 import os
 from pathlib import Path
@@ -44,6 +45,9 @@ def parser():
     send.add_argument("--offline-only", action="store_true",
                       help="Deliver only offline files to S3; skip cash transaction messages and Kafka. "
                            "Use separate state from a full publication.")
+    send.add_argument("--through", type=date.fromisoformat,
+                      help="Deliver the initial files and daily dates up to and including this UTC date "
+                           "(YYYY-MM-DD), then stop. A later run with a later date continues.")
     send.add_argument("--s3-endpoint", default=os.environ.get("PUBLISHER_S3_ENDPOINT"),
                       help="S3-compatible endpoint, or PUBLISHER_S3_ENDPOINT; never include credentials.")
     send.add_argument("--kafka-bootstrap", default=os.environ.get("PUBLISHER_KAFKA_BOOTSTRAP"),
@@ -69,7 +73,7 @@ def main(argv=None):
             with Journal(arguments.state, dataset, settings.destination_id) as journal:
                 report = publish(dataset, journal, lambda: S3Transport(settings, dataset.dataset_id),
                                  lambda: KafkaTransport(settings), clock, arguments.daily_release, arguments.retry_uncertain,
-                                 arguments.offline_only)
+                                 arguments.offline_only, arguments.through)
         print(json.dumps(report, indent=2, sort_keys=True))
         return 0
     except PublisherError as error:

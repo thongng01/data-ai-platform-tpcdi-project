@@ -50,6 +50,8 @@ local/tmp/publisher-env/bin/python -m data.data_source.publisher publish \
   local/data_source_generation/factor1 --state local/data_source_generation/factor1-offline --offline-only
 ```
 
+To deliver only the start of the history, add `--through YYYY-MM-DD`. The publisher sends the initial files and every daily date up to and including that date, then stops with report status `partial` and records `through_date`. The last date of the initial load sends the initial files only. A later run with the same `--state` and a later date, or without `--through`, skips acknowledged files and continues. The preflight still checks the whole dataset.
+
 Replay uses one simulated clock for daily files and cash transactions:
 
 ```bash

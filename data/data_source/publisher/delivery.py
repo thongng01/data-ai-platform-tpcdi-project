@@ -88,17 +88,26 @@ def _deliver_daily_objects(dataset, journal, s3, day, clock, daily_release, retr
 
 
 def publish(dataset, journal, s3_factory, kafka_factory, clock=None, daily_release="end", retry_uncertain=False,
-            offline_only=False):
+            offline_only=False, through=None):
     """Preflight all sources, then publish initial files and each date in order.
 
     With ``offline_only``, only offline files go to S3. The Kafka client never
     opens and saved cash transaction messages stay unsent, so a platform that
     has no streaming services yet can still receive every source file.
+
+    With ``through`` (a date), delivery stops after that daily date and the
+    report status is ``partial``. The day before the first daily date delivers
+    the initial files only. A later run with the same state and a later date
+    skips acknowledged files and continues, so the platform can receive its
+    history a few days at a time.
     """
     clock = clock or ReplayClock()
     if daily_release not in ("start", "end"):
         raise PublisherError("Daily release must be start or end.")
-    segment = journal.start_segment(clock, daily_release, offline_only)
+    last_day = dataset.daily_end if through is None else through
+    if not dataset.daily_start - timedelta(days=1) <= last_day <= dataset.daily_end:
+        raise PublisherError("The through date must fall between the initial load's last date and the last daily date.")
+    segment = journal.start_segment(clock, daily_release, offline_only, through)
     status = "failed"
     error_code = None
     try:
@@ -119,7 +128,7 @@ def publish(dataset, journal, s3_factory, kafka_factory, clock=None, daily_relea
             for item in dataset.initial_files():
                 deliver_object(dataset, journal, s3, item, retry_uncertain)
             day = dataset.daily_start
-            while day <= dataset.daily_end:
+            while day <= last_day:
                 if daily_release == "start":
                     _deliver_daily_objects(dataset, journal, s3, day, clock, daily_release, retry_uncertain)
                 if not offline_only:
@@ -128,7 +137,7 @@ def publish(dataset, journal, s3_factory, kafka_factory, clock=None, daily_relea
                 if daily_release == "end":
                     _deliver_daily_objects(dataset, journal, s3, day, clock, daily_release, retry_uncertain)
                 day += timedelta(days=1)
-        status = "complete"
+        status = "complete" if last_day == dataset.daily_end else "partial"
     except DeliveryUncertain:
         status = "uncertain"
         error_code = "remote_acknowledgment_uncertain"

@@ -270,6 +270,19 @@ def test_cli_offline_only_publishes_without_kafka_settings(saved_dataset, tmp_pa
     assert report["outcomes"]["acknowledged_messages"] == 0
 
 
+def test_cli_through_date_records_a_partial_delivery(saved_dataset, tmp_path, monkeypatch):
+    """The --through flag reaches the publisher and the report records the date."""
+    from .conftest import MemoryS3
+
+    monkeypatch.setattr(cli, "S3Transport", lambda *arguments: MemoryS3())
+    state = tmp_path / "state"
+    assert cli.main(["publish", str(saved_dataset), "--state", str(state), "--s3-endpoint", "http://store:8333",
+                     "--offline-only", "--through", "2019-01-01"]) == 0
+    report = json.loads((state / "report.json").read_text())
+    assert report["status"] == "partial"
+    assert report["through_date"] == "2019-01-01"
+
+
 def test_cli_argument_errors_do_not_echo_unknown_private_values(capsys):
     """Even parser failures use fixed text rather than repeating user input."""
     with pytest.raises(SystemExit) as error:
