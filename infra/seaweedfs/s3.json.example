@@ -1,14 +1,39 @@
 {
   "identities": [
     {
+      "name": "admin",
+      "credentials": [
+        {
+          "accessKey": "CHANGE_ME_ADMIN_ACCESS_KEY",
+          "secretKey": "CHANGE_ME_ADMIN_SECRET_KEY"
+        }
+      ],
+      "actions": ["Admin"]
+    },
+    {
+      "name": "publisher",
+      "credentials": [
+        {
+          "accessKey": "CHANGE_ME_PUBLISHER_ACCESS_KEY",
+          "secretKey": "CHANGE_ME_PUBLISHER_SECRET_KEY"
+        }
+      ],
+      "actions": ["List:upstream", "Read:upstream", "Write:upstream"]
+    },
+    {
       "name": "platform",
       "credentials": [
         {
-          "accessKey": "CHANGE_ME_S3_ACCESS_KEY",
-          "secretKey": "CHANGE_ME_S3_SECRET_KEY"
+          "accessKey": "CHANGE_ME_PLATFORM_ACCESS_KEY",
+          "secretKey": "CHANGE_ME_PLATFORM_SECRET_KEY"
         }
       ],
-      "actions": ["Admin", "Read", "Write", "List", "Tagging", "BucketAdmin"]
+      "actions": [
+        "List:upstream", "Read:upstream",
+        "List:staging", "Read:staging", "Write:staging",
+        "List:lakehouse", "Read:lakehouse", "Write:lakehouse",
+        "List:platform", "Read:platform", "Write:platform"
+      ]
     }
   ]
 }
