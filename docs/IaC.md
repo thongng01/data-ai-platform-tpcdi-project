@@ -184,6 +184,35 @@ Spark, Flink, and Trino share Delta tables on SeaweedFS. A successful write by o
 
 Separate databases keep each application's tables in a separate namespace while sharing one process and buffer pool. They still share memory, connections, storage, and failure exposure. This configuration reduces local service overhead but does not provide process or resource isolation.
 
+### 7.5 Cloud-Ready Local Deployment
+
+The local deployment follows rules that let it move to a cloud provider by changing configuration and infrastructure code, not application code.
+
+- **Portable application code**: jobs and services run unchanged against the local stack, a local cloud emulator, or managed cloud services.
+- **Low cost now**: each rule applies to work the build already includes and adds no services.
+- **Testable**: a local cloud emulator such as floci can show that only configuration changes.
+
+| Decision | Selected Choice | Main Reason |
+| --- | --- | --- |
+| Storage interface | Object storage through the S3 API; jobs use `s3a://` paths, not local file paths | The same client code works with SeaweedFS, an emulator, and cloud object storage |
+| Credentials | One identity per role (admin, publisher, platform); code reads credentials only from the standard credential chain | Each identity maps to a cloud IAM role without code changes |
+| Configuration | Endpoints, bucket names, and secrets come from environment variables or private configuration files | A new environment changes configuration only |
+| Compute state | Containers and jobs keep no local state, and every rerun gives the same result | Jobs can restart on clusters that stop or replace workers |
+| Service addresses | Services reach each other by service name | Name-based discovery works in Compose, Kubernetes, and cloud networks |
+| Data formats | Delta and Parquet with open engines | The data stays portable when the compute service changes |
+
+<details>
+<summary>Alternatives considered</summary>
+
+| Alternative | Why not selected |
+| --- | --- |
+| Managed cloud services from the start | No cloud budget for Layer 1, and running the open tools locally shows how they work |
+| Local only, without portability rules | A later move would need application code changes |
+
+Revisit when the hosting decision for Layers 2 and 3 selects a cloud provider.
+
+</details>
+
 ## 8. Operating Constraints
 
 Monitoring covers service resources, Web API behavior, large language model (LLM) token counts and latency, time to first token, personal-data filter blocks, and agent and MCP tool calls and failures. Observability dashboards cover metrics, logs, and traces; tool UIs remain useful for detailed diagnosis. Stream checks include Kafka lag, duplicate counts, late messages, and quarantine counts. DataHub and GX report data health.
